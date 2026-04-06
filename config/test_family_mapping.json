@@ -1,0 +1,92 @@
+{
+  "families": [
+    {
+      "id": "auth_bypass",
+      "name": "Authentication Bypass",
+      "description": "Check whether login, MFA or credential validation can be bypassed.",
+      "tactics": [
+        "weak or default credentials",
+        "captcha or MFA bypass",
+        "token or state tampering"
+      ]
+    },
+    {
+      "id": "session_management",
+      "name": "Session Management",
+      "description": "Check whether session creation, fixation, logout and token lifecycle are weak.",
+      "tactics": [
+        "session fixation",
+        "token reuse",
+        "logout invalidation"
+      ]
+    },
+    {
+      "id": "access_control",
+      "name": "Access Control",
+      "description": "Check whether role or object authorization can be bypassed.",
+      "tactics": [
+        "vertical privilege escalation",
+        "horizontal privilege escalation",
+        "direct object access"
+      ]
+    },
+    {
+      "id": "input_validation",
+      "name": "Input Validation",
+      "description": "Check whether input handling enables injection or parser confusion.",
+      "tactics": [
+        "SQL injection",
+        "command injection",
+        "template or parser injection"
+      ]
+    },
+    {
+      "id": "file_upload",
+      "name": "File Upload",
+      "description": "Check upload validation, parser trust and storage exposure.",
+      "tactics": [
+        "content-type confusion",
+        "extension bypass",
+        "unsafe file retrieval"
+      ]
+    }
+  ],
+  "rules": [
+    {
+      "id": "rule-auth-login",
+      "when_keywords": ["login", "signin", "auth", "password", "captcha", "otp", "token", "login endpoint", "登录", "验证码", "口令"],
+      "when_roles": ["admin", "administrator", "user", "guest", "管理员", "用户"],
+      "when_objects": ["account", "user", "session", "token"],
+      "when_flows": ["login", "authentication", "登录", "认证"],
+      "when_parameters": ["username", "password", "otp", "captcha"],
+      "test_family_ids": ["auth_bypass", "session_management"]
+    },
+    {
+      "id": "rule-access-admin",
+      "when_keywords": ["admin", "backend", "console", "dashboard", "role", "权限", "后台", "管理"],
+      "when_roles": ["admin", "administrator", "manager", "管理员"],
+      "when_objects": ["order", "invoice", "report", "user", "tenant"],
+      "when_flows": ["approve", "delete", "manage", "audit"],
+      "when_parameters": ["user_id", "tenant_id", "role"],
+      "test_family_ids": ["access_control"]
+    },
+    {
+      "id": "rule-input-params",
+      "when_keywords": ["query", "search", "filter", "sort", "id", "parameter", "input", "接口", "参数", "查询"],
+      "when_roles": [],
+      "when_objects": ["report", "item", "record", "profile"],
+      "when_flows": ["search", "list", "query"],
+      "when_parameters": ["id", "q", "filter", "sort", "keyword"],
+      "test_family_ids": ["input_validation"]
+    },
+    {
+      "id": "rule-file-upload",
+      "when_keywords": ["upload", "import", "avatar", "attachment", "file", "image", "上传", "导入", "附件"],
+      "when_roles": [],
+      "when_objects": ["file", "image", "attachment", "document"],
+      "when_flows": ["upload", "import", "preview"],
+      "when_parameters": ["filename", "content_type", "path"],
+      "test_family_ids": ["file_upload", "input_validation"]
+    }
+  ]
+}

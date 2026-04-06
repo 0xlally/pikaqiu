@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pikaqiu-agent"
+version = "0.1.0"
+description = "黑盒 Web 漏洞测试 Agent 的可运行工程骨架"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "pydantic>=2.7,<3.0",
+  "rich>=13.7,<14.0",
+  "typer>=0.12,<1.0",
+  "fastapi>=0.116,<1.0",
+  "uvicorn>=0.30,<1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.2,<9.0",
+]
+
+[project.scripts]
+pikaqiu = "cli:app"
+pikaqiu-api = "api_server:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

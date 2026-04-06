@@ -1,0 +1,8 @@
+{
+  "python.defaultInterpreterPath": "F:/miniconda/python.exe",
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/src"
+],
+"python-envs.defaultEnvManager": "ms-python.python:conda",
+"python-envs.defaultPackageManager": "ms-python.python:conda"
+}

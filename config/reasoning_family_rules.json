@@ -1,0 +1,145 @@
+{
+  "families": [
+    {
+      "family_id": "object_access_control",
+      "family_name": "\u5bf9\u8c61\u8bbf\u95ee\u63a7\u5236"
+    },
+    {
+      "family_id": "property_access_control",
+      "family_name": "\u5c5e\u6027\u8bbf\u95ee\u63a7\u5236"
+    },
+    {
+      "family_id": "function_access_control",
+      "family_name": "\u529f\u80fd\u8bbf\u95ee\u63a7\u5236"
+    },
+    {
+      "family_id": "workflow_state_logic",
+      "family_name": "\u6d41\u7a0b\u72b6\u6001\u903b\u8f91"
+    },
+    {
+      "family_id": "quota_abuse_logic",
+      "family_name": "\u914d\u989d\u4e0e\u6ee5\u7528\u903b\u8f91"
+    },
+    {
+      "family_id": "server_input_interpretation",
+      "family_name": "\u670d\u52a1\u7aef\u8f93\u5165\u89e3\u91ca"
+    },
+    {
+      "family_id": "file_content_handling",
+      "family_name": "\u6587\u4ef6\u4e0e\u5185\u5bb9\u5904\u7406"
+    },
+    {
+      "family_id": "auth_session_security",
+      "family_name": "\u8ba4\u8bc1\u4e0e\u4f1a\u8bdd\u5b89\u5168"
+    },
+    {
+      "family_id": "client_render_execution",
+      "family_name": "\u5ba2\u6237\u7aef\u6e32\u67d3\u6267\u884c"
+    },
+    {
+      "family_id": "server_outbound_callback",
+      "family_name": "\u670d\u52a1\u7aef\u8fde\u51fa\u4e0e\u56de\u8c03"
+    }
+  ],
+  "rules": [
+    {
+      "rule_id": "object-id-selectors",
+      "family_id": "object_access_control",
+      "weight": 4,
+      "keywords": ["user_id", "order_id", "file_id", "tenant_id", "{user_id}", "{order_id}", "{file_id}", "{tenant_id}"],
+      "synonyms": ["object id", "resource id", "detail object", "specified object"],
+      "source_fields": ["discovered_endpoints", "discovered_fields", "discovered_objects", "discovered_actions"],
+      "reason": "controllable object selector or target object"
+    },
+    {
+      "rule_id": "object-detail-download",
+      "family_id": "object_access_control",
+      "weight": 2,
+      "keywords": ["detail", "details", "download", "profile", "record"],
+      "synonyms": ["view object", "download object", "view details"],
+      "source_fields": ["discovered_pages", "discovered_endpoints", "discovered_actions"],
+      "reason": "feature exposes object-specific view or retrieval behavior"
+    },
+    {
+      "rule_id": "property-editable-fields",
+      "family_id": "property_access_control",
+      "weight": 3,
+      "keywords": ["role", "status", "price", "hidden field", "editable field", "batch update"],
+      "synonyms": ["editable property", "mass update", "field update"],
+      "source_fields": ["discovered_fields", "discovered_actions", "discovered_endpoints"],
+      "reason": "feature exposes controllable business properties or editable fields"
+    },
+    {
+      "rule_id": "function-role-sensitive",
+      "family_id": "function_access_control",
+      "weight": 4,
+      "keywords": ["admin only", "approve", "review", "export", "delete", "backend action", "admin", "administrator"],
+      "synonyms": ["management action", "operator action", "privileged action"],
+      "source_fields": ["discovered_actions", "discovered_flows", "discovered_pages", "discovered_endpoints", "discovered_roles"],
+      "reason": "feature looks role-sensitive or privileged"
+    },
+    {
+      "rule_id": "workflow-multistep",
+      "family_id": "workflow_state_logic",
+      "weight": 4,
+      "keywords": ["draft", "submit", "apply", "approve", "bind", "unbind", "reset password flow", "multi-step flow"],
+      "synonyms": ["workflow", "state transition", "approval flow", "step by step"],
+      "source_fields": ["discovered_flows", "discovered_actions", "notes"],
+      "reason": "feature contains multi-step state transition behavior"
+    },
+    {
+      "rule_id": "quota-send-export-retry",
+      "family_id": "quota_abuse_logic",
+      "weight": 3,
+      "keywords": ["send code", "invite", "batch create", "export", "retry limit", "sms", "email", "otp", "resend"],
+      "synonyms": ["verification code", "bulk action", "resource exhaustion", "rate limit"],
+      "source_fields": ["discovered_actions", "discovered_flows", "discovered_endpoints", "notes"],
+      "reason": "feature may be bounded by count, quota or resource consumption"
+    },
+    {
+      "rule_id": "server-input-query-template",
+      "family_id": "server_input_interpretation",
+      "weight": 3,
+      "keywords": ["query", "filter", "template", "url fetch", "path", "filename", "export parameter", "sort", "keyword"],
+      "synonyms": ["search parameter", "server-side parsing", "input interpretation", "remote fetch"],
+      "source_fields": ["discovered_fields", "discovered_endpoints", "discovered_actions", "discovered_objects", "notes"],
+      "reason": "feature sends input to a server-side interpreter or parser"
+    },
+    {
+      "rule_id": "file-upload-download-preview",
+      "family_id": "file_content_handling",
+      "weight": 4,
+      "keywords": ["upload", "download", "preview", "import", "export", "attachment", "markdown", "html", "rich text"],
+      "synonyms": ["file handling", "content handling", "document preview", "attachment management"],
+      "source_fields": ["discovered_upload_points", "discovered_render_points", "discovered_actions", "discovered_endpoints", "discovered_fields"],
+      "reason": "feature handles files or rich content"
+    },
+    {
+      "rule_id": "auth-login-refresh",
+      "family_id": "auth_session_security",
+      "weight": 4,
+      "keywords": ["login", "register", "reset password", "token refresh", "refresh token", "magic link", "invite link", "session"],
+      "synonyms": ["authentication", "signin", "signup", "session renewal"],
+      "source_fields": ["discovered_actions", "discovered_flows", "discovered_endpoints", "notes"],
+      "reason": "feature belongs to authentication or session lifecycle"
+    },
+    {
+      "rule_id": "render-comment-markdown",
+      "family_id": "client_render_execution",
+      "weight": 4,
+      "keywords": ["comment", "markdown display", "search result", "rich text display", "template rendering", "render", "preview"],
+      "synonyms": ["html rendering", "content display", "browser execution", "client-side rendering"],
+      "source_fields": ["discovered_render_points", "discovered_pages", "discovered_actions", "notes"],
+      "reason": "feature renders attacker-influenced content in the client"
+    },
+    {
+      "rule_id": "callback-webhook-redirect",
+      "family_id": "server_outbound_callback",
+      "weight": 4,
+      "keywords": ["webhook", "callback url", "redirect url", "fetch remote resource", "oauth callback", "remote resource"],
+      "synonyms": ["server callback", "outbound request", "external integration", "webhook configuration"],
+      "source_fields": ["discovered_callback_points", "discovered_actions", "discovered_endpoints", "discovered_fields", "notes"],
+      "reason": "feature can trigger server-side outbound communication or callback handling"
+    }
+  ]
+}
