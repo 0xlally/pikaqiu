@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Any
 
 from rich.console import Console
-from rich.panel import Panel
 from rich.table import Table
 import typer
 
@@ -13,33 +12,6 @@ from workflow import build_default_workflow, default_mapping_path
 
 app = typer.Typer(help="SRC测试系统的命令行入口。")
 console = Console()
-
-
-def _extract_agent_trace(raw_output: str) -> str | None:
-    marker = "[agent_trace]"
-    index = raw_output.find(marker)
-    if index < 0:
-        return None
-    value = raw_output[index + len(marker):].lstrip("\r\n")
-    return value or None
-
-
-def _strip_agent_trace(raw_output: str) -> str:
-    marker = "[agent_trace]"
-    index = raw_output.find(marker)
-    if index < 0:
-        return raw_output
-    return raw_output[:index].rstrip()
-
-
-def _split_stdout_stderr(tool_output: str) -> tuple[str, str]:
-    marker = "[stderr]"
-    index = tool_output.find(marker)
-    if index < 0:
-        return tool_output, ""
-    stdout = tool_output[:index].rstrip()
-    stderr = tool_output[index + len(marker):].lstrip("\r\n")
-    return stdout, stderr
 
 
 @app.command()
@@ -62,11 +34,11 @@ def demo(
         output = event.get("output") or {}
         error = event.get("error")
         if error:
-            console.print(Panel(str(error), title="事件错误", border_style="red"))
+            console.print(f"error: {error}")
 
         agent_output = output.get("agentOutput")
         if isinstance(agent_output, str) and agent_output.strip():
-            console.print(Panel(agent_output, title=f"{stage} agent输出", border_style="cyan"))
+            console.print(f"{stage} agent输出: {agent_output}")
 
         if stage == "act:finish" and output:
             tool_name = output.get("toolName")
@@ -122,69 +94,6 @@ def demo(
             console.print("[yellow]运行结束：当前没有待执行 test 节点。[/yellow]")
         else:
             console.print("[yellow]运行结束：本轮未命中测试家族，因此未创建 test 节点。[/yellow]")
-
-    console.rule("详细动作输出")
-
-    if result.plan.trace:
-        console.print(
-            Panel(
-                result.plan.trace,
-                title="reasoning agent 输出",
-                border_style="cyan",
-            )
-        )
-    else:
-        console.print("reasoning agent 输出: -")
-
-    if result.act_result:
-        act_result = result.act_result
-        tool_output = _strip_agent_trace(act_result.raw_output)
-        agent_trace = _extract_agent_trace(act_result.raw_output)
-        stdout, stderr = _split_stdout_stderr(tool_output)
-
-        call_table = Table(title="工具调用详情")
-        call_table.add_column("字段")
-        call_table.add_column("值")
-        call_table.add_row("节点", act_result.node_id)
-        call_table.add_row("工具", act_result.tool_name)
-        call_table.add_row("退出码", str(act_result.exit_code))
-        call_table.add_row("开始", act_result.started_at)
-        call_table.add_row("结束", act_result.finished_at)
-        call_table.add_row("命令", act_result.command)
-        console.print(call_table)
-
-        console.print(
-            Panel(
-                agent_trace or "-",
-                title="act agent 输出（原始）",
-                border_style="magenta",
-            )
-        )
-        console.print(
-            Panel(
-                stdout or "-",
-                title="工具 stdout",
-                border_style="green",
-            )
-        )
-        console.print(
-            Panel(
-                stderr or "-",
-                title="工具 stderr",
-                border_style="red",
-            )
-        )
-    else:
-        console.print("act/工具执行结果: -")
-
-    if result.parsed_result and result.parsed_result.state_delta.notes:
-        console.print(
-            Panel(
-                "\n".join(result.parsed_result.state_delta.notes),
-                title="parsing agent 输出（原始）",
-                border_style="yellow",
-            )
-        )
 
 
 if __name__ == "__main__":

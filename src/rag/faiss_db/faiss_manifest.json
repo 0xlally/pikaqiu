@@ -1,0 +1,779 @@
+{
+  "documents": {
+    "rag\\vulnerabilities\\api-graphql.md": {
+      "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\api-graphql.md",
+      "mtime": 1775393895.2805498,
+      "size": 7766,
+      "hash": "c944af1b04e19e919215557ec250a7ebef73f55651536ca705bafa149fa31b84"
+    },
+    "rag\\vulnerabilities\\auth-bypass.md": {
+      "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\auth-bypass.md",
+      "mtime": 1775393895.2805498,
+      "size": 4441,
+      "hash": "5749b2461717acfab326e100f007d392aa43103fe6f3fda26dcabd772673b0e3"
+    },
+    "rag\\vulnerabilities\\biz-logic.md": {
+      "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\biz-logic.md",
+      "mtime": 1775393895.2815504,
+      "size": 4544,
+      "hash": "a3b29613c3fd712ed3b0d2e48c593e73d0e4c3847aa94b4ee956dc359d858d6f"
+    },
+    "rag\\vulnerabilities\\cors.md": {
+      "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\cors.md",
+      "mtime": 1775393895.2815504,
+      "size": 4461,
+      "hash": "288437bbc41a9ae2080833e917e568190e17b8e1540b6a3605a7aa9069a0b28e"
+    },
+    "rag\\vulnerabilities\\csrf.md": {
+      "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\csrf.md",
+      "mtime": 1775393895.2815504,
+      "size": 5337,
+      "hash": "cefcc6ec47afe823760c28afc30196e4466f59ed6086863971e514aff3b7f965"
+    },
+    "rag\\vulnerabilities\\http-smuggling.md": {
+      "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\http-smuggling.md",
+      "mtime": 1775393895.28255,
+      "size": 5350,
+      "hash": "d11843de23cc04bd7b01ddd2f8711c7f106ee468cbe6fa17c58f7aed363be475"
+    },
+    "rag\\vulnerabilities\\idor.md": {
+      "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\idor.md",
+      "mtime": 1775393895.28255,
+      "size": 3638,
+      "hash": "542fe6c5efcd58cd623914a6f62c4c8ac3e5c84e8af0393f5bc7f37893d1a954"
+    },
+    "rag\\vulnerabilities\\lfi.md": {
+      "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\lfi.md",
+      "mtime": 1775393895.28255,
+      "size": 4964,
+      "hash": "439e4b3791eadb05882abbef7cad29d282131c27d370da624bc2ba15e5a96a01"
+    },
+    "rag\\vulnerabilities\\nosqli.md": {
+      "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\nosqli.md",
+      "mtime": 1775393895.28255,
+      "size": 6344,
+      "hash": "b8a69bd2902958c276d4783c2d752c8db3e47d882ad521d9d503d7cc7949f35a"
+    },
+    "rag\\vulnerabilities\\open-redirect.md": {
+      "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\open-redirect.md",
+      "mtime": 1775393895.2835505,
+      "size": 4130,
+      "hash": "2061bb2d20017a8910b8b9c67d5e5a8f715ce2c7da2bc8a06342c8f68c64a448"
+    },
+    "rag\\vulnerabilities\\prototype-pollution.md": {
+      "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\prototype-pollution.md",
+      "mtime": 1775393895.2841012,
+      "size": 4579,
+      "hash": "6a19302d3271e24b80ee9f2094c2960aa791a80d7b315d250629aa78e7512857"
+    },
+    "rag\\vulnerabilities\\rce.md": {
+      "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\rce.md",
+      "mtime": 1775393895.2846246,
+      "size": 6125,
+      "hash": "ffbc2f568704db1af0bcaef3b3e191ca23b4041c790208472d92b92d237406c9"
+    },
+    "rag\\vulnerabilities\\sqli.md": {
+      "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\sqli.md",
+      "mtime": 1775393895.2846246,
+      "size": 3121,
+      "hash": "27cfcb2b1a8d547a9cc16fe41e76816779fe478277f6f1757f2122337514bc4c"
+    },
+    "rag\\vulnerabilities\\ssrf.md": {
+      "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\ssrf.md",
+      "mtime": 1775393895.2846246,
+      "size": 3309,
+      "hash": "289290e651b1c9284f309027ce06593c55d55f7cc60b7ef4f968c4c5b2a10d5b"
+    },
+    "rag\\vulnerabilities\\ssti.md": {
+      "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\ssti.md",
+      "mtime": 1775393895.2859168,
+      "size": 3362,
+      "hash": "795a7c6610ac5df2a347330d16dc2ef88c38cb515e5329591e87df9c0c284b00"
+    },
+    "rag\\vulnerabilities\\subdomain-takeover.md": {
+      "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\subdomain-takeover.md",
+      "mtime": 1775393895.2859168,
+      "size": 5140,
+      "hash": "9d43045f6bc432940a7da69f6d5c2131110231eea2c9d117280bc6d8c7eb7ea4"
+    },
+    "rag\\vulnerabilities\\xss.md": {
+      "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\xss.md",
+      "mtime": 1775393895.2859168,
+      "size": 2888,
+      "hash": "265c9d5f1b223768fa08895841b3ef99caf23d2e76c47be31bdc3bc3bd27e628"
+    },
+    "rag\\vulnerabilities\\xxe.md": {
+      "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\xxe.md",
+      "mtime": 1775393895.2869244,
+      "size": 4302,
+      "hash": "cc99c471da134c652c58ccfa998dc2bd6ee0adf96b768421a81139f1556e8d6e"
+    }
+  },
+  "chunks": {
+    "rag\\vulnerabilities\\api-graphql.md::chunk::0": {
+      "doc_id": "rag\\vulnerabilities\\api-graphql.md",
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "hash": "03ec61035c4f2b11840936de164f4ccad5fd739500fed6a487d1376a67d3d108"
+    },
+    "rag\\vulnerabilities\\api-graphql.md::chunk::1": {
+      "doc_id": "rag\\vulnerabilities\\api-graphql.md",
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "hash": "6693939bcca2c6e18c5c14a1dab2f4349a0c6299eee5c5f4385288f80219d07b"
+    },
+    "rag\\vulnerabilities\\api-graphql.md::chunk::2": {
+      "doc_id": "rag\\vulnerabilities\\api-graphql.md",
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "hash": "019f65da2d8a3e970591fd1ddc28d428d94a512cb86a4a9a21fa2b910f8a8de0"
+    },
+    "rag\\vulnerabilities\\api-graphql.md::chunk::3": {
+      "doc_id": "rag\\vulnerabilities\\api-graphql.md",
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "hash": "a834173f92ae7ab1d378a7aedd17927fa5c33ad9dc06967b64c5d5e58a838901"
+    },
+    "rag\\vulnerabilities\\api-graphql.md::chunk::4": {
+      "doc_id": "rag\\vulnerabilities\\api-graphql.md",
+      "type": "text",
+      "level": 0,
+      "position": 4,
+      "hash": "87e8beb449b0dadfd06680fdeddc24a38654aa73e5292ea14578d6a26902304b"
+    },
+    "rag\\vulnerabilities\\api-graphql.md::chunk::5": {
+      "doc_id": "rag\\vulnerabilities\\api-graphql.md",
+      "type": "text",
+      "level": 0,
+      "position": 5,
+      "hash": "3357d090f03c16bb927d272d34591fef79a04f65c8cb33aed76cd9f7105329dd"
+    },
+    "rag\\vulnerabilities\\api-graphql.md::chunk::6": {
+      "doc_id": "rag\\vulnerabilities\\api-graphql.md",
+      "type": "text",
+      "level": 0,
+      "position": 6,
+      "hash": "4a1615486355be78d2aba78032f01a2eeff06dfb489e13ee094ae91dc61b0268"
+    },
+    "rag\\vulnerabilities\\api-graphql.md::chunk::7": {
+      "doc_id": "rag\\vulnerabilities\\api-graphql.md",
+      "type": "text",
+      "level": 0,
+      "position": 7,
+      "hash": "512da3ce21f74570561aace5dc257f93f37ce54d941869fd98ab9fd27a5b847c"
+    },
+    "rag\\vulnerabilities\\auth-bypass.md::chunk::0": {
+      "doc_id": "rag\\vulnerabilities\\auth-bypass.md",
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "hash": "ea83ad353503f2c6fdb5fe9b875d879fcd4f0879937c6a3472683eebffdc6dde"
+    },
+    "rag\\vulnerabilities\\auth-bypass.md::chunk::1": {
+      "doc_id": "rag\\vulnerabilities\\auth-bypass.md",
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "hash": "c29618167137c101f674118b7b9f3d03d7ff42290556d892efafe1d17a1895b9"
+    },
+    "rag\\vulnerabilities\\auth-bypass.md::chunk::2": {
+      "doc_id": "rag\\vulnerabilities\\auth-bypass.md",
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "hash": "89512481828ac0b1ab4821e05778ca4cd80359ebad7958737926a8eae67a13ce"
+    },
+    "rag\\vulnerabilities\\auth-bypass.md::chunk::3": {
+      "doc_id": "rag\\vulnerabilities\\auth-bypass.md",
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "hash": "cbaeb8eff6b21b16b2bb293632b3943c78ba1b658ebf21707c7dcb39760cafc9"
+    },
+    "rag\\vulnerabilities\\auth-bypass.md::chunk::4": {
+      "doc_id": "rag\\vulnerabilities\\auth-bypass.md",
+      "type": "text",
+      "level": 0,
+      "position": 4,
+      "hash": "dfbc8515503f834169dc250c127806636f42ed89d4a3c7b61a3c6ee5f58437ec"
+    },
+    "rag\\vulnerabilities\\biz-logic.md::chunk::0": {
+      "doc_id": "rag\\vulnerabilities\\biz-logic.md",
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "hash": "d75b576a47aaed6093ad1e74b9a7f91e22d002ee500034900962b244b40e6a89"
+    },
+    "rag\\vulnerabilities\\biz-logic.md::chunk::1": {
+      "doc_id": "rag\\vulnerabilities\\biz-logic.md",
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "hash": "2ac0508a06c437904c2e32cc4cdf3d3e4b7003ee0a47687a0ca698e0df96323e"
+    },
+    "rag\\vulnerabilities\\biz-logic.md::chunk::2": {
+      "doc_id": "rag\\vulnerabilities\\biz-logic.md",
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "hash": "dbfaad87a8b7ca57d803c970882b2a92b75273c0fe173a2ebacf281be1da3c56"
+    },
+    "rag\\vulnerabilities\\biz-logic.md::chunk::3": {
+      "doc_id": "rag\\vulnerabilities\\biz-logic.md",
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "hash": "fe0531f3a10674fef52f51640ec482faf201b31f483c49edff0d181e36ccd9c1"
+    },
+    "rag\\vulnerabilities\\biz-logic.md::chunk::4": {
+      "doc_id": "rag\\vulnerabilities\\biz-logic.md",
+      "type": "text",
+      "level": 0,
+      "position": 4,
+      "hash": "3a133e0d486e7be67e531f4c8dc1452d4a110b48e1ba2902ff656af7302c6ab4"
+    },
+    "rag\\vulnerabilities\\cors.md::chunk::0": {
+      "doc_id": "rag\\vulnerabilities\\cors.md",
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "hash": "8f5b498eedea3d7e2461ca5645cbe000c91856db7aa524a7b3dec38d662042d8"
+    },
+    "rag\\vulnerabilities\\cors.md::chunk::1": {
+      "doc_id": "rag\\vulnerabilities\\cors.md",
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "hash": "dc176b7fe57ccfd85f21861f69b418ae4cc4adb5b188a3d1c8d56faef0b68c34"
+    },
+    "rag\\vulnerabilities\\cors.md::chunk::2": {
+      "doc_id": "rag\\vulnerabilities\\cors.md",
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "hash": "0e8bb2a7caa7368d2cc98ea7684e90dba6c6709c3e95f9ba2ffb3f3efbf67579"
+    },
+    "rag\\vulnerabilities\\cors.md::chunk::3": {
+      "doc_id": "rag\\vulnerabilities\\cors.md",
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "hash": "c84c8630ff59d64accb72fbc64c33c26b05629ebb31ac966786ec166254eda4b"
+    },
+    "rag\\vulnerabilities\\cors.md::chunk::4": {
+      "doc_id": "rag\\vulnerabilities\\cors.md",
+      "type": "text",
+      "level": 0,
+      "position": 4,
+      "hash": "ec0a73d442c724e2ab49b8bac9225930eb3ec345f71a52e664a3529ea2775c13"
+    },
+    "rag\\vulnerabilities\\csrf.md::chunk::0": {
+      "doc_id": "rag\\vulnerabilities\\csrf.md",
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "hash": "abfd27972812298ac53c27165cb698f76c42a2be1c2eaf270ce4a4c38ca766f3"
+    },
+    "rag\\vulnerabilities\\csrf.md::chunk::1": {
+      "doc_id": "rag\\vulnerabilities\\csrf.md",
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "hash": "e88545be1c2d2ea6971cdc79081461087f4548d9c30a40be2822b68b17a54c78"
+    },
+    "rag\\vulnerabilities\\csrf.md::chunk::2": {
+      "doc_id": "rag\\vulnerabilities\\csrf.md",
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "hash": "3acc276abd5594ab7edab7d0dd206713fc8608a6820dce38493642b6374161cc"
+    },
+    "rag\\vulnerabilities\\csrf.md::chunk::3": {
+      "doc_id": "rag\\vulnerabilities\\csrf.md",
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "hash": "feb5d6118c57fe965d2c282276e83e1a32bb029bf1cc1563871ae38e15e3e768"
+    },
+    "rag\\vulnerabilities\\csrf.md::chunk::4": {
+      "doc_id": "rag\\vulnerabilities\\csrf.md",
+      "type": "text",
+      "level": 0,
+      "position": 4,
+      "hash": "58bbd68a111aa1665368f98341b39662b8447776876b757e1de3430422ba17cb"
+    },
+    "rag\\vulnerabilities\\csrf.md::chunk::5": {
+      "doc_id": "rag\\vulnerabilities\\csrf.md",
+      "type": "text",
+      "level": 0,
+      "position": 5,
+      "hash": "aea64a92553b344b3a3d9c3fc34b6a7b0749b9eee1ca4d8e5c17ffd29311552a"
+    },
+    "rag\\vulnerabilities\\http-smuggling.md::chunk::0": {
+      "doc_id": "rag\\vulnerabilities\\http-smuggling.md",
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "hash": "62be645710743a79a33044a81b42a36356a0edbbac787dba07c0a3ef642c324c"
+    },
+    "rag\\vulnerabilities\\http-smuggling.md::chunk::1": {
+      "doc_id": "rag\\vulnerabilities\\http-smuggling.md",
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "hash": "3db4949e56cfbc4d8846f1bc534397d504ca51ed4a1d907f9ba4ad331ad3c8e3"
+    },
+    "rag\\vulnerabilities\\http-smuggling.md::chunk::2": {
+      "doc_id": "rag\\vulnerabilities\\http-smuggling.md",
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "hash": "a8f66ec0ca95673ab865a8a391485eb24411ab4e90322426b06b42d1c69d2647"
+    },
+    "rag\\vulnerabilities\\http-smuggling.md::chunk::3": {
+      "doc_id": "rag\\vulnerabilities\\http-smuggling.md",
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "hash": "3c97a324b9785fe7a199f3944f9a9ba905096d3cf6aed01d2ae03fbd53805397"
+    },
+    "rag\\vulnerabilities\\http-smuggling.md::chunk::4": {
+      "doc_id": "rag\\vulnerabilities\\http-smuggling.md",
+      "type": "text",
+      "level": 0,
+      "position": 4,
+      "hash": "1fcc50d0eeaf6b1da078d9d1e7c8f87b55f1bf39b334edeb78f0361546eecd39"
+    },
+    "rag\\vulnerabilities\\http-smuggling.md::chunk::5": {
+      "doc_id": "rag\\vulnerabilities\\http-smuggling.md",
+      "type": "text",
+      "level": 0,
+      "position": 5,
+      "hash": "47e138dc996872d8efe0dc366831f5d89c268fac4666fa6f1210a66265d8af91"
+    },
+    "rag\\vulnerabilities\\idor.md::chunk::0": {
+      "doc_id": "rag\\vulnerabilities\\idor.md",
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "hash": "f6eac0e01cd3bacf71e7dcb4b9871076cc932fcdf56d593a403d5fc8294f4538"
+    },
+    "rag\\vulnerabilities\\idor.md::chunk::1": {
+      "doc_id": "rag\\vulnerabilities\\idor.md",
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "hash": "a0c4489d5780d4f8e9f1becd562d9b4e0b1d5696eb5479ece6f082ade6059128"
+    },
+    "rag\\vulnerabilities\\idor.md::chunk::2": {
+      "doc_id": "rag\\vulnerabilities\\idor.md",
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "hash": "bf27ed1942a46a8d372971eec31a0a7a0e948dd12d09e34897aef9d4e3fdab9f"
+    },
+    "rag\\vulnerabilities\\idor.md::chunk::3": {
+      "doc_id": "rag\\vulnerabilities\\idor.md",
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "hash": "26cdc08faa9629b17e37b9dfa03334539c3aaff347e1951120de8e1b24b7c361"
+    },
+    "rag\\vulnerabilities\\lfi.md::chunk::0": {
+      "doc_id": "rag\\vulnerabilities\\lfi.md",
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "hash": "312ce16d0ba9fd3cbdbcfac182fbec6fb106eef21e7f189b119b85a6032a6db2"
+    },
+    "rag\\vulnerabilities\\lfi.md::chunk::1": {
+      "doc_id": "rag\\vulnerabilities\\lfi.md",
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "hash": "fe5d7678b18cbe57c8747403d351d1e765a7d10eba0bc4dfe98a363de7ad82ce"
+    },
+    "rag\\vulnerabilities\\lfi.md::chunk::2": {
+      "doc_id": "rag\\vulnerabilities\\lfi.md",
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "hash": "af2e265156b62f2aebacb26ba9e972d86ff0372107936b5b2984341570ce1048"
+    },
+    "rag\\vulnerabilities\\lfi.md::chunk::3": {
+      "doc_id": "rag\\vulnerabilities\\lfi.md",
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "hash": "c7abb1ad47652c270143b9bc57c2e14319ab0d8c1d36b123656660d08f3d56e7"
+    },
+    "rag\\vulnerabilities\\lfi.md::chunk::4": {
+      "doc_id": "rag\\vulnerabilities\\lfi.md",
+      "type": "text",
+      "level": 0,
+      "position": 4,
+      "hash": "623ca479bad1eb8a92eceac2367117092d07eb38cbae951c32be198f7dce07e8"
+    },
+    "rag\\vulnerabilities\\lfi.md::chunk::5": {
+      "doc_id": "rag\\vulnerabilities\\lfi.md",
+      "type": "text",
+      "level": 0,
+      "position": 5,
+      "hash": "3b8b9e14edb6192feb80ffc641dfbd87516f70ec5148a6bf6b0eabb6bedc5b23"
+    },
+    "rag\\vulnerabilities\\nosqli.md::chunk::0": {
+      "doc_id": "rag\\vulnerabilities\\nosqli.md",
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "hash": "8a8f9072212e078120969cbdaaf6bb973f3be77d62e0f6d5e88d22232dd9bce6"
+    },
+    "rag\\vulnerabilities\\nosqli.md::chunk::1": {
+      "doc_id": "rag\\vulnerabilities\\nosqli.md",
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "hash": "e32cc1f4978b9465ec2dfe47c169c15b0acce643c39b64a52e88ece40ce98e2c"
+    },
+    "rag\\vulnerabilities\\nosqli.md::chunk::2": {
+      "doc_id": "rag\\vulnerabilities\\nosqli.md",
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "hash": "d0d4dd9bd3da00fb760e0503d388efc3e20416a53c83f8f90134b84f39973ea5"
+    },
+    "rag\\vulnerabilities\\nosqli.md::chunk::3": {
+      "doc_id": "rag\\vulnerabilities\\nosqli.md",
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "hash": "11fed87e167fb2dcf21502579d890ac10975de9c60b2bf945050de31b5b075a8"
+    },
+    "rag\\vulnerabilities\\nosqli.md::chunk::4": {
+      "doc_id": "rag\\vulnerabilities\\nosqli.md",
+      "type": "text",
+      "level": 0,
+      "position": 4,
+      "hash": "f170e431a9acf0640021b3b2401c815c0a3b7232ef1d3fa4f2fa5f3dce01bb13"
+    },
+    "rag\\vulnerabilities\\nosqli.md::chunk::5": {
+      "doc_id": "rag\\vulnerabilities\\nosqli.md",
+      "type": "text",
+      "level": 0,
+      "position": 5,
+      "hash": "c4eaaa25ecee0ab4ed78cefa41c0d2d09c46d92d2b7fe4c18542eca26d47199e"
+    },
+    "rag\\vulnerabilities\\nosqli.md::chunk::6": {
+      "doc_id": "rag\\vulnerabilities\\nosqli.md",
+      "type": "text",
+      "level": 0,
+      "position": 6,
+      "hash": "952f2c4a870c4c50029d70a31ab292fe45d4e3b37e631f2a699a665dd5b8cfb4"
+    },
+    "rag\\vulnerabilities\\open-redirect.md::chunk::0": {
+      "doc_id": "rag\\vulnerabilities\\open-redirect.md",
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "hash": "0644aa4369bca7f550633e806aefcdff3c214320f5155804bc1b42b890bd94a9"
+    },
+    "rag\\vulnerabilities\\open-redirect.md::chunk::1": {
+      "doc_id": "rag\\vulnerabilities\\open-redirect.md",
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "hash": "0ff90d944700af8d710c13c9feb7eb74510b0af9f3a2e96ef51c2a88b056c9d2"
+    },
+    "rag\\vulnerabilities\\open-redirect.md::chunk::2": {
+      "doc_id": "rag\\vulnerabilities\\open-redirect.md",
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "hash": "cfac15999a83a7db8dc0ab1482c621b0fb2adbe76d28089b0e6acf3137924821"
+    },
+    "rag\\vulnerabilities\\open-redirect.md::chunk::3": {
+      "doc_id": "rag\\vulnerabilities\\open-redirect.md",
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "hash": "ba39692fd71a90372157220897ec92d16987522b0764ebda1aa0ba0898278a2f"
+    },
+    "rag\\vulnerabilities\\open-redirect.md::chunk::4": {
+      "doc_id": "rag\\vulnerabilities\\open-redirect.md",
+      "type": "text",
+      "level": 0,
+      "position": 4,
+      "hash": "2e2fcae466ba58c7dbb68260ef5428d6c459f65f5abd32c2114c41fb9f0a30db"
+    },
+    "rag\\vulnerabilities\\prototype-pollution.md::chunk::0": {
+      "doc_id": "rag\\vulnerabilities\\prototype-pollution.md",
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "hash": "ea01063816c80853b9530de589a5c0671ade4f53575b3a5794f7341b614f5dde"
+    },
+    "rag\\vulnerabilities\\prototype-pollution.md::chunk::1": {
+      "doc_id": "rag\\vulnerabilities\\prototype-pollution.md",
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "hash": "ed59f29af14da98d8d04df2d14431f55b88198c37d6621414ab7497402882b17"
+    },
+    "rag\\vulnerabilities\\prototype-pollution.md::chunk::2": {
+      "doc_id": "rag\\vulnerabilities\\prototype-pollution.md",
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "hash": "ce1b6e7acd79dc09cb66d9b1bd02cdde2c5536c87e05c1e5b3115cb67137861c"
+    },
+    "rag\\vulnerabilities\\prototype-pollution.md::chunk::3": {
+      "doc_id": "rag\\vulnerabilities\\prototype-pollution.md",
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "hash": "a2e21497bc2bc2f8e9a1eead1a82e84dcc7a0cc48b0e0a352e9e51c29459ce2c"
+    },
+    "rag\\vulnerabilities\\prototype-pollution.md::chunk::4": {
+      "doc_id": "rag\\vulnerabilities\\prototype-pollution.md",
+      "type": "text",
+      "level": 0,
+      "position": 4,
+      "hash": "f02435bd79cd6a720094cc691829c1918481abf73d3029cd74dffeecf588e5a3"
+    },
+    "rag\\vulnerabilities\\rce.md::chunk::0": {
+      "doc_id": "rag\\vulnerabilities\\rce.md",
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "hash": "50cc6bfdd46a52b8b89250a36b77eb8a4e2d454a67aa0e8d6b466e23b4e4823b"
+    },
+    "rag\\vulnerabilities\\rce.md::chunk::1": {
+      "doc_id": "rag\\vulnerabilities\\rce.md",
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "hash": "bc3f5fbd3322b1562a92e3fcb2b7c42c48684c43c5b5e2e327082e2f3eb61b35"
+    },
+    "rag\\vulnerabilities\\rce.md::chunk::2": {
+      "doc_id": "rag\\vulnerabilities\\rce.md",
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "hash": "81d71b8454e07e5161b53aa87ac8cbe2bd770703b955a13ffaa491aed8930f71"
+    },
+    "rag\\vulnerabilities\\rce.md::chunk::3": {
+      "doc_id": "rag\\vulnerabilities\\rce.md",
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "hash": "9f4c32b554f37dc8e1927cee48a4acba8883cef31f46816d647a06a661925910"
+    },
+    "rag\\vulnerabilities\\rce.md::chunk::4": {
+      "doc_id": "rag\\vulnerabilities\\rce.md",
+      "type": "text",
+      "level": 0,
+      "position": 4,
+      "hash": "909587824b484a07c64548ececb20e5919cb48c50f0a9162bbf91d37ea0d4ce5"
+    },
+    "rag\\vulnerabilities\\rce.md::chunk::5": {
+      "doc_id": "rag\\vulnerabilities\\rce.md",
+      "type": "text",
+      "level": 0,
+      "position": 5,
+      "hash": "e9cfd9f0ae8647b80124aff93aed714b6433fb5d25b80f24f0bc2ed4c5e6a0cc"
+    },
+    "rag\\vulnerabilities\\rce.md::chunk::6": {
+      "doc_id": "rag\\vulnerabilities\\rce.md",
+      "type": "text",
+      "level": 0,
+      "position": 6,
+      "hash": "a1a9c97928c1aeeed45b40199ad1fe567b040d7a4157bf43030a30a7f4ba4714"
+    },
+    "rag\\vulnerabilities\\sqli.md::chunk::0": {
+      "doc_id": "rag\\vulnerabilities\\sqli.md",
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "hash": "af6f543d8f5f8cc4e55b52345a58495e7bd7c82e2da9a9800dd21aa6423290cd"
+    },
+    "rag\\vulnerabilities\\sqli.md::chunk::1": {
+      "doc_id": "rag\\vulnerabilities\\sqli.md",
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "hash": "6cbe1c3a17ed2be9a2db4ceadc3f00507c30086843e9af9851d03727fee8c807"
+    },
+    "rag\\vulnerabilities\\sqli.md::chunk::2": {
+      "doc_id": "rag\\vulnerabilities\\sqli.md",
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "hash": "b547fc58af0e1181ccfd0f77c925f5a04ea4d9b4ab5fb58b47dd542e53e73296"
+    },
+    "rag\\vulnerabilities\\sqli.md::chunk::3": {
+      "doc_id": "rag\\vulnerabilities\\sqli.md",
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "hash": "12402733a1dc9f05ff07b314b11562e5fac7f81d6334ac7d98b8b0c2d60e8015"
+    },
+    "rag\\vulnerabilities\\ssrf.md::chunk::0": {
+      "doc_id": "rag\\vulnerabilities\\ssrf.md",
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "hash": "34954dd3bed7edbe75478a96c24a85cd69c673ab16c08da3ff55b03b821e6bfd"
+    },
+    "rag\\vulnerabilities\\ssrf.md::chunk::1": {
+      "doc_id": "rag\\vulnerabilities\\ssrf.md",
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "hash": "5b608d772f0053fa73ea503dfd655a39afa79236cafde05bbaf365a73b77df94"
+    },
+    "rag\\vulnerabilities\\ssrf.md::chunk::2": {
+      "doc_id": "rag\\vulnerabilities\\ssrf.md",
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "hash": "ad59cc3a557689e239e3bf7b6a4ddc6c2552dfc48a006f15a56d2c8aa6adee19"
+    },
+    "rag\\vulnerabilities\\ssrf.md::chunk::3": {
+      "doc_id": "rag\\vulnerabilities\\ssrf.md",
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "hash": "29b5ae308a8b1aa6d2fb6d54c534ef6df5e48442c6bd0363d2ceec042de212b6"
+    },
+    "rag\\vulnerabilities\\ssti.md::chunk::0": {
+      "doc_id": "rag\\vulnerabilities\\ssti.md",
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "hash": "cc3c8f0039b971cd065281c659281d42fde31d7bbf23c985bf6860ded0a5e6be"
+    },
+    "rag\\vulnerabilities\\ssti.md::chunk::1": {
+      "doc_id": "rag\\vulnerabilities\\ssti.md",
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "hash": "0a4b94a3bc718213b1343b97ee976365f0413adebe458e0ae9a15484cf35f8c7"
+    },
+    "rag\\vulnerabilities\\ssti.md::chunk::2": {
+      "doc_id": "rag\\vulnerabilities\\ssti.md",
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "hash": "2d4af6f920f7f1341b42f076730989d2443d2db854e56c88ae5a510b608fa638"
+    },
+    "rag\\vulnerabilities\\ssti.md::chunk::3": {
+      "doc_id": "rag\\vulnerabilities\\ssti.md",
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "hash": "777299908127fe9731a284fc587d76951b7edb2d959700a78fad45e2f24e6729"
+    },
+    "rag\\vulnerabilities\\subdomain-takeover.md::chunk::0": {
+      "doc_id": "rag\\vulnerabilities\\subdomain-takeover.md",
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "hash": "27798a1533c3c49ca72ed81f2fafb3c62e5f4e326802b1f7485bdc30d7228f5d"
+    },
+    "rag\\vulnerabilities\\subdomain-takeover.md::chunk::1": {
+      "doc_id": "rag\\vulnerabilities\\subdomain-takeover.md",
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "hash": "f9459294b004d4155b365b5eb7877ae96c7fe34a984523b63807a7bf7d1d9b84"
+    },
+    "rag\\vulnerabilities\\subdomain-takeover.md::chunk::2": {
+      "doc_id": "rag\\vulnerabilities\\subdomain-takeover.md",
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "hash": "40879189239620648b7039e079a9c49646b33d3bfbc25043bf93c7621104425a"
+    },
+    "rag\\vulnerabilities\\subdomain-takeover.md::chunk::3": {
+      "doc_id": "rag\\vulnerabilities\\subdomain-takeover.md",
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "hash": "911cdcd39a175b10d367a9b854625275b77b8854f0ff1bcbde18c43dd1f2af2e"
+    },
+    "rag\\vulnerabilities\\subdomain-takeover.md::chunk::4": {
+      "doc_id": "rag\\vulnerabilities\\subdomain-takeover.md",
+      "type": "text",
+      "level": 0,
+      "position": 4,
+      "hash": "aeaab43ebd3aa122e94c729b0ad8cf053f836589e9774e598e9055b9ba57e5d0"
+    },
+    "rag\\vulnerabilities\\subdomain-takeover.md::chunk::5": {
+      "doc_id": "rag\\vulnerabilities\\subdomain-takeover.md",
+      "type": "text",
+      "level": 0,
+      "position": 5,
+      "hash": "71aa5f243f6333787fcfb40cd645ad9c46e0cbf185050da50008f3c4ec867712"
+    },
+    "rag\\vulnerabilities\\xss.md::chunk::0": {
+      "doc_id": "rag\\vulnerabilities\\xss.md",
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "hash": "42840d29e028730bd381da1023fe07061b4ab56944821ca5ebb0ef19742509cb"
+    },
+    "rag\\vulnerabilities\\xss.md::chunk::1": {
+      "doc_id": "rag\\vulnerabilities\\xss.md",
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "hash": "bb2e6afb99c6a20911a8f0f01b7bb0a24757f5160765605a532a6b26706aad06"
+    },
+    "rag\\vulnerabilities\\xss.md::chunk::2": {
+      "doc_id": "rag\\vulnerabilities\\xss.md",
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "hash": "5786c5faec276374b86ea6a7cf2786c1c18ec844f266dec19217213bd3359f9b"
+    },
+    "rag\\vulnerabilities\\xxe.md::chunk::0": {
+      "doc_id": "rag\\vulnerabilities\\xxe.md",
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "hash": "9c565c191cefc678f4214e31bc0de1ad5d2e753b9d343891722cdf55b388561c"
+    },
+    "rag\\vulnerabilities\\xxe.md::chunk::1": {
+      "doc_id": "rag\\vulnerabilities\\xxe.md",
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "hash": "3b375bd84f2983d5b8802a0cb58727d33edcb5592b441aa35602e022386e5115"
+    },
+    "rag\\vulnerabilities\\xxe.md::chunk::2": {
+      "doc_id": "rag\\vulnerabilities\\xxe.md",
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "hash": "c5e180c026441920a65a48a57caf32c239b6c5fca77991ca452eae2077b735f5"
+    },
+    "rag\\vulnerabilities\\xxe.md::chunk::3": {
+      "doc_id": "rag\\vulnerabilities\\xxe.md",
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "hash": "19907cb8d04350e1c9c66f3a9fb194e2f1c71f5ca0bed849553805b555095057"
+    },
+    "rag\\vulnerabilities\\xxe.md::chunk::4": {
+      "doc_id": "rag\\vulnerabilities\\xxe.md",
+      "type": "text",
+      "level": 0,
+      "position": 4,
+      "hash": "3115475400ac993e6a092460953677e0f80c7c357f867fe081de146e0272f35c"
+    }
+  }
+}

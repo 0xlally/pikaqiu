@@ -43,6 +43,14 @@ export function ToolCallsPanel({ toolCalls, selectedToolCallId }: ToolCallsPanel
       <div className="space-y-4">
         {visibleCalls.map((call) => (
           <article key={call.id} className={`rounded-2xl border p-4 ${call.id === selectedToolCallId ? "border-accent bg-accent/10" : "border-console-800 bg-console-950/70"}`}>
+            {(() => {
+              const request = typeof call.request === "object" && call.request ? (call.request as Record<string, unknown>) : null;
+              const response = typeof call.response === "object" && call.response ? (call.response as Record<string, unknown>) : null;
+              const commandText = typeof request?.command === "string" ? request.command : "";
+              const rawOutputText = typeof response?.rawOutput === "string" ? response.rawOutput : "";
+
+              return (
+                <>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap items-center gap-2">
                 <StatusBadge label={call.toolName} tone="warning" />
@@ -72,6 +80,23 @@ export function ToolCallsPanel({ toolCalls, selectedToolCallId }: ToolCallsPanel
                 <JsonViewer value={call.response} defaultOpen={false} />
               </div>
             </div>
+
+            {call.toolName === "python" && commandText ? (
+              <div className="mt-4 rounded-xl border border-console-800 bg-console-950/70 p-3">
+                <div className="mb-2 text-xs uppercase tracking-wide text-console-400">执行的 Python 代码</div>
+                <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words text-xs text-slate-200">{commandText}</pre>
+              </div>
+            ) : null}
+
+            {rawOutputText ? (
+              <div className="mt-4 rounded-xl border border-console-800 bg-console-950/70 p-3">
+                <div className="mb-2 text-xs uppercase tracking-wide text-console-400">详细原始输出</div>
+                <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words text-xs text-slate-200">{rawOutputText}</pre>
+              </div>
+            ) : null}
+                </>
+              );
+            })()}
           </article>
         ))}
       </div>

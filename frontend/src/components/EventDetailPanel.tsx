@@ -29,6 +29,7 @@ const ACTOR_LABELS: Record<string, string> = {
 
 export function EventDetailPanel({ selectedEvent, selectedNode }: EventDetailPanelProps) {
   const [detailView, setDetailView] = useState<DetailView>("summary");
+  const [rawModalOpen, setRawModalOpen] = useState(false);
 
   const view = selectedEvent ?? selectedNode;
 
@@ -96,7 +97,23 @@ export function EventDetailPanel({ selectedEvent, selectedNode }: EventDetailPan
             </div>
           ) : null}
 
-          {detailView === "raw" ? <JsonViewer value={{ raw_input: selectedEvent.rawInput, raw_output: selectedEvent.rawOutput, error: selectedEvent.error }} /> : null}
+          {detailView === "raw" ? (
+            <div className="rounded-2xl border border-console-800 bg-console-950/70 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-sm text-slate-300">原始输出体积较大，建议在弹窗中查看，避免右侧详情区过长滚动。</div>
+                <button
+                  type="button"
+                  onClick={() => setRawModalOpen(true)}
+                  className="rounded-xl border border-accent bg-accent/15 px-3 py-2 text-xs text-teal-100"
+                >
+                  弹窗查看原始输出
+                </button>
+              </div>
+              <div className="mt-3 max-h-44 overflow-auto">
+                <JsonViewer value={{ raw_input: selectedEvent.rawInput, raw_output: selectedEvent.rawOutput, error: selectedEvent.error }} defaultOpen={false} />
+              </div>
+            </div>
+          ) : null}
           {detailView === "parsed" ? <JsonViewer value={selectedEvent.parsedOutput} /> : null}
         </div>
       ) : null}
@@ -131,6 +148,29 @@ export function EventDetailPanel({ selectedEvent, selectedNode }: EventDetailPan
             </ul>
           </div>
           <JsonViewer value={selectedNode} />
+        </div>
+      ) : null}
+
+      {rawModalOpen && selectedEvent ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-console-950/80 p-4">
+          <div className="max-h-[88vh] w-[min(1200px,92vw)] rounded-2xl border border-console-700 bg-console-900 shadow-panel">
+            <div className="flex items-center justify-between border-b border-console-800 px-4 py-3">
+              <div>
+                <div className="text-sm font-semibold text-slate-100">原始输出</div>
+                <div className="mt-1 text-xs text-console-400">事件 {selectedEvent.id} · {selectedEvent.title}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRawModalOpen(false)}
+                className="rounded-xl border border-console-700 bg-console-950 px-3 py-2 text-xs text-slate-300 hover:border-console-600"
+              >
+                关闭
+              </button>
+            </div>
+            <div className="max-h-[74vh] overflow-auto p-4">
+              <JsonViewer value={{ raw_input: selectedEvent.rawInput, raw_output: selectedEvent.rawOutput, error: selectedEvent.error }} />
+            </div>
+          </div>
         </div>
       ) : null}
     </Panel>

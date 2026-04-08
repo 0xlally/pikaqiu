@@ -11,6 +11,7 @@ export interface RunListItem {
 interface CreateRunRequest {
   featureDescription: string;
   mappingPath?: string;
+  reasoningHint?: string;
 }
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -30,10 +31,17 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export async function createRun(featureDescription: string, mappingPath?: string): Promise<RunSummary> {
+export async function createRun(
+  featureDescription: string,
+  mappingPath?: string,
+  reasoningHint?: string,
+): Promise<RunSummary> {
   const payload: CreateRunRequest = { featureDescription };
   if (mappingPath) {
     payload.mappingPath = mappingPath;
+  }
+  if (reasoningHint && reasoningHint.trim()) {
+    payload.reasoningHint = reasoningHint.trim();
   }
 
   return requestJson<RunSummary>("/api/runs", {

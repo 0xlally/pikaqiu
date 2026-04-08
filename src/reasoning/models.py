@@ -91,6 +91,8 @@ class ReasoningFamily(StrictModel):
 
     family_id: str
     family_name: str
+    typical_feature_examples: list[str] = Field(default_factory=list)
+    priority_test_focus: list[str] = Field(default_factory=list)
 
 
 class ReasoningFamilyRule(StrictModel):

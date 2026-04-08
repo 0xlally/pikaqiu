@@ -106,6 +106,30 @@ python -m uvicorn api_server:app --app-dir src --host 0.0.0.0 --port 8000
 - `GET /api/runs/{run_id}`
 - `POST /api/runs`
 
+## RAG 知识库服务（使用本地 vulnerabilities）
+
+默认知识源目录为 `src/rag/vulnerabilities`。
+
+1) 先构建向量库（会生成 `src/rag/faiss_db`）：
+
+```powershell
+python src/rag/rag_kdprepare.py
+```
+
+2) 启动知识库服务（默认端口 `8081`）：
+
+```powershell
+python src/rag/knowledge_service.py
+```
+
+3) 健康检查：
+
+```powershell
+curl http://127.0.0.1:8081/health
+```
+
+可选：若需切换知识源目录，可设置环境变量 `RAG_KB_DIR`（支持绝对路径，或相对 `src` 的路径）。
+
 ## 前端运行
 
 ```powershell
@@ -116,6 +140,15 @@ npm run dev
 默认地址：`http://127.0.0.1:5173`
 
 默认会通过 Vite 代理把 `/api/*` 转发到 `http://127.0.0.1:8000`。
+
+若本机 `8000` 端口不可用，可改用环境变量：
+
+```powershell
+$env:PIKAQIU_API_PORT = "8001"
+$env:PIKAQIU_API_TARGET = "http://127.0.0.1:8001"
+```
+
+然后分别启动后端与前端。
 
 联调顺序：
 

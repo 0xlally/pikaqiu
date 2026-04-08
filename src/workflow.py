@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Any, Callable
 
 from agents.act import ActAgent
@@ -10,13 +11,14 @@ from core.mapping import TestFamilyMapper
 from core.models import DemoRunResult, FeaturePoint, NodeType, StateTable, utc_now_iso
 from core.state_table import StateTableStore
 from core.task_tree import TaskTree
-from infra.mcp import BashMCPTool, PythonMCPTool, ToolRegistry
+from infra.mcp import BashMCPTool, PythonMCPTool, StateTableQueryMCPTool, ToolRegistry
 from reasoning.engine import FeatureReasoningEngine, default_reasoning_rule_path
 from runtime.provider import ProviderAgentRuntime
 from settings import load_settings
 
 
 DEFAULT_GOAL_SUFFIX = "拿到flag给我"
+FLAG_PATTERN = re.compile(r"(?i)(flag\{[^}\n]{1,256}\}|ctf\{[^}\n]{1,256}\}|flag[:=]\s*[^\s\n]{1,256})")
 
 
 def apply_default_goal(feature_description: str) -> str:
@@ -62,17 +64,25 @@ class SRCWorkflow:
         self.task_tree = task_tree or TaskTree()
         self.state_store = state_store or StateTableStore()
 
-    def run_demo(self, feature_description: str) -> DemoRunResult:
+    def _reset_run_state(self) -> None:
+        """每次新运行前重置任务树和状态表，避免跨次污染。"""
+        self.task_tree = TaskTree()
+        self.state_store = StateTableStore()
+
+    def run_demo(self, feature_description: str, reasoning_hint: str | None = None) -> DemoRunResult:
         """执行一个最小演示链路。"""
-        return self.run_demo_with_events(feature_description)
+        return self.run_demo_with_events(feature_description, reasoning_hint=reasoning_hint)
 
     def run_demo_with_events(
         self,
         feature_description: str,
         event_callback: Callable[[dict[str, Any]], None] | None = None,
+        reasoning_hint: str | None = None,
     ) -> DemoRunResult:
         """执行演示链路，并在关键步骤发出实时事件。"""
+        self._reset_run_state()
         effective_description = apply_default_goal(feature_description)
+        normalized_hint = (reasoning_hint or "").strip()
         step = 0
 
         def emit(
@@ -105,11 +115,18 @@ class SRCWorkflow:
             stage="reasoning:start",
             title="开始功能点推理",
             status="running",
-            input_data={"featureDescription": effective_description},
+            input_data={
+                "featureDescription": effective_description,
+                "reasoningHint": normalized_hint,
+            },
         )
 
         feature = FeaturePoint.from_description(effective_description)
-        plan = self.reasoning_agent.plan_feature(feature, self.task_tree)
+        plan = self.reasoning_agent.plan_feature(
+            feature,
+            self.task_tree,
+            planning_hint=normalized_hint,
+        )
 
         emit(
             stage="reasoning:finish",
@@ -118,46 +135,62 @@ class SRCWorkflow:
             output_data={
                 "featureName": feature.name,
                 "entryPoints": feature.entry_points,
+                "reasoningHint": normalized_hint,
                 "recommendedFamilyCount": len(plan.recommended_families),
                 "agentOutput": plan.trace,
             },
         )
 
-        next_node = self.task_tree.next_todo(NodeType.INFO) or self.task_tree.next_todo(NodeType.TEST)
-        emit(
-            stage="act:start",
-            title="开始执行节点",
-            status="running",
-            input_data={
-                "nodeId": next_node.id if next_node else None,
-                "nodeTitle": next_node.title if next_node else None,
-                "nodeType": next_node.node_type.value if next_node else None,
-            },
-        )
-
-        act_result = self.act_agent.execute_next(self.task_tree)
-
-        if act_result is None:
-            emit(
-                stage="act:finish",
-                title="无可执行节点",
-                status="success",
-                output_data={"message": "当前没有可执行节点"},
-            )
-
         parsed_result = None
         executed_node_id = None
-        if act_result is not None:
+        act_result = None
+        stop_reason = "no-new-nodes"
+        flag_hit: str | None = None
+
+        max_cycles = 20
+        cycle = 0
+        while cycle < max_cycles:
+            cycle += 1
+            next_node = self.task_tree.next_todo(NodeType.INFO) or self.task_tree.next_todo(NodeType.TEST)
+            if next_node is None:
+                stop_reason = "no-new-nodes"
+                emit(
+                    stage="workflow:stop",
+                    title="无待执行节点，结束循环",
+                    status="success",
+                    output_data={"cycle": cycle - 1, "nodeCount": len(self.task_tree.model.nodes)},
+                )
+                break
+
+            emit(
+                stage="act:start",
+                title="开始执行节点",
+                status="running",
+                input_data={
+                    "cycle": cycle,
+                    "nodeId": next_node.id,
+                    "nodeTitle": next_node.title,
+                    "nodeType": next_node.node_type.value,
+                },
+            )
+
+            act_result = self.act_agent.execute_next(self.task_tree, self.state_store.model)
+            if act_result is None:
+                stop_reason = "no-new-nodes"
+                break
+
             emit(
                 stage="act:finish",
                 title="节点执行完成",
                 status="success" if act_result.exit_code == 0 else "failed",
                 output_data={
+                    "cycle": cycle,
                     "nodeId": act_result.node_id,
                     "toolName": act_result.tool_name,
                     "command": act_result.command,
                     "exitCode": act_result.exit_code,
                     "rawOutput": act_result.raw_output,
+                    "agentOutput": act_result.agent_output,
                 },
             )
 
@@ -165,23 +198,96 @@ class SRCWorkflow:
                 stage="parsing:start",
                 title="开始解析执行结果",
                 status="running",
-                input_data={"nodeId": act_result.node_id},
+                input_data={"cycle": cycle, "nodeId": act_result.node_id},
             )
 
             parsed_result = self.parsing_agent.parse(act_result, self.task_tree)
-            self.reasoning_agent.ingest_parsed_result(parsed_result, self.task_tree, self.state_store)
-            executed_node_id = act_result.node_id
 
             emit(
                 stage="parsing:finish",
                 title="解析完成",
                 status="success",
                 output_data={
+                    "cycle": cycle,
                     "summary": parsed_result.summary,
                     "nextStatus": parsed_result.next_status.value,
                     "evidenceCount": len(parsed_result.evidence),
                     "conclusionCount": len(parsed_result.conclusions),
+                    "agentOutput": "\n".join(parsed_result.state_delta.notes).strip() or None,
                 },
+            )
+
+            emit(
+                stage="reasoning:start",
+                title="开始吸收解析结果并更新计划",
+                status="running",
+                input_data={
+                    "cycle": cycle,
+                    "nodeId": act_result.node_id,
+                    "summary": parsed_result.summary,
+                },
+            )
+
+            node_count_before_ingest = len(self.task_tree.model.nodes)
+            self.reasoning_agent.ingest_parsed_result(
+                parsed_result,
+                self.task_tree,
+                self.state_store,
+                planning_hint=normalized_hint,
+            )
+            node_count_after_ingest = len(self.task_tree.model.nodes)
+            new_nodes_generated = node_count_after_ingest > node_count_before_ingest
+            executed_node_id = act_result.node_id
+
+            emit(
+                stage="reasoning:finish",
+                title="计划更新完成",
+                status="success",
+                output_data={
+                    "cycle": cycle,
+                    "newNodesGenerated": new_nodes_generated,
+                    "agentOutput": self.reasoning_agent.last_ingest_trace,
+                    "stateSnapshot": {
+                        "identityCount": len(self.state_store.model.identities),
+                        "entrypointCount": len(self.state_store.model.key_entrypoints),
+                        "sessionMaterialCount": len(self.state_store.model.session_materials),
+                        "artifactCount": len(self.state_store.model.reusable_artifacts),
+                    },
+                },
+            )
+
+            flag_hit = self._extract_flag_value(act_result.raw_output)
+            if flag_hit is None and parsed_result is not None:
+                flag_hit = self._extract_flag_value(parsed_result.summary)
+
+            if flag_hit:
+                stop_reason = "flag-found"
+                emit(
+                    stage="workflow:stop",
+                    title="命中 FLAG，结束循环",
+                    status="success",
+                    output_data={"flag": flag_hit, "cycle": cycle},
+                )
+                break
+
+            has_pending = self.task_tree.next_todo(NodeType.INFO) is not None or self.task_tree.next_todo(NodeType.TEST) is not None
+            if not has_pending and not new_nodes_generated:
+                stop_reason = "no-new-nodes"
+                emit(
+                    stage="workflow:stop",
+                    title="无新节点生成，结束循环",
+                    status="success",
+                    output_data={"cycle": cycle, "nodeCount": node_count_after_ingest},
+                )
+                break
+
+        if cycle >= max_cycles:
+            stop_reason = "max-cycles"
+            emit(
+                stage="workflow:guard",
+                title="达到最大循环次数保护",
+                status="failed",
+                error=f"max_cycles={max_cycles}",
             )
 
         pending_test_count = len(
@@ -195,7 +301,11 @@ class SRCWorkflow:
             stage="workflow:finish",
             title="工作流结束",
             status="success",
-            output_data={"pendingTestNodes": pending_test_count},
+            output_data={
+                "pendingTestNodes": pending_test_count,
+                "stopReason": stop_reason,
+                "flag": flag_hit,
+            },
         )
 
         return DemoRunResult(
@@ -204,15 +314,29 @@ class SRCWorkflow:
             executed_node_id=executed_node_id,
             act_result=act_result,
             parsed_result=parsed_result,
+            reasoning_ingest_trace=self.reasoning_agent.last_ingest_trace,
             state_table=self.state_store.model,
             task_tree=self.task_tree.model,
         )
+
+    def _extract_flag_value(self, text: str | None) -> str | None:
+        if not text:
+            return None
+        matched = FLAG_PATTERN.search(text)
+        if not matched:
+            return None
+        return matched.group(1)
 
 
 def build_default_workflow(mapping_path: str | Path | None = None) -> SRCWorkflow:
     """构建默认工作流（直连 provider）。"""
     settings = load_settings()
-    tools = ToolRegistry([PythonMCPTool(), BashMCPTool()])
+    state_store = StateTableStore(StateTable())
+    tools = ToolRegistry([
+        PythonMCPTool(),
+        BashMCPTool(),
+        StateTableQueryMCPTool(lambda: state_store.model),
+    ])
     workspaces = _build_agent_runtime_workspaces(settings.runtime_workspace_root)
 
     provider_args = {
@@ -230,12 +354,13 @@ def build_default_workflow(mapping_path: str | Path | None = None) -> SRCWorkflo
             runtime=reasoning_runtime,
             mapper=TestFamilyMapper.from_file(mapping_path or default_mapping_path()),
             feature_engine=FeatureReasoningEngine.from_file(default_reasoning_rule_path()),
+            tools=tools,
         ),
         act_agent=ActAgent(
             runtime=act_runtime,
             tools=tools,
         ),
-        parsing_agent=ParsingAgent(runtime=parsing_runtime),
+        parsing_agent=ParsingAgent(runtime=parsing_runtime, tools=tools),
         task_tree=TaskTree(),
-        state_store=StateTableStore(StateTable()),
+        state_store=state_store,
     )

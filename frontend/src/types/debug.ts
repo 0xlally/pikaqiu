@@ -8,9 +8,12 @@ export type RunStage =
   | "bootstrap"
   | "act:info"
   | "parsing:info"
+  | "parsing:result"
   | "reasoning:feature-mapping"
+  | "reasoning:update-plan"
   | "act:test"
-  | "parsing:test";
+  | "parsing:test"
+  | "completed";
 
 export type EventType =
   | "agent_step_started"

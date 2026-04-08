@@ -65,6 +65,8 @@ TOKEN_STOPWORDS = {
     "www",
 }
 
+EXAMPLE_MATCH_WEIGHT = 3
+
 
 class FeatureReasoningEngine:
     """从 parsing 事实中识别功能点并映射测试家族。"""
@@ -138,6 +140,15 @@ class FeatureReasoningEngine:
                 continue
             scores[rule.family_id] = scores.get(rule.family_id, 0) + rule.weight * len(matched_terms)
             reasons.append(f"{rule.family_id}: {rule.reason}；命中 {', '.join(matched_terms)}")
+
+        for family in self.config.families:
+            matched_examples = self._match_family_examples(work_item, family.typical_feature_examples)
+            if not matched_examples:
+                continue
+            scores[family.family_id] = scores.get(family.family_id, 0) + EXAMPLE_MATCH_WEIGHT * len(matched_examples)
+            reasons.append(
+                f"{family.family_id}: 命中典型功能点例子；命中 {', '.join(matched_examples[:4])}"
+            )
 
         if not scores:
             return None
@@ -241,6 +252,22 @@ class FeatureReasoningEngine:
                     continue
                 if self._contains_term(fact_item.text.lower(), term):
                     matched.append(term)
+        return matched
+
+    def _match_family_examples(self, work_item: FeatureWorkItem, examples: list[str]) -> list[str]:
+        """使用家族典型功能点例子做弱监督匹配。"""
+        if not examples:
+            return []
+
+        matched: list[str] = []
+        for _, fact_item in work_item.facts:
+            text = fact_item.text.lower()
+            for example in examples:
+                normalized = " ".join(example.lower().split())
+                if not normalized or normalized in matched:
+                    continue
+                if self._contains_term(text, normalized):
+                    matched.append(normalized)
         return matched
 
     def _feature_title(self, base_title: str, texts: list[str]) -> str:

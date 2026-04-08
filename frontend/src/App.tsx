@@ -35,6 +35,7 @@ function runStatusLabel(status: RunSummary["status"]): string {
 function App() {
   const [run, setRun] = useState<RunSummary | null>(null);
   const [featureDescription, setFeatureDescription] = useState("Admin login endpoint /api/login exposes username password captcha and token-based session handling.");
+  const [reasoningHint, setReasoningHint] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingLatest, setIsLoadingLatest] = useState(true);
   const [requestError, setRequestError] = useState<string | null>(null);
@@ -89,7 +90,47 @@ function App() {
     const latestEvent = run.timeline[run.timeline.length - 1] ?? null;
     setSelectedNodeId(run.currentNodeId);
     setSelectedEventId(latestEvent?.id ?? null);
-  }, [run]);
+  }, [run?.runId]);
+
+  useEffect(() => {
+    if (!run || run.status !== "running") {
+      return;
+    }
+
+    const runId = run.runId;
+    let cancelled = false;
+
+    async function pollCurrentRun() {
+      try {
+        const latest = await getRunById(runId);
+        if (cancelled) {
+          return;
+        }
+        setRun(latest);
+        if (latest.status !== "running") {
+          const history = await listRuns();
+          if (!cancelled) {
+            setRunHistory(history);
+          }
+        }
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setRequestError(error instanceof Error ? error.message : "轮询运行状态失败。");
+      }
+    }
+
+    void pollCurrentRun();
+    const timer = window.setInterval(() => {
+      void pollCurrentRun();
+    }, 1200);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [run?.runId, run?.status]);
 
   const selectedNode = run?.nodes.find((node) => node.id === selectedNodeId) ?? null;
   const allEvents = run?.timeline ?? [];
@@ -159,7 +200,7 @@ function App() {
     setIsSubmitting(true);
     setRequestError(null);
     try {
-      const nextRun = await createRun(input);
+      const nextRun = await createRun(input, undefined, reasoningHint);
       setRun(nextRun);
       const history = await listRuns();
       setRunHistory(history);
@@ -209,6 +250,15 @@ function App() {
               rows={3}
               className="w-full rounded-xl border border-console-800 bg-console-950 px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-console-500 focus:border-accent"
               placeholder="输入要让后端执行分析的真实功能描述"
+            />
+            <label htmlFor="reasoning-hint" className="text-sm font-medium text-slate-200">规划提示（可选）</label>
+            <textarea
+              id="reasoning-hint"
+              value={reasoningHint}
+              onChange={(event) => setReasoningHint(event.target.value)}
+              rows={2}
+              className="w-full rounded-xl border border-console-800 bg-console-950 px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-console-500 focus:border-accent"
+              placeholder="例如：优先围绕 IDOR、上传解析链、认证绕过继续规划"
             />
             <div className="flex flex-wrap items-center gap-3">
               <button

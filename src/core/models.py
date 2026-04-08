@@ -466,6 +466,7 @@ class ActResult(StrictModel):
     command: str
     exit_code: int
     raw_output: str
+    agent_output: str | None = None
     started_at: str
     finished_at: str
 
@@ -499,5 +500,6 @@ class DemoRunResult(StrictModel):
     executed_node_id: str | None = None
     act_result: ActResult | None = None
     parsed_result: ParsedActResult | None = None
+    reasoning_ingest_trace: str | None = None
     state_table: StateTable
     task_tree: TaskTreeModel

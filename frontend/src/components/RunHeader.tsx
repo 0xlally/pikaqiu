@@ -17,11 +17,20 @@ function stageLabel(stage: RunSummary["currentStage"]): string {
   if (stage === "parsing:info") {
     return "解析:信息";
   }
+  if (stage === "parsing:result") {
+    return "解析:结果汇总";
+  }
   if (stage === "reasoning:feature-mapping") {
     return "推理:功能映射";
   }
+  if (stage === "reasoning:update-plan") {
+    return "推理:计划更新";
+  }
   if (stage === "act:test") {
     return "执行:测试";
+  }
+  if (stage === "completed") {
+    return "已完成";
   }
   return "解析:测试";
 }
