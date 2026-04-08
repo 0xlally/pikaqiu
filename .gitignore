@@ -3,6 +3,9 @@ __pycache__/
 *.pyc
 *.egg-info/
 .runtime_workspaces/
+.venv/
+.vscode/
+run_outputs/
 .env
 .env.*
 !.env.example

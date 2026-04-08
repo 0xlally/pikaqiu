@@ -106,6 +106,26 @@ python -m uvicorn api_server:app --app-dir src --host 0.0.0.0 --port 8000
 - `GET /api/runs/{run_id}`
 - `POST /api/runs`
 
+## 单次运行输出落盘
+
+后端会将每次运行的前端可见数据落盘为一个 JSON 文件。
+
+- 默认目录：`run_outputs/`
+- 默认文件名：`{runId}.json`
+- 返回字段：`outputFile`（绝对路径）、`outputFileRelative`（相对项目根目录路径）
+
+可通过环境变量修改目录：
+
+```powershell
+$env:PIKAQIU_RUN_OUTPUT_DIR = "run_outputs"
+```
+
+文件内容包含：
+
+- `runId`
+- `exportedAt`
+- `visibleRunData`（页面可见的完整运行信息）
+
 ## RAG 知识库服务（使用本地 vulnerabilities）
 
 默认知识源目录为 `src/rag/vulnerabilities`。

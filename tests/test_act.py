@@ -328,3 +328,27 @@ def test_act_passes_priority_hints_from_ancestor_info_node() -> None:
     hints = context.get("priority_hints") or []
     assert hints
     assert any("拿到flag" in hint for hint in hints)
+
+
+def test_act_does_not_reuse_example_hint_url_as_runtime_target() -> None:
+    tree = TaskTree()
+    tree.create_node(
+        title="测试对象越权",
+        node_type=NodeType.TEST,
+        source="reasoning",
+        related_feature_id="feat-acl",
+        related_test_family="access_control",
+        description="围绕订单越权做对象访问测试",
+        notes=["高优先级提示：参考上一次成功样例 http://10.10.10.10:18080，仅作为示例"],
+    )
+
+    runtime = ScriptedRuntime(
+        '{"tool_name":"python","command":"print(\"/orders\")"}'
+    )
+    agent = ActAgent(runtime=runtime, tools=ToolRegistry([PythonMCPTool()]))
+
+    result = agent.execute_next(tree)
+
+    assert result is not None
+    assert "BASE_URL = 'http://127.0.0.1'" in result.command
+    assert "10.10.10.10:18080" not in result.command

@@ -8,6 +8,8 @@ from core.models import (
     AgentRuntimeRequest,
     ConclusionRecord,
     EvidenceRecord,
+    NodeStatus,
+    NodeType,
     ParsedActResult,
     StateItem,
     StateTableDelta,
@@ -129,13 +131,52 @@ class ParsingAgent:
             family_id=node.test_family_id or "generic",
         )
 
+        next_status = self._decide_next_status(
+            node_type=node.node_type,
+            exit_code=act_result.exit_code,
+            raw_output=act_result.raw_output,
+            summary=summary,
+        )
+
         return ParsedActResult(
             node_id=node.id,
             summary=summary,
             evidence=evidence,
             conclusions=conclusions,
             state_delta=state_delta,
+            next_status=next_status,
         )
+
+    def _decide_next_status(
+        self,
+        *,
+        node_type: NodeType,
+        exit_code: int,
+        raw_output: str,
+        summary: str,
+    ) -> NodeStatus:
+        if exit_code != 0:
+            return NodeStatus.TODO
+
+        merged = "\n".join([raw_output or "", summary or ""])
+        if re.search(r"(?i)(flag\{[^}\n]{1,256}\}|ctf\{[^}\n]{1,256}\}|flag[:=]\s*[^\s\n]{1,256})", merged):
+            return NodeStatus.DONE
+
+        if node_type != NodeType.TEST:
+            return NodeStatus.DONE
+
+        statuses = [int(code) for code in re.findall(r"(?im)\bstatus\s*[:=]\s*(\d{3})\b", raw_output or "")]
+        has_success_status = any(200 <= code < 400 for code in statuses)
+
+        status_200_count_match = re.search(r'"status_200_count"\s*:\s*(\d+)', raw_output or "")
+        status_200_count = int(status_200_count_match.group(1)) if status_200_count_match else None
+
+        if statuses and not has_success_status:
+            return NodeStatus.TODO
+        if status_200_count is not None and status_200_count <= 0:
+            return NodeStatus.TODO
+
+        return NodeStatus.DONE
 
     def _extract_evidence(
         self,

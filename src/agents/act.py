@@ -344,6 +344,17 @@ PARAM_NOISE = {
 
 URL_CANDIDATE_PATTERN = r"https?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+"
 
+HINT_PREFIXES = (
+    "提示：",
+    "高优先级提示：",
+    "来自提示：",
+)
+
+EXAMPLE_HINT_PATTERN = re.compile(
+    r"示例|样例|例如|参考|上一条|上一次|example|for example|sample",
+    flags=re.IGNORECASE,
+)
+
 
 class ActAgent:
     """选择待执行节点并完成一次工具执行的 act agent。"""
@@ -679,8 +690,10 @@ class ActAgent:
         urls: list[str] = []
         paths: list[str] = []
 
-        def add_targets(text: str | None) -> None:
+        def add_targets(text: str | None, *, from_hint: bool = False) -> None:
             if not text:
+                return
+            if from_hint and self._is_hint_or_example_text(text):
                 return
             extracted_urls, extracted_paths = self._extract_targets(text)
             for value in extracted_urls:
@@ -693,13 +706,13 @@ class ActAgent:
         add_targets(node.title)
         add_targets(node.description)
         for note in node.notes[-5:]:
-            add_targets(note)
+            add_targets(note, from_hint=True)
 
         for item in task_tree_snapshot:
             add_targets(str(item.get("title") or ""))
             add_targets(str(item.get("description") or ""))
             for note in item.get("notes") or []:
-                add_targets(str(note))
+                add_targets(str(note), from_hint=True)
 
         return {
             "urls": urls,
@@ -1088,11 +1101,12 @@ class ActAgent:
         known_targets: dict[str, list[str]],
         state_table_snapshot: dict[str, object],
     ) -> ActCommand:
-        base_url = self._resolve_base_url(known_targets, [title, node_description, *node_notes])
+        runtime_texts = self._filter_runtime_texts([title, node_description, *node_notes])
+        base_url = self._resolve_base_url(known_targets, runtime_texts)
         username, password = self._resolve_credentials(state_table_snapshot)
-        user_id = self._resolve_user_id([title, node_description, *node_notes])
+        user_id = self._resolve_user_id(runtime_texts)
         known_paths = list(dict.fromkeys(known_targets.get("paths") or []))
-        hinted_orders = self._resolve_order_ids([title, node_description, *node_notes])
+        hinted_orders = self._resolve_order_ids(runtime_texts)
 
         command = "\n".join(
             [
@@ -1297,6 +1311,24 @@ class ActAgent:
             if item not in values:
                 values.append(item)
         return values[:40]
+
+    def _filter_runtime_texts(self, texts: list[str]) -> list[str]:
+        filtered: list[str] = []
+        for text in texts:
+            if not text:
+                continue
+            if self._is_hint_or_example_text(text):
+                continue
+            filtered.append(text)
+        return filtered
+
+    def _is_hint_or_example_text(self, text: str) -> bool:
+        normalized = " ".join((text or "").split())
+        if not normalized:
+            return False
+        if any(normalized.startswith(prefix) for prefix in HINT_PREFIXES):
+            return True
+        return EXAMPLE_HINT_PATTERN.search(normalized) is not None
 
     def _has_reusable_state(self, state_table_snapshot: dict[str, object]) -> bool:
         for key in ("identities", "key_entrypoints", "session_materials", "reusable_artifacts"):

@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 from datetime import datetime
+import json
 import os
 from pathlib import Path
 import re
@@ -36,6 +37,8 @@ _RUN_HISTORY: list[dict[str, Any]] = []
 _RUN_INDEX: dict[str, dict[str, Any]] = {}
 _RUN_LOCK = threading.Lock()
 _MAX_RUN_HISTORY = 30
+_RUN_OUTPUT_DIR_ENV = "PIKAQIU_RUN_OUTPUT_DIR"
+_RUN_OUTPUT_DIR_DEFAULT = "run_outputs"
 
 
 @app.get("/api/health")
@@ -258,6 +261,11 @@ def _upsert_run_summary_locked(run_summary: dict[str, Any]) -> None:
     global _LATEST_RUN
 
     run_id = run_summary["runId"]
+
+    output_path = _run_output_path(run_id)
+    run_summary["outputFile"] = str(output_path)
+    run_summary["outputFileRelative"] = _workspace_relative_path(output_path)
+
     _RUN_INDEX[run_id] = run_summary
 
     for index, item in enumerate(_RUN_HISTORY):
@@ -274,6 +282,48 @@ def _upsert_run_summary_locked(run_summary: dict[str, Any]) -> None:
             _RUN_INDEX[item["runId"]] = item
 
     _LATEST_RUN = run_summary
+
+    _persist_run_output(run_summary, output_path)
+
+
+def _workspace_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _resolve_run_output_dir() -> Path:
+    configured = os.getenv(_RUN_OUTPUT_DIR_ENV, "").strip()
+    if configured:
+        candidate = Path(configured).expanduser()
+        if not candidate.is_absolute():
+            candidate = (_workspace_root() / candidate).resolve()
+        return candidate
+    return (_workspace_root() / _RUN_OUTPUT_DIR_DEFAULT).resolve()
+
+
+def _run_output_path(run_id: str) -> Path:
+    safe_run_id = re.sub(r"[^A-Za-z0-9._-]+", "_", run_id).strip("_") or "run"
+    return _resolve_run_output_dir() / f"{safe_run_id}.json"
+
+
+def _workspace_relative_path(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(_workspace_root())).replace("\\", "/")
+    except Exception:
+        return str(path)
+
+
+def _persist_run_output(run_summary: dict[str, Any], output_path: Path) -> None:
+    payload = {
+        "runId": run_summary.get("runId"),
+        "exportedAt": utc_now_iso(),
+        # 这里落盘的是前端可见的完整运行数据。
+        "visibleRunData": run_summary,
+    }
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
 
 def _event_actor(stage: str) -> str:
