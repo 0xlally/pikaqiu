@@ -330,6 +330,22 @@ AUTH_FAMILY_IDS = {
     "session_management",
 }
 
+NO_AUTO_STATE_TABLE_FAMILIES = {
+    "access_control",
+    "object_access_control",
+    "property_access_control",
+    "function_access_control",
+    "input_validation",
+    "server_input_interpretation",
+}
+
+STATE_STRUCTURED_KEYS = (
+    "request_templates",
+    "object_inventory",
+    "flow_graph",
+    "frontier_queue",
+)
+
 PARAM_NOISE = {
     "http",
     "https",
@@ -376,9 +392,9 @@ class ActAgent:
             return None
 
         task_tree_snapshot = self._build_task_tree_snapshot(task_tree)
-        known_targets = self._collect_known_targets(node, task_tree_snapshot)
-        mutable_parameters = self._collect_mutable_parameters(node, task_tree_snapshot)
         state_table_snapshot = self._build_state_table_snapshot(state_table)
+        known_targets = self._collect_known_targets(node, task_tree_snapshot, state_table_snapshot)
+        mutable_parameters = self._collect_mutable_parameters(node, task_tree_snapshot, state_table_snapshot)
         priority_hints = self._collect_priority_hints(node, task_tree_snapshot)
 
         family_id = node.related_test_family or ""
@@ -444,6 +460,7 @@ class ActAgent:
 
         if self._should_query_state_table_first(
             node_type=node.node_type.value,
+            test_family_id=node.test_family_id or "",
             known_targets=known_targets,
             mutable_parameters=mutable_parameters,
             state_table_snapshot=state_table_snapshot,
@@ -685,7 +702,12 @@ class ActAgent:
             )
         return snapshot
 
-    def _collect_known_targets(self, node, task_tree_snapshot: list[dict[str, object]]) -> dict[str, list[str]]:
+    def _collect_known_targets(
+        self,
+        node,
+        task_tree_snapshot: list[dict[str, object]],
+        state_table_snapshot: dict[str, object],
+    ) -> dict[str, list[str]]:
         """从当前节点和任务树快照中提取可落地的 URL/路径，供命令生成约束使用。"""
         urls: list[str] = []
         paths: list[str] = []
@@ -714,6 +736,16 @@ class ActAgent:
             for note in item.get("notes") or []:
                 add_targets(str(note), from_hint=True)
 
+        for template in state_table_snapshot.get("request_templates") or []:
+            if not isinstance(template, dict):
+                continue
+            path = str(template.get("path") or "").strip()
+            if path and path not in paths:
+                paths.append(path)
+            url = str(template.get("url") or "").strip()
+            if url and url not in urls:
+                urls.append(url)
+
         return {
             "urls": urls,
             "paths": paths,
@@ -727,6 +759,10 @@ class ActAgent:
                 "key_entrypoints": [],
                 "session_materials": [],
                 "reusable_artifacts": [],
+                "request_templates": [],
+                "object_inventory": [],
+                "flow_graph": {},
+                "frontier_queue": [],
                 "notes": [],
             }
 
@@ -743,19 +779,93 @@ class ActAgent:
                 )
             return result
 
+        notes = state_table.notes[-30:]
+        request_templates = self._extract_structured_state_list(state_table, "request_templates", notes)
+        object_inventory = self._extract_structured_state_list(state_table, "object_inventory", notes)
+        flow_graph = self._extract_structured_state_dict(state_table, "flow_graph", notes)
+        frontier_queue = self._extract_structured_state_list(state_table, "frontier_queue", notes)
+
         return {
             "identities": serialize(state_table.identities),
             "key_entrypoints": serialize(state_table.key_entrypoints),
             "session_materials": serialize(state_table.session_materials),
             "reusable_artifacts": serialize(state_table.reusable_artifacts),
-            "notes": state_table.notes[-20:],
+            "request_templates": request_templates[:30],
+            "object_inventory": object_inventory[:30],
+            "flow_graph": flow_graph,
+            "frontier_queue": frontier_queue[:30],
+            "notes": notes,
         }
 
-    def _collect_mutable_parameters(self, node, task_tree_snapshot: list[dict[str, object]]) -> dict[str, object]:
+    def _extract_structured_state_list(
+        self,
+        state_table: StateTable,
+        key: str,
+        notes: list[str],
+    ) -> list[object]:
+        direct_value = getattr(state_table, key, None)
+        if isinstance(direct_value, list):
+            return direct_value
+
+        for note in reversed(notes):
+            parsed = self._parse_structured_note(note, key)
+            if isinstance(parsed, list):
+                return parsed
+            if isinstance(parsed, dict):
+                nested = parsed.get(key)
+                if isinstance(nested, list):
+                    return nested
+        return []
+
+    def _extract_structured_state_dict(
+        self,
+        state_table: StateTable,
+        key: str,
+        notes: list[str],
+    ) -> dict[str, object]:
+        direct_value = getattr(state_table, key, None)
+        if isinstance(direct_value, dict):
+            return direct_value
+
+        for note in reversed(notes):
+            parsed = self._parse_structured_note(note, key)
+            if isinstance(parsed, dict):
+                return parsed
+        return {}
+
+    def _parse_structured_note(self, note: str, key: str) -> object | None:
+        text = (note or "").strip()
+        if not text:
+            return None
+
+        prefix = f"{key}="
+        if text.startswith(prefix):
+            payload = text[len(prefix):].strip()
+            try:
+                return json.loads(payload)
+            except json.JSONDecodeError:
+                return None
+
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(parsed, dict) and key in parsed:
+            return parsed.get(key)
+        return None
+
+    def _collect_mutable_parameters(
+        self,
+        node,
+        task_tree_snapshot: list[dict[str, object]],
+        state_table_snapshot: dict[str, object],
+    ) -> dict[str, object]:
         """提取可改参数并给出家族级改参重点，帮助 act 做越权/逻辑测试。"""
         discovered: list[str] = []
+        state_prioritized: list[str] = []
+        object_candidates: list[str] = []
 
-        def add_param(value: str) -> None:
+        def add_param(value: str, *, from_state: bool = False) -> None:
             key = value.strip().lower()
             if not key or key in PARAM_NOISE:
                 return
@@ -763,23 +873,58 @@ class ActAgent:
                 return
             if key not in discovered:
                 discovered.append(key)
+            if from_state and key not in state_prioritized:
+                state_prioritized.append(key)
 
-        def add_from_text(text: str | None) -> None:
+        def add_object_candidate(value: str) -> None:
+            candidate = value.strip()
+            if not candidate:
+                return
+            if candidate not in object_candidates:
+                object_candidates.append(candidate)
+
+        def add_from_text(text: str | None, *, from_state: bool = False) -> None:
             if not text:
                 return
             for key in re.findall(r"\{([A-Za-z_][A-Za-z0-9_]{1,40})\}", text):
-                add_param(key)
+                add_param(key, from_state=from_state)
             for key in re.findall(r"['\"]([A-Za-z_][A-Za-z0-9_]{1,40})['\"]\s*:", text):
-                add_param(key)
+                add_param(key, from_state=from_state)
             for key in re.findall(r"\b([A-Za-z_][A-Za-z0-9_]{1,40})\s*=", text):
-                add_param(key)
+                add_param(key, from_state=from_state)
             for url in re.findall(URL_CANDIDATE_PATTERN, text, flags=re.IGNORECASE):
                 try:
                     parsed = urlparse(url)
                 except ValueError:
                     continue
                 for key, _ in parse_qsl(parsed.query, keep_blank_values=True):
-                    add_param(key)
+                    add_param(key, from_state=from_state)
+
+        for template in state_table_snapshot.get("request_templates") or []:
+            if not isinstance(template, dict):
+                continue
+            add_from_text(str(template.get("path") or ""), from_state=True)
+            add_from_text(str(template.get("url") or ""), from_state=True)
+            for key in ("params", "query_keys", "path_keys"):
+                values = template.get(key)
+                if isinstance(values, list):
+                    for item in values:
+                        add_param(str(item), from_state=True)
+
+        for item in state_table_snapshot.get("object_inventory") or []:
+            if isinstance(item, dict):
+                for key, value in item.items():
+                    add_param(str(key), from_state=True)
+                    add_object_candidate(str(value))
+                continue
+            value = str(item)
+            add_object_candidate(value)
+            kv_match = re.search(r"([A-Za-z_][A-Za-z0-9_]{1,40})\s*[:=]\s*([A-Za-z0-9_-]{1,80})", value)
+            if kv_match:
+                add_param(kv_match.group(1), from_state=True)
+                add_object_candidate(kv_match.group(2))
+            elif re.fullmatch(r"[A-Za-z0-9_-]{2,80}", value):
+                add_param("object_id", from_state=True)
 
         add_from_text(node.title)
         add_from_text(node.description)
@@ -798,15 +943,24 @@ class ActAgent:
             if key in COMMON_MUTABLE_PARAMS and key not in family_focus:
                 family_focus.append(key)
 
-        recommended = [item for item in family_focus if item in discovered]
+        recommended = [item for item in state_prioritized if item in discovered]
         for item in family_focus:
+            if item in discovered and item not in recommended:
+                recommended.append(item)
+        for item in family_focus:
+            if item not in recommended:
+                recommended.append(item)
+        for item in discovered:
             if item not in recommended:
                 recommended.append(item)
 
         return {
             "discovered": discovered[:40],
+            "state_priority": state_prioritized[:20],
             "family_priority": family_focus[:20],
             "recommended_for_this_node": recommended[:20],
+            "object_candidates": object_candidates[:30],
+            "request_templates": (state_table_snapshot.get("request_templates") or [])[:20],
             "mutation_hint": FAMILY_MUTATION_HINTS.get(family_id, "优先从对象ID、角色、状态、步骤、额度和token参数开始改参验证。"),
         }
 
@@ -864,7 +1018,7 @@ class ActAgent:
             )
 
         if self._should_force_rich_access_probe(command, node_type=node_type, test_family_id=test_family_id):
-            return self._build_access_control_probe_command(
+            return self._build_object_access_probe_command(
                 node_id=node_id,
                 title=title,
                 node_description=node_description,
@@ -892,6 +1046,7 @@ class ActAgent:
         self,
         *,
         node_type: str,
+        test_family_id: str,
         known_targets: dict[str, list[str]],
         mutable_parameters: dict[str, object],
         state_table_snapshot: dict[str, object],
@@ -903,6 +1058,8 @@ class ActAgent:
         if "state_table" not in self.tools.tools:
             return False
         if node_type != NodeType.TEST.value:
+            return False
+        if test_family_id in NO_AUTO_STATE_TABLE_FAMILIES:
             return False
 
         known_target_count = len(known_targets.get("urls") or []) + len(known_targets.get("paths") or [])
@@ -1049,7 +1206,7 @@ class ActAgent:
     ) -> ActCommand:
         """兜底命令：在模型未返回可执行命令时保证链路不中断。"""
         if node_type == NodeType.TEST.value and test_family_id in ACCESS_CONTROL_FAMILY_IDS:
-            return self._build_access_control_probe_command(
+            return self._build_object_access_probe_command(
                 node_id=node_id,
                 title=title,
                 node_description=node_description,
@@ -1058,7 +1215,37 @@ class ActAgent:
                 state_table_snapshot=state_table_snapshot,
             )
 
-        if node_type == NodeType.TEST.value and "state_table" in self.tools.tools and self._has_reusable_state(state_table_snapshot):
+        if node_type == NodeType.TEST.value and test_family_id in AUTH_FAMILY_IDS and self._should_use_login_replay_fallback(
+            title=title,
+            node_description=node_description,
+            node_notes=node_notes,
+        ):
+            return self._build_login_replay_command(
+                node_id=node_id,
+                title=title,
+                node_description=node_description,
+                node_notes=node_notes,
+                known_targets=known_targets,
+                state_table_snapshot=state_table_snapshot,
+            )
+
+        lowered_text = f"{title}\n{node_description}".lower()
+        if node_type == NodeType.INFO.value and ("登录后侦察" in lowered_text or "post-login" in lowered_text):
+            return self._build_post_login_recon_command(
+                node_id=node_id,
+                title=title,
+                node_description=node_description,
+                node_notes=node_notes,
+                known_targets=known_targets,
+                state_table_snapshot=state_table_snapshot,
+            )
+
+        if (
+            node_type == NodeType.TEST.value
+            and test_family_id not in NO_AUTO_STATE_TABLE_FAMILIES
+            and "state_table" in self.tools.tools
+            and self._has_reusable_state(state_table_snapshot)
+        ):
             return self._build_state_table_query_command(test_family_id)
 
         url_match = re.search(URL_CANDIDATE_PATTERN, f"{title}\n{node_description}", flags=re.IGNORECASE)
@@ -1101,17 +1288,34 @@ class ActAgent:
         known_targets: dict[str, list[str]],
         state_table_snapshot: dict[str, object],
     ) -> ActCommand:
+        return self._build_object_access_probe_command(
+            node_id=node_id,
+            title=title,
+            node_description=node_description,
+            node_notes=node_notes,
+            known_targets=known_targets,
+            state_table_snapshot=state_table_snapshot,
+        )
+
+    def _build_login_replay_command(
+        self,
+        *,
+        node_id: str,
+        title: str,
+        node_description: str,
+        node_notes: list[str],
+        known_targets: dict[str, list[str]],
+        state_table_snapshot: dict[str, object],
+    ) -> ActCommand:
         runtime_texts = self._filter_runtime_texts([title, node_description, *node_notes])
         base_url = self._resolve_base_url(known_targets, runtime_texts)
         username, password = self._resolve_credentials(state_table_snapshot)
-        user_id = self._resolve_user_id(runtime_texts)
         known_paths = list(dict.fromkeys(known_targets.get("paths") or []))
-        hinted_orders = self._resolve_order_ids(runtime_texts)
+        request_templates = self._resolve_request_templates(known_targets, state_table_snapshot)
 
         command = "\n".join(
             [
                 "import json",
-                "import re",
                 "import urllib.error",
                 "import urllib.parse",
                 "import urllib.request",
@@ -1120,12 +1324,16 @@ class ActAgent:
                 f"BASE_URL = {base_url!r}",
                 f"USERNAME = {username!r}",
                 f"PASSWORD = {password!r}",
-                f"HINT_USER_ID = {user_id!r}",
                 f"KNOWN_PATHS = {known_paths!r}",
-                f"HINT_ORDER_IDS = {hinted_orders!r}",
+                f"REQUEST_TEMPLATES = {request_templates!r}",
                 "",
                 "jar = http.cookiejar.CookieJar()",
                 "opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))",
+                "",
+                "def emit(event, **kwargs):",
+                "    payload = {'event': event}",
+                "    payload.update(kwargs)",
+                "    print(json.dumps(payload, ensure_ascii=False))",
                 "",
                 "def abs_url(path):",
                 "    return urllib.parse.urljoin(BASE_URL.rstrip('/') + '/', path.lstrip('/'))",
@@ -1150,122 +1358,395 @@ class ActAgent:
                 "    except Exception as e:",
                 "        return {'ok': False, 'url': url, 'status': -1, 'headers': {}, 'text': str(e)}",
                 "",
-                "def preview(text, max_len=700):",
-                "    t = (text or '').replace('\\r', '')",
-                "    return t[:max_len] + ('...' if len(t) > max_len else '')",
-                "",
-                "def log_result(tag, result):",
-                "    print(f'[{tag}] {result[\"status\"]} {result[\"url\"]}')",
-                "    location = result.get('headers', {}).get('Location')",
-                "    if location:",
-                "        print(f'  -> Location: {location}')",
-                "    print('  -> Body:')",
-                "    print(preview(result.get('text', '')))",
-                "",
-                "print('[ACT] access_control probe started')",
-                "print(f'[ACT] node_id=' + " + repr(node_id) + ")",
-                "print(f'[ACT] base_url={BASE_URL}, username={USERNAME}')",
-                "",
-                "collected_bodies = []",
-                "",
-                "home = request('GET', '/')",
-                "log_result('GET /', home)",
-                "collected_bodies.append(home.get('text', ''))",
+                "emit('login_replay_start', node_id=" + repr(node_id) + ", base_url=BASE_URL, username=USERNAME)",
                 "",
                 "login_pages = []",
-                "for p in [f'/password/{USERNAME}', '/login', '/password/test', '/password/']:",
+                "for p in ['/login', '/signin', f'/password/{USERNAME}', '/password/test', '/password/']:",
                 "    if p not in login_pages:",
                 "        login_pages.append(p)",
                 "for p in KNOWN_PATHS:",
                 "    if 'login' in p or 'password' in p:",
                 "        if p not in login_pages:",
                 "            login_pages.append(p)",
+                "for item in REQUEST_TEMPLATES:",
+                "    path = str(item.get('path') or '')",
+                "    if ('login' in path or 'signin' in path or 'password' in path) and path not in login_pages:",
+                "        login_pages.append(path)",
                 "",
+                "status_2xx = 0",
                 "for p in login_pages[:6]:",
                 "    resp = request('GET', p)",
-                "    log_result(f'GET {p}', resp)",
-                "    collected_bodies.append(resp.get('text', ''))",
+                "    if 200 <= resp.get('status', -1) < 400:",
+                "        status_2xx += 1",
+                "    emit('login_page_probe', method='GET', path=p, status=resp.get('status'), url=resp.get('url'))",
+                "    print(f\"status:{resp.get('status')}\")",
                 "",
-                "candidate_posts = ['/login', f'/password/{USERNAME}', '/password/test']",
-                "for p in KNOWN_PATHS:",
-                "    if 'login' in p or 'password' in p:",
-                "        if p not in candidate_posts:",
-                "            candidate_posts.append(p)",
+                "candidate_posts = [p for p in login_pages if 'login' in p or 'signin' in p or 'password' in p]",
                 "",
                 "payloads = [",
                 "    {'username': USERNAME, 'password': PASSWORD},",
-                "    {'username': USERNAME, 'password': PASSWORD, 'user_id': HINT_USER_ID},",
-                "    {'username': USERNAME, 'password': PASSWORD, 'user_id': HINT_USER_ID, 'role': 'admin'},",
+                "    {'account': USERNAME, 'password': PASSWORD},",
+                "    {'email': USERNAME, 'password': PASSWORD},",
                 "]",
                 "",
                 "for path in candidate_posts[:6]:",
                 "    for payload in payloads:",
-                "        if not payload.get('user_id'):",
-                "            payload = {k: v for k, v in payload.items() if k != 'user_id'}",
                 "        resp = request('POST', path, data=payload)",
-                "        log_result(f'POST {path} payload={payload}', resp)",
-                "        collected_bodies.append(resp.get('text', ''))",
+                "        if 200 <= resp.get('status', -1) < 400:",
+                "            status_2xx += 1",
+                "        emit('login_replay', method='POST', path=path, payload_keys=sorted(payload.keys()), status=resp.get('status'), url=resp.get('url'))",
+                "        print(f\"status:{resp.get('status')}\")",
                 "",
-                "dashboard_candidates = ['/dashboard', f'/dashboard?username={urllib.parse.quote(USERNAME)}', '/orders']",
-                "for p in KNOWN_PATHS:",
-                "    if 'dashboard' in p or 'order' in p:",
-                "        if p not in dashboard_candidates:",
-                "            dashboard_candidates.append(p)",
-                "",
-                "for p in dashboard_candidates[:8]:",
-                "    resp = request('GET', p)",
-                "    log_result(f'GET {p}', resp)",
-                "    collected_bodies.append(resp.get('text', ''))",
-                "",
-                "order_ids = set()",
-                "for oid in HINT_ORDER_IDS:",
-                "    if isinstance(oid, str) and oid.isdigit():",
-                "        order_ids.add(int(oid))",
-                "for body in collected_bodies:",
-                "    for m in re.findall(r'(?<!\\d)(\\d{5,8})(?!\\d)', body or ''):",
-                "        order_ids.add(int(m))",
-                "",
-                "order_ids = sorted(order_ids)",
-                "print('[ACT] discovered order_ids:', order_ids[:30])",
-                "",
-                "probe_ids = set(order_ids)",
-                "for oid in list(order_ids)[:20]:",
-                "    probe_ids.add(oid - 1)",
-                "    probe_ids.add(oid + 1)",
-                "probe_ids = sorted(x for x in probe_ids if x > 0)",
-                "",
-                "receipt_patterns = [",
-                "    '/order/{id}/receipt',",
-                "    '/orders/{id}/receipt',",
-                "    '/receipt?id={id}',",
-                "    '/order/{id}',",
-                "]",
-                "for p in KNOWN_PATHS:",
-                "    if '{id}' in p:",
-                "        if p not in receipt_patterns:",
-                "            receipt_patterns.append(p)",
-                "",
-                "test_results = []",
-                "for oid in probe_ids[:30]:",
-                "    for pattern in receipt_patterns[:8]:",
-                "        path = pattern.format(id=oid)",
-                "        resp = request('GET', path)",
-                "        test_results.append({'id': oid, 'path': path, 'status': resp['status'], 'len': len(resp.get('text', ''))})",
-                "        log_result(f'GET {path} (object-id probe)', resp)",
-                "",
-                "ok_200 = [item for item in test_results if item.get('status') == 200]",
-                "err_500 = [item for item in test_results if item.get('status') == 500]",
-                "print('[ACT] SUMMARY')",
-                "print(json.dumps({",
-                "    'tested_count': len(test_results),",
-                "    'status_200_count': len(ok_200),",
-                "    'status_500_count': len(err_500),",
-                "    'sample_200': ok_200[:12],",
-                "    'sample_500': err_500[:12],",
-                "}, ensure_ascii=False, indent=2))",
+                "emit('summary', status_200_count=status_2xx, login_target_count=len(candidate_posts), tested_count=len(candidate_posts) * len(payloads))",
             ]
         )
         return ActCommand(tool_name="python", command=command)
+
+    def _build_post_login_recon_command(
+        self,
+        *,
+        node_id: str,
+        title: str,
+        node_description: str,
+        node_notes: list[str],
+        known_targets: dict[str, list[str]],
+        state_table_snapshot: dict[str, object],
+    ) -> ActCommand:
+        runtime_texts = self._filter_runtime_texts([title, node_description, *node_notes])
+        base_url = self._resolve_base_url(known_targets, runtime_texts)
+        request_templates = self._resolve_request_templates(known_targets, state_table_snapshot)
+        known_paths = list(dict.fromkeys(known_targets.get("paths") or []))
+
+        command = "\n".join(
+            [
+                "import json",
+                "import re",
+                "import urllib.error",
+                "import urllib.parse",
+                "import urllib.request",
+                "",
+                f"BASE_URL = {base_url!r}",
+                f"KNOWN_PATHS = {known_paths!r}",
+                f"REQUEST_TEMPLATES = {request_templates!r}",
+                "",
+                "def emit(event, **kwargs):",
+                "    payload = {'event': event}",
+                "    payload.update(kwargs)",
+                "    print(json.dumps(payload, ensure_ascii=False))",
+                "",
+                "def abs_url(path):",
+                "    return urllib.parse.urljoin(BASE_URL.rstrip('/') + '/', path.lstrip('/'))",
+                "",
+                "def request(method, path):",
+                "    url = abs_url(path)",
+                "    req = urllib.request.Request(url, method=method.upper(), headers={'User-Agent': 'pikaqiu-act-agent/0.1'})",
+                "    try:",
+                "        with urllib.request.urlopen(req, timeout=10) as resp:",
+                "            text = resp.read().decode('utf-8', errors='replace')",
+                "            return {'status': resp.status, 'url': url, 'text': text}",
+                "    except urllib.error.HTTPError as e:",
+                "        text = e.read().decode('utf-8', errors='replace')",
+                "        return {'status': e.code, 'url': url, 'text': text}",
+                "    except Exception as e:",
+                "        return {'status': -1, 'url': url, 'text': str(e)}",
+                "",
+                "candidates = ['/', '/dashboard', '/profile', '/orders', '/admin']",
+                "for p in KNOWN_PATHS:",
+                "    if p not in candidates:",
+                "        candidates.append(p)",
+                "for item in REQUEST_TEMPLATES:",
+                "    path = str(item.get('path') or '')",
+                "    if path and path not in candidates:",
+                "        candidates.append(path)",
+                "",
+                "discovered = []",
+                "status_200_count = 0",
+                "for path in candidates[:20]:",
+                "    if '{' in path and '}' in path:",
+                "        continue",
+                "    resp = request('GET', path)",
+                "    status = int(resp.get('status', -1))",
+                "    if 200 <= status < 400:",
+                "        status_200_count += 1",
+                "    emit('post_login_recon', method='GET', path=path, status=status, url=resp.get('url'))",
+                "    print(f'status:{status}')",
+                "    body = resp.get('text') or ''",
+                "    for endpoint in re.findall(r'(/api/[A-Za-z0-9._~!$&()*+,;=:@%/-]{2,})', body):",
+                "        if endpoint not in discovered:",
+                "            discovered.append(endpoint)",
+                "            emit('discovered_endpoint', path=endpoint)",
+                "",
+                "emit('summary', status_200_count=status_200_count, discovered_api_count=len(discovered), tested_count=min(len(candidates), 20))",
+            ]
+        )
+        return ActCommand(tool_name="python", command=command)
+
+    def _build_object_access_probe_command(
+        self,
+        *,
+        node_id: str,
+        title: str,
+        node_description: str,
+        node_notes: list[str],
+        known_targets: dict[str, list[str]],
+        state_table_snapshot: dict[str, object],
+    ) -> ActCommand:
+        runtime_texts = self._filter_runtime_texts([title, node_description, *node_notes])
+        base_url = self._resolve_base_url(known_targets, runtime_texts)
+        username, password = self._resolve_credentials(state_table_snapshot)
+        request_templates = self._resolve_request_templates(known_targets, state_table_snapshot)
+        object_values = self._resolve_object_values(runtime_texts, state_table_snapshot)
+
+        command = "\n".join(
+            [
+                "import json",
+                "import urllib.error",
+                "import urllib.parse",
+                "import urllib.request",
+                "import http.cookiejar",
+                "",
+                f"BASE_URL = {base_url!r}",
+                f"USERNAME = {username!r}",
+                f"PASSWORD = {password!r}",
+                f"REQUEST_TEMPLATES = {request_templates!r}",
+                f"OBJECT_VALUES = {object_values!r}",
+                "",
+                "jar = http.cookiejar.CookieJar()",
+                "opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))",
+                "",
+                "def emit(event, **kwargs):",
+                "    payload = {'event': event}",
+                "    payload.update(kwargs)",
+                "    print(json.dumps(payload, ensure_ascii=False))",
+                "",
+                "def abs_url(path):",
+                "    return urllib.parse.urljoin(BASE_URL.rstrip('/') + '/', path.lstrip('/'))",
+                "",
+                "def request(method, path, data=None):",
+                "    url = abs_url(path)",
+                "    headers = {'User-Agent': 'pikaqiu-act-agent/0.1', 'Accept': '*/*'}",
+                "    body = None",
+                "    if data is not None:",
+                "        body = urllib.parse.urlencode(data).encode('utf-8')",
+                "        headers['Content-Type'] = 'application/x-www-form-urlencoded'",
+                "    req = urllib.request.Request(url, data=body, method=method.upper(), headers=headers)",
+                "    try:",
+                "        with opener.open(req, timeout=10) as resp:",
+                "            text = resp.read().decode('utf-8', errors='replace')",
+                "            return {'status': resp.status, 'url': url, 'text': text}",
+                "    except urllib.error.HTTPError as e:",
+                "        text = e.read().decode('utf-8', errors='replace')",
+                "        return {'status': e.code, 'url': url, 'text': text}",
+                "    except Exception as e:",
+                "        return {'status': -1, 'url': url, 'text': str(e)}",
+                "",
+                "def same_class(a, b):",
+                "    if not a or not b:",
+                "        return False",
+                "    if a.isdigit() and b.isdigit():",
+                "        return True",
+                "    return a[0].isalpha() == b[0].isalpha()",
+                "",
+                "def build_mutations(values):",
+                "    mutations = []",
+                "    for value in values:",
+                "        value = str(value)",
+                "        mutations.append({'kind': 'original', 'value': value, 'base': value})",
+                "        if value.isdigit():",
+                "            number = int(value)",
+                "            if number > 1:",
+                "                mutations.append({'kind': 'neighbor', 'value': str(number - 1), 'base': value})",
+                "            mutations.append({'kind': 'neighbor', 'value': str(number + 1), 'base': value})",
+                "    for base in values:",
+                "        for other in values:",
+                "            if str(base) == str(other):",
+                "                continue",
+                "            if same_class(str(base), str(other)):",
+                "                mutations.append({'kind': 'same_class', 'value': str(other), 'base': str(base)})",
+                "                break",
+                "    uniq = []",
+                "    seen = set()",
+                "    for item in mutations:",
+                "        key = (item['kind'], item['value'], item['base'])",
+                "        if key in seen:",
+                "            continue",
+                "        seen.add(key)",
+                "        uniq.append(item)",
+                "    return uniq",
+                "",
+                "def apply_template(path, value):",
+                "    result = str(path)",
+                "    for key in ['id', 'order_id', 'user_id', 'tenant_id', 'object_id', 'resource_id']:",
+                "        result = result.replace('{' + key + '}', str(value))",
+                "    if '{' in result and '}' in result:",
+                "        return ''",
+                "    if '?id=' in result:",
+                "        prefix, _, query = result.partition('?')",
+                "        params = urllib.parse.parse_qsl(query, keep_blank_values=True)",
+                "        updated = []",
+                "        replaced = False",
+                "        for key, existing in params:",
+                "            if key.lower().endswith('id') and not replaced:",
+                "                updated.append((key, str(value)))",
+                "                replaced = True",
+                "            else:",
+                "                updated.append((key, existing))",
+                "        result = prefix + '?' + urllib.parse.urlencode(updated)",
+                "    return result",
+                "",
+                "print('[ACT] access_control probe started')",
+                "emit('object_probe_start', node_id=" + repr(node_id) + ", base_url=BASE_URL, template_count=len(REQUEST_TEMPLATES), object_seed_count=len(OBJECT_VALUES))",
+                "",
+                "login_paths = ['/login', '/signin']",
+                "for item in REQUEST_TEMPLATES:",
+                "    p = str(item.get('path') or '')",
+                "    if ('login' in p or 'signin' in p or 'password' in p) and p not in login_paths:",
+                "        login_paths.append(p)",
+                "for path in login_paths[:4]:",
+                "    resp = request('POST', path, data={'username': USERNAME, 'password': PASSWORD})",
+                "    emit('login_try', path=path, status=resp.get('status'))",
+                "    print(f\"status:{resp.get('status')}\")",
+                "",
+                "templates = []",
+                "for item in REQUEST_TEMPLATES:",
+                "    method = str(item.get('method') or 'GET').upper()",
+                "    path = str(item.get('path') or '')",
+                "    if not path:",
+                "        continue",
+                "    if path.startswith('http://') or path.startswith('https://'):",
+                "        parsed = urllib.parse.urlparse(path)",
+                "        path = parsed.path + (('?' + parsed.query) if parsed.query else '')",
+                "    templates.append({'method': method, 'path': path})",
+                "if not templates:",
+                "    templates = [",
+                "        {'method': 'GET', 'path': '/order/{id}'},",
+                "        {'method': 'GET', 'path': '/orders/{id}'},",
+                "        {'method': 'GET', 'path': '/receipt?id={id}'},",
+                "    ]",
+                "",
+                "seed_values = [str(v) for v in OBJECT_VALUES if str(v).strip()]",
+                "if not seed_values:",
+                "    seed_values = ['1001', '1002']",
+                "mutations = build_mutations(seed_values)",
+                "",
+                "results = []",
+                "for tpl in templates[:12]:",
+                "    for item in mutations[:60]:",
+                "        path = apply_template(tpl['path'], item['value'])",
+                "        if not path:",
+                "            continue",
+                "        resp = request(tpl['method'], path)",
+                "        status = int(resp.get('status', -1))",
+                "        record = {",
+                "            'mutation_type': item['kind'],",
+                "            'base_value': item['base'],",
+                "            'candidate_value': item['value'],",
+                "            'method': tpl['method'],",
+                "            'path': path,",
+                "            'status': status,",
+                "            'body_length': len(resp.get('text') or ''),",
+                "        }",
+                "        emit('object_probe', **record)",
+                "        print(f'status:{status}')",
+                "        results.append(record)",
+                "",
+                "        if 500 <= status < 600:",
+                "            for retry_index in [1, 2]:",
+                "                retry_resp = request(tpl['method'], path)",
+                "                retry_status = int(retry_resp.get('status', -1))",
+                "                emit(",
+                "                    'anomaly_retry',",
+                "                    mutation_type='retry_5xx',",
+                "                    retry_index=retry_index,",
+                "                    method=tpl['method'],",
+                "                    path=path,",
+                "                    status=retry_status,",
+                "                    base_value=item['base'],",
+                "                    candidate_value=item['value'],",
+                "                )",
+                "                print(f'status:{retry_status}')",
+                "                results.append({'event': 'anomaly_retry', 'status': retry_status})",
+                "",
+                "ok_200 = [item for item in results if int(item.get('status', -1)) == 200]",
+                "err_500 = [item for item in results if int(item.get('status', -1)) == 500]",
+                "emit('summary', tested_count=len(results), status_200_count=len(ok_200), status_500_count=len(err_500), sample_500=err_500[:10])",
+            ]
+        )
+        return ActCommand(tool_name="python", command=command)
+
+    def _resolve_request_templates(
+        self,
+        known_targets: dict[str, list[str]],
+        state_table_snapshot: dict[str, object],
+    ) -> list[dict[str, str]]:
+        templates: list[dict[str, str]] = []
+        for item in state_table_snapshot.get("request_templates") or []:
+            if not isinstance(item, dict):
+                continue
+            method = str(item.get("method") or "GET").upper()
+            path = str(item.get("path") or item.get("url") or "").strip()
+            if path:
+                templates.append({"method": method, "path": path})
+
+        for path in known_targets.get("paths") or []:
+            if path:
+                templates.append({"method": "GET", "path": path})
+
+        if not templates:
+            templates.extend(
+                [
+                    {"method": "GET", "path": "/order/{id}"},
+                    {"method": "GET", "path": "/orders/{id}"},
+                    {"method": "GET", "path": "/receipt?id={id}"},
+                ]
+            )
+
+        deduped: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for item in templates:
+            method = str(item.get("method") or "GET").upper()
+            path = str(item.get("path") or "").strip()
+            if not path:
+                continue
+            key = f"{method} {path}"
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append({"method": method, "path": path})
+        return deduped[:30]
+
+    def _resolve_object_values(self, runtime_texts: list[str], state_table_snapshot: dict[str, object]) -> list[str]:
+        values: list[str] = []
+
+        def add_value(value: str) -> None:
+            normalized = (value or "").strip()
+            if not normalized:
+                return
+            if normalized not in values:
+                values.append(normalized)
+
+        for item in state_table_snapshot.get("object_inventory") or []:
+            if isinstance(item, dict):
+                for field_value in item.values():
+                    add_value(str(field_value))
+                continue
+            text = str(item)
+            match = re.search(r"([A-Za-z0-9_-]{2,80})$", text)
+            if match:
+                add_value(match.group(1))
+
+        for text in runtime_texts:
+            for token in re.findall(r"(?<!\d)(\d{3,12})(?!\d)", text):
+                add_value(token)
+
+        for token in self._resolve_order_ids(runtime_texts):
+            add_value(token)
+
+        user_id = self._resolve_user_id(runtime_texts)
+        if user_id:
+            add_value(user_id)
+
+        return values[:40]
 
     def _resolve_base_url(self, known_targets: dict[str, list[str]], texts: list[str]) -> str:
         for url in known_targets.get("urls") or []:
@@ -1311,6 +1792,24 @@ class ActAgent:
             if item not in values:
                 values.append(item)
         return values[:40]
+
+    def _should_use_login_replay_fallback(
+        self,
+        *,
+        title: str,
+        node_description: str,
+        node_notes: list[str],
+    ) -> bool:
+        merged = "\n".join([title, node_description, *node_notes]).lower()
+        return any(
+            token in merged
+            for token in (
+                "登录回放",
+                "login replay",
+                "replay login",
+                "会话回放",
+            )
+        )
 
     def _filter_runtime_texts(self, texts: list[str]) -> list[str]:
         filtered: list[str] = []

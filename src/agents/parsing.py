@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from typing import Any
 
 from core.models import (
     ActResult,
@@ -68,6 +69,15 @@ RISK_HINTS = {
     "file_upload": "上传链路值得继续验证内容识别和落盘暴露。",
 }
 
+HTTP_METHOD_PATTERN = re.compile(r"\b(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\b", flags=re.IGNORECASE)
+
+OBJECT_CANDIDATE_PATTERNS = [
+    re.compile(r"(?i)\b(?:user|account|order|file|doc|resource|item|tenant|object)[_-]?id\b\s*[:=]\s*[\"']?([A-Za-z0-9_-]{2,64})"),
+    re.compile(r"(?i)(?:https?://[^\s'\"<>`]+)?/api/[A-Za-z0-9._~!$&()*+,;=:@%/-]*/([A-Za-z0-9_-]{2,64})"),
+]
+
+CREDENTIAL_LINE_HINT_PATTERN = re.compile(r"(?i)(credential|账号|密码|登录|login|auth|default)")
+
 
 class ParsingAgent:
     """压缩 act 输出并产出证据、结论和状态增量的 parsing agent。"""
@@ -129,6 +139,8 @@ class ParsingAgent:
             executed_command=act_result.command,
             trace_content=trace.content,
             family_id=node.test_family_id or "generic",
+            node_type=node.node_type,
+            raw_output=act_result.raw_output,
         )
 
         next_status = self._decide_next_status(
@@ -167,13 +179,17 @@ class ParsingAgent:
 
         statuses = [int(code) for code in re.findall(r"(?im)\bstatus\s*[:=]\s*(\d{3})\b", raw_output or "")]
         has_success_status = any(200 <= code < 400 for code in statuses)
+        has_5xx_status = any(500 <= code < 600 for code in statuses)
 
         status_200_count_match = re.search(r'"status_200_count"\s*:\s*(\d+)', raw_output or "")
         status_200_count = int(status_200_count_match.group(1)) if status_200_count_match else None
+        anomaly_targets = self._extract_object_inventory(raw_output)
 
         if statuses and not has_success_status:
             return NodeStatus.TODO
         if status_200_count is not None and status_200_count <= 0:
+            return NodeStatus.TODO
+        if has_5xx_status and anomaly_targets:
             return NodeStatus.TODO
 
         return NodeStatus.DONE
@@ -247,19 +263,7 @@ class ParsingAgent:
         for path in api_paths[:6]:
             add("api_path", path)
 
-        credential_hints: list[str] = []
-        for pair in re.findall(r"(?i)([A-Za-z0-9_.@-]{2,32}:[^\s,;)'\"\]]{2,64})", raw):
-            lower = pair.lower()
-            if lower.startswith(("http:", "https:", "url:", "status:")):
-                continue
-            if pair not in credential_hints:
-                credential_hints.append(pair)
-        users = re.findall(r"(?im)[\"']?(?:username|user|account)[\"']?\s*[:=]\s*[\"']?([A-Za-z0-9_.@-]{2,64})", raw)
-        passwords = re.findall(r"(?im)[\"']?(?:password|pass|pwd)[\"']?\s*[:=]\s*[\"']?([^\s,;\"']{2,64})", raw)
-        if users and passwords:
-            combined = f"{users[0]}:{passwords[0]}"
-            if combined not in credential_hints:
-                credential_hints.append(combined)
+        credential_hints = self._extract_credential_materials(raw)
         for item in credential_hints[:4]:
             add("credential_material", item)
 
@@ -284,8 +288,22 @@ class ParsingAgent:
         executed_command: str,
         trace_content: str,
         family_id: str,
+        node_type: NodeType,
+        raw_output: str,
     ) -> StateTableDelta:
         default_refs = [item for ids in evidence_index.values() for item in ids][:3]
+        request_templates = self._build_request_templates(executed_command, evidence_contents, raw_output)
+        object_inventory = self._extract_object_inventory(raw_output)
+        flow_graph = self._build_flow_graph(node_title=node_title, api_paths=evidence_contents.get("api_path", []))
+        frontier_queue = self._build_anomaly_retry_frontier_queue(
+            node_id=node_id,
+            node_title=node_title,
+            family_id=family_id,
+            node_type=node_type,
+            raw_output=raw_output,
+            object_inventory=object_inventory,
+            request_templates=request_templates,
+        )
 
         key_entrypoints = [
             StateItem(
@@ -333,6 +351,41 @@ class ParsingAgent:
                 source=node_id,
             )
         ]
+        reusable_artifacts.extend(
+            [
+                StateItem(
+                    title="请求模板",
+                    content=f"{item.get('method', 'GET')} {item.get('path', '')}".strip(),
+                    refs=evidence_index.get("api_path", [])[:3] or default_refs,
+                    source=node_id,
+                )
+                for item in request_templates[:8]
+                if item.get("path")
+            ]
+        )
+
+        workflow_prerequisites = [
+            StateItem(
+                title="对象清单",
+                content=target,
+                refs=evidence_index.get("api_path", [])[:3] or default_refs,
+                source=node_id,
+            )
+            for target in object_inventory[:10]
+        ]
+        for edge in flow_graph.get("edges", [])[:10]:
+            src = str(edge.get("from") or "")
+            dst = str(edge.get("to") or "")
+            if not src or not dst:
+                continue
+            workflow_prerequisites.append(
+                StateItem(
+                    title="流程关系",
+                    content=f"{src} -> {dst}",
+                    refs=evidence_index.get("api_path", [])[:3] or default_refs,
+                    source=node_id,
+                )
+            )
 
         session_risks = [
             StateItem(
@@ -342,19 +395,201 @@ class ParsingAgent:
                 source=node_id,
             )
         ]
+        if frontier_queue:
+            session_risks.append(
+                StateItem(
+                    title="frontier_queue",
+                    content=f"待重试项 {len(frontier_queue)} 条（anomaly_retry）",
+                    refs=default_refs,
+                    source=node_id,
+                )
+            )
 
         notes: list[str] = []
         if trace_content:
             notes.append(trace_content)
+        notes.append(f"request_templates={json.dumps(request_templates[:20], ensure_ascii=False)}")
+        notes.append(f"object_inventory={json.dumps(object_inventory[:20], ensure_ascii=False)}")
+        notes.append(f"flow_graph={json.dumps(flow_graph, ensure_ascii=False)}")
+        if frontier_queue:
+            notes.append(f"frontier_queue={json.dumps(frontier_queue, ensure_ascii=False)}")
 
         return StateTableDelta(
             identities=identities,
             session_materials=session_materials,
             key_entrypoints=key_entrypoints,
+            workflow_prerequisites=workflow_prerequisites,
             reusable_artifacts=reusable_artifacts,
             session_risks=session_risks,
             notes=notes,
         )
+
+    def _extract_credential_materials(self, raw_output: str) -> list[str]:
+        materials: list[str] = []
+
+        users = re.findall(
+            r"(?im)[\"']?(?:username|user_name|user|account|login|email)[\"']?\s*[:=]\s*[\"']?([A-Za-z0-9_.@+-]{2,64})",
+            raw_output,
+        )
+        passwords = re.findall(
+            r"(?im)[\"']?(?:password|passwd|pass|pwd)[\"']?\s*[:=]\s*[\"']?([^\s,;\"']{2,64})",
+            raw_output,
+        )
+
+        for index, username in enumerate(users[:6]):
+            if index >= len(passwords):
+                break
+            password = passwords[index]
+            if self._is_valid_credential_pair(username, password):
+                candidate = f"{username}:{password}"
+                if candidate not in materials:
+                    materials.append(candidate)
+
+        for line in raw_output.splitlines():
+            if not CREDENTIAL_LINE_HINT_PATTERN.search(line):
+                continue
+            pair_match = re.search(r"([A-Za-z0-9_.@+-]{2,64})\s*[:/]\s*([^\s,;\"']{2,64})", line)
+            if not pair_match:
+                continue
+            username = pair_match.group(1)
+            password = pair_match.group(2)
+            if not self._is_valid_credential_pair(username, password):
+                continue
+            candidate = f"{username}:{password}"
+            if candidate not in materials:
+                materials.append(candidate)
+
+        return materials[:4]
+
+    def _is_valid_credential_pair(self, username: str, password: str) -> bool:
+        normalized_user = username.strip().lower()
+        normalized_password = password.strip()
+        if not normalized_user or not normalized_password:
+            return False
+        if normalized_user in {
+            "http",
+            "https",
+            "url",
+            "status",
+            "content-type",
+            "authorization",
+            "bearer",
+            "host",
+            "date",
+            "token",
+        }:
+            return False
+        if normalized_password.lower().startswith(("http://", "https://")):
+            return False
+        if re.search(r"\s", normalized_password):
+            return False
+        if len(normalized_user) < 2 or len(normalized_password) < 2:
+            return False
+        return True
+
+    def _build_request_templates(
+        self,
+        executed_command: str,
+        evidence_contents: dict[str, list[str]],
+        raw_output: str,
+    ) -> list[dict[str, str]]:
+        templates: list[dict[str, str]] = []
+        api_paths = evidence_contents.get("api_path", [])
+
+        method = "GET"
+        method_match = HTTP_METHOD_PATTERN.search(executed_command or "")
+        if method_match:
+            method = method_match.group(1).upper()
+
+        for path in api_paths[:8]:
+            templates.append({"method": method, "path": path, "source": "api_path"})
+
+        for method_value, path in re.findall(
+            r"(?i)\b(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\b\s+(?:https?://[^\s'\"<>`]+)?(/api/[A-Za-z0-9._~!$&()*+,;=:@%/-]*)",
+            raw_output,
+        ):
+            entry = {"method": method_value.upper(), "path": path, "source": "raw_output"}
+            if entry not in templates:
+                templates.append(entry)
+
+        return templates[:12]
+
+    def _extract_object_inventory(self, raw_output: str) -> list[str]:
+        inventory: list[str] = []
+        for pattern in OBJECT_CANDIDATE_PATTERNS:
+            for match in pattern.findall(raw_output or ""):
+                if isinstance(match, tuple):
+                    value = next((item for item in match if item), "")
+                else:
+                    value = match
+                candidate = str(value).strip().strip("，。！？；,:;)")
+                if len(candidate) < 2:
+                    continue
+                if candidate not in inventory:
+                    inventory.append(candidate)
+        return inventory[:16]
+
+    def _build_flow_graph(self, *, node_title: str, api_paths: list[str]) -> dict[str, Any]:
+        nodes = [node_title]
+        edges: list[dict[str, str]] = []
+        for path in api_paths[:8]:
+            if path not in nodes:
+                nodes.append(path)
+            edges.append({"from": node_title, "to": path, "relation": "touches"})
+        return {
+            "nodes": nodes[:20],
+            "edges": edges[:20],
+        }
+
+    def _build_anomaly_retry_frontier_queue(
+        self,
+        *,
+        node_id: str,
+        node_title: str,
+        family_id: str,
+        node_type: NodeType,
+        raw_output: str,
+        object_inventory: list[str],
+        request_templates: list[dict[str, str]],
+    ) -> list[dict[str, Any]]:
+        if node_type != NodeType.TEST:
+            return []
+
+        statuses = [int(code) for code in re.findall(r"(?im)\bstatus\s*[:=]\s*(\d{3})\b", raw_output or "")]
+        has_5xx = any(500 <= code < 600 for code in statuses)
+        if not has_5xx:
+            return []
+
+        targets = object_inventory[:6]
+        if not targets:
+            return []
+
+        queue: list[dict[str, Any]] = []
+        for index, target in enumerate(targets):
+            template = request_templates[index] if index < len(request_templates) else {}
+            method = str(template.get("method") or "GET").upper()
+            path = str(template.get("path") or "")
+            queue.append(
+                {
+                    "id": f"{node_id}-anomaly-retry-{index + 1}",
+                    "retry_key": f"{node_id}:anomaly_retry:{target}",
+                    "type": "anomaly_retry",
+                    "status": "retry",
+                    "needs_retry": True,
+                    "retries_left": 2,
+                    "node_id": node_id,
+                    "node_title": node_title,
+                    "title": f"{node_title} - anomaly retry {target}",
+                    "target": target,
+                    "endpoint": path,
+                    "command": f"{method} {path}".strip(),
+                    "reason": f"5xx 响应命中可疑对象 {target}，需要 anomaly_retry 二次验证。",
+                    "description": f"对象 {target} 在测试链路中触发 5xx，需继续验证稳定复现与可利用性。",
+                    "test_family_id": family_id,
+                }
+            )
+
+        return queue[:10]
 
     def _needs_state_table_lookup(self, act_result: ActResult) -> bool:
         raw = (act_result.raw_output or "").strip()
