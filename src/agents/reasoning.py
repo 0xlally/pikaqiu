@@ -377,12 +377,6 @@ class ReasoningAgent:
         if not feature_id:
             return
 
-        existing_family_ids = {
-            node.related_test_family
-            for node in task_tree.model.nodes.values()
-            if node.node_type == NodeType.TEST and node.related_feature_id == feature_id and node.related_test_family
-        }
-
         observation_text = self._build_observation_text(parsed_result)
         if not observation_text:
             return
@@ -405,28 +399,43 @@ class ReasoningAgent:
 
         parent_id = self._find_feature_info_node_id(task_tree, feature_id) or source_node.id
         for family_id in candidate_family_ids:
-            if family_id in existing_family_ids:
-                continue
             family = self.mapper.family_by_id.get(family_id)
             if family is None:
                 continue
-            if self._find_existing_test_node(task_tree, feature_id, family_id) is not None:
-                existing_family_ids.add(family_id)
-                continue
 
             matched_terms = matched_terms_by_family.get(family_id, "来自 parsing 证据的启发式命中")
-            task_tree.create_node(
-                title=f"测试 {family.name}",
-                node_type=NodeType.TEST,
-                source="reasoning",
-                parent_id=parent_id,
-                related_feature_id=feature_id,
-                related_test_family=family_id,
-                notes=[f"漏洞家族：{family_id}", f"命中词：{matched_terms}"],
-                evidence_refs=[item.id for item in parsed_result.evidence[:3]],
-                description=f"依据 parsing 证据补充测试：{family.description}",
-            )
-            existing_family_ids.add(family_id)
+            signatures = self._build_parsed_exploit_signatures(parsed_result, family_id)
+            for signature_item in signatures[:2]:
+                signature = str(signature_item.get("signature") or "").strip()
+                if self._find_existing_test_node(task_tree, feature_id, family_id, signature=signature) is not None:
+                    continue
+                label = str(signature_item.get("label") or "baseline").strip()
+                endpoint = str(signature_item.get("endpoint") or "").strip()
+                object_value = str(signature_item.get("object") or "").strip()
+                title_suffix = f" [{label}]" if label and label != "baseline" else ""
+                notes = [f"漏洞家族：{family_id}", f"命中词：{matched_terms}", f"signature：{signature}"]
+                if endpoint:
+                    notes.append(f"目标端点：{endpoint}")
+                if object_value:
+                    notes.append(f"目标对象：{object_value}")
+
+                task_tree.create_node(
+                    title=f"测试 {family.name}{title_suffix}",
+                    node_type=NodeType.TEST,
+                    source="reasoning",
+                    parent_id=parent_id,
+                    related_feature_id=feature_id,
+                    related_test_family=family_id,
+                    notes=notes,
+                    evidence_refs=[item.id for item in parsed_result.evidence[:3]],
+                    description=f"依据 parsing 证据补充测试：{family.description}",
+                    metadata={
+                        "reasoning_signature": signature,
+                        "source_endpoint": endpoint,
+                        "source_object": object_value,
+                        "priority_score": 70,
+                    },
+                )
 
     def _build_observation_text(self, parsed_result: ParsedActResult) -> str:
         parts = [parsed_result.summary]
@@ -434,6 +443,62 @@ class ReasoningAgent:
         parts.extend(item.summary for item in parsed_result.conclusions[:6])
         normalized = [" ".join(part.split()) for part in parts if part and part.strip()]
         return "\n".join(normalized)
+
+    def _build_parsed_exploit_signatures(self, parsed_result: ParsedActResult, family_id: str) -> list[dict[str, str]]:
+        signatures: list[dict[str, str]] = []
+        seen: set[str] = set()
+
+        def add(signature: str, *, label: str = "baseline", endpoint: str = "", object_value: str = "") -> None:
+            normalized = self._normalize_text(signature).lower()
+            if not normalized or normalized in seen:
+                return
+            seen.add(normalized)
+            signatures.append(
+                {
+                    "signature": normalized,
+                    "label": label,
+                    "endpoint": endpoint,
+                    "object": object_value,
+                }
+            )
+
+        add(f"{family_id}|baseline")
+
+        for item in getattr(parsed_result.state_delta, "retry_candidates", [])[:8]:
+            path = self._normalize_text(getattr(item, "path", ""))
+            method = self._normalize_text(getattr(item, "method", "GET")).upper() or "GET"
+            payload = getattr(item, "params_or_body", {}) or {}
+            object_value = ""
+            if isinstance(payload, dict):
+                object_value = self._normalize_text(
+                    str(payload.get("candidate_value") or payload.get("base_value") or payload.get("target") or "")
+                )
+            if path:
+                add(
+                    f"{family_id}|retry|{method}|{path}|{object_value}",
+                    label="retry",
+                    endpoint=path,
+                    object_value=object_value,
+                )
+
+        for item in getattr(parsed_result.state_delta, "request_graph", [])[:10]:
+            path = self._normalize_text(getattr(item, "path", ""))
+            if path:
+                add(f"{family_id}|path|{path}", label="path", endpoint=path)
+
+        for item in getattr(parsed_result.state_delta, "object_inventory", [])[:6]:
+            object_type = self._normalize_text(getattr(item, "object_type", "object"))
+            for value in getattr(item, "values", [])[:2]:
+                normalized_value = self._normalize_text(value)
+                if not normalized_value:
+                    continue
+                add(
+                    f"{family_id}|object|{object_type}|{normalized_value}",
+                    label=object_type or "object",
+                    object_value=normalized_value,
+                )
+
+        return signatures[:6]
 
     def _should_collect_info_first(self, feature: FeaturePoint, planning_hint: str | None = None) -> bool:
         """输入过于稀疏时，先做信息侦察，避免强行创建 test 节点。"""
@@ -671,6 +736,11 @@ class ReasoningAgent:
             )
             title = str(item.get("title") or "测试 Frontier 待重试项").strip()
             description = str(item.get("description") or "来自 state_table.frontier_queue 的待重试任务").strip()
+            method = self._normalize_text(str(item.get("method") or "GET")).upper() or "GET"
+            path = self._normalize_text(str(item.get("path") or item.get("endpoint") or ""))
+            signature = self._normalize_text(
+                f"{family_id or 'generic'}|retry|{method}|{path}|{retry_key or title}"
+            ).lower()
 
             if self._find_corresponding_frontier_test_node(
                 task_tree,
@@ -678,6 +748,7 @@ class ReasoningAgent:
                 retry_key=retry_key,
                 title=title,
                 family_id=family_id,
+                signature=signature,
             ) is not None:
                 continue
 
@@ -701,12 +772,19 @@ class ReasoningAgent:
                     metadata={
                         "frontier_retry_key": retry_key,
                         "frontier_status": item.get("status"),
+                        "frontier_method": method,
+                        "frontier_path": path,
+                        "reasoning_signature": signature,
+                        "priority_score": 95,
                     },
                 )
             )
 
     def _extract_frontier_retry_items(self, state_table: StateTable) -> list[dict[str, Any]]:
-        candidates = self._to_frontier_candidates(getattr(state_table, "frontier_queue", None))
+        candidates = self._to_frontier_candidates(getattr(state_table, "retry_candidates", None))
+
+        if not candidates:
+            candidates = self._to_frontier_candidates(getattr(state_table, "frontier_queue", None))
 
         if not candidates:
             for note in reversed(state_table.notes[-20:]):
@@ -725,7 +803,13 @@ class ReasoningAgent:
         if raw_queue is None:
             return []
         if isinstance(raw_queue, list):
-            return raw_queue
+            normalized: list[Any] = []
+            for item in raw_queue:
+                if hasattr(item, "model_dump"):
+                    normalized.append(item.model_dump())
+                else:
+                    normalized.append(item)
+            return normalized
         if isinstance(raw_queue, tuple):
             return list(raw_queue)
         if isinstance(raw_queue, dict):
@@ -785,13 +869,17 @@ class ReasoningAgent:
         status = self._normalize_text(
             str(item.get("status") or item.get("state") or item.get("retry_status") or item.get("node_status") or "")
         ).lower()
+        if not status:
+            status = self._normalize_text(str(item.get("status") or "pending")).lower()
         should_retry = bool(item.get("needs_retry") or item.get("need_retry") or item.get("retry"))
         if not should_retry and re.search(r"retry|pending|todo|待重试", status, flags=re.IGNORECASE) is None:
             retries_left = item.get("retries_left")
             try:
                 retries_left_int = int(retries_left)
             except Exception:
-                retries_left_int = 0
+                max_attempts = int(item.get("max_attempts") or 0)
+                times_attempted = int(item.get("times_attempted") or 0)
+                retries_left_int = max(max_attempts - times_attempted, 0)
             if retries_left_int <= 0:
                 return None
 
@@ -813,6 +901,8 @@ class ReasoningAgent:
         retry_key = self._normalize_text(
             str(item.get("id") or item.get("retry_key") or item.get("node_id") or f"frontier-{index}-{title.lower()}")
         ).lower()
+        method = self._normalize_text(str(item.get("method") or "GET")).upper() or "GET"
+        path = self._normalize_text(str(item.get("path") or item.get("endpoint") or ""))
 
         return {
             "retry_key": retry_key,
@@ -821,6 +911,8 @@ class ReasoningAgent:
             "family_id": family_id or None,
             "reason": self._normalize_text(str(item.get("reason") or item.get("error") or "")),
             "status": status or "retry",
+            "method": method,
+            "path": path,
         }
 
     def _find_corresponding_frontier_test_node(
@@ -831,13 +923,19 @@ class ReasoningAgent:
         retry_key: str,
         title: str,
         family_id: str | None,
+        signature: str,
     ) -> TaskNode | None:
         normalized_title = self._normalize_text(title).lower()
+        normalized_signature = self._normalize_text(signature).lower()
         for node in task_tree.model.nodes.values():
             if node.node_type != NodeType.TEST:
                 continue
             if node.related_feature_id != feature_id:
                 continue
+
+            node_signature = self._normalize_text(str(node.metadata.get("reasoning_signature") or "")).lower()
+            if normalized_signature and node_signature == normalized_signature:
+                return node
 
             node_retry_key = self._normalize_text(str(node.metadata.get("frontier_retry_key") or "")).lower()
             if retry_key and node_retry_key and node_retry_key == retry_key:
@@ -871,13 +969,25 @@ class ReasoningAgent:
                 return node
         return None
 
-    def _find_existing_test_node(self, task_tree: TaskTree, feature_id: str, family_id: str) -> TaskNode | None:
+    def _find_existing_test_node(
+        self,
+        task_tree: TaskTree,
+        feature_id: str,
+        family_id: str,
+        signature: str | None = None,
+    ) -> TaskNode | None:
+        normalized_signature = self._normalize_text(signature).lower() if signature else ""
         for node in task_tree.model.nodes.values():
             if node.node_type != NodeType.TEST:
                 continue
             if node.related_feature_id != feature_id:
                 continue
             if node.related_test_family != family_id:
+                continue
+            if normalized_signature:
+                node_signature = self._normalize_text(str(node.metadata.get("reasoning_signature") or "")).lower()
+                if node_signature == normalized_signature:
+                    return node
                 continue
             return node
         return None
@@ -911,7 +1021,7 @@ class ReasoningAgent:
 
         existing_test_signatures = sorted(
             {
-                f"{node.related_feature_id}:{node.related_test_family}"
+                f"{node.related_feature_id}:{node.related_test_family}:{self._normalize_text(str(node.metadata.get('reasoning_signature') or 'baseline')).lower()}"
                 for node in nodes
                 if node.node_type == NodeType.TEST and node.related_feature_id and node.related_test_family
             }
@@ -1071,13 +1181,22 @@ class ReasoningAgent:
                 for item in items[:20]
             ]
 
-        frontier_queue = self._to_frontier_candidates(getattr(state_table, "frontier_queue", None))
+        frontier_queue = self._to_frontier_candidates(getattr(state_table, "retry_candidates", None))
+        if not frontier_queue:
+            frontier_queue = self._to_frontier_candidates(getattr(state_table, "frontier_queue", None))
+
+        session_bundles = [item.model_dump() for item in getattr(state_table, "session_bundles", [])[:20]]
+        request_graph = [item.model_dump() for item in getattr(state_table, "request_graph", [])[:40]]
+        object_inventory = [item.model_dump() for item in getattr(state_table, "object_inventory", [])[:30]]
 
         return {
             "identities": serialize_items(state_table.identities),
             "key_entrypoints": serialize_items(state_table.key_entrypoints),
             "session_materials": serialize_items(state_table.session_materials),
             "reusable_artifacts": serialize_items(state_table.reusable_artifacts),
+            "session_bundles": session_bundles,
+            "request_graph": request_graph,
+            "object_inventory": object_inventory,
             "notes": state_table.notes[-20:],
             "frontier_queue": frontier_queue[:20],
         }
@@ -1131,6 +1250,11 @@ class ReasoningAgent:
         return bool(VULNERABILITY_SIGNAL_PATTERN.search(combined))
 
     def _has_login_credentials(self, state_table: StateTable) -> bool:
+        for bundle in getattr(state_table, "session_bundles", [])[:20]:
+            if bundle.current_identity:
+                return True
+            if bundle.login_recipes:
+                return True
         for item in state_table.identities:
             content = item.content.lower()
             if ":" in item.content:
@@ -1140,6 +1264,10 @@ class ReasoningAgent:
         return False
 
     def _has_login_entrypoint(self, state_table: StateTable) -> bool:
+        for entry in getattr(state_table, "request_graph", [])[:40]:
+            path = (entry.path or "").lower()
+            if any(term in path for term in ("/login", "signin", "auth", "token", "password")):
+                return True
         for item in state_table.key_entrypoints:
             content = item.content.lower()
             if any(term in content for term in ("/login", "signin", "auth", "token", "登录")):

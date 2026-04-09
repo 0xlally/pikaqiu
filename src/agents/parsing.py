@@ -11,7 +11,11 @@ from core.models import (
     EvidenceRecord,
     NodeStatus,
     NodeType,
+    ObjectInventoryEntry,
     ParsedActResult,
+    RequestGraphEntry,
+    RetryCandidate,
+    SessionBundle,
     StateItem,
     StateTableDelta,
 )
@@ -170,6 +174,7 @@ class ParsingAgent:
         if exit_code != 0:
             return NodeStatus.TODO
 
+        events = self._extract_json_events(raw_output)
         merged = "\n".join([raw_output or "", summary or ""])
         if re.search(r"(?i)(flag\{[^}\n]{1,256}\}|ctf\{[^}\n]{1,256}\}|flag[:=]\s*[^\s\n]{1,256})", merged):
             return NodeStatus.DONE
@@ -180,19 +185,70 @@ class ParsingAgent:
         statuses = [int(code) for code in re.findall(r"(?im)\bstatus\s*[:=]\s*(\d{3})\b", raw_output or "")]
         has_success_status = any(200 <= code < 400 for code in statuses)
         has_5xx_status = any(500 <= code < 600 for code in statuses)
+        statuses_all_404 = bool(statuses) and all(code == 404 for code in statuses)
+        event_http_statuses = [
+            int(item.get("status"))
+            for item in events
+            if str(item.get("status") or "").lstrip("-").isdigit() and int(item.get("status")) >= 100
+        ]
 
         status_200_count_match = re.search(r'"status_200_count"\s*:\s*(\d+)', raw_output or "")
         status_200_count = int(status_200_count_match.group(1)) if status_200_count_match else None
         anomaly_targets = self._extract_object_inventory(raw_output)
 
-        if statuses and not has_success_status:
+        if any(str(item.get("event") or "") == "fallback_needs_materials" for item in events):
             return NodeStatus.TODO
-        if status_200_count is not None and status_200_count <= 0:
+
+        if self._has_auth_wall_signal(raw_output, events):
+            return NodeStatus.TODO
+
+        if self._has_semantic_failure_signal(raw_output, events):
+            return NodeStatus.TODO
+
+        if statuses and not has_success_status and not statuses_all_404:
+            return NodeStatus.TODO
+        if (
+            status_200_count is not None
+            and status_200_count <= 0
+            and (statuses or event_http_statuses)
+            and not statuses_all_404
+        ):
             return NodeStatus.TODO
         if has_5xx_status and anomaly_targets:
             return NodeStatus.TODO
 
         return NodeStatus.DONE
+
+    def _has_auth_wall_signal(self, raw_output: str, events: list[dict[str, Any]]) -> bool:
+        if any(str(item.get("event") or "") == "auth_wall_detected" for item in events):
+            return True
+        statuses = [int(item.get("status")) for item in events if str(item.get("status") or "").isdigit()]
+        if statuses and all(status in (401, 403) for status in statuses):
+            return True
+        if re.search(r"(?i)(unauthorized|forbidden|login required|请先登录)", raw_output or ""):
+            return True
+        return False
+
+    def _has_semantic_failure_signal(self, raw_output: str, events: list[dict[str, Any]]) -> bool:
+        summary_events = [item for item in events if str(item.get("event") or "") == "summary"]
+        observed_http_statuses = [
+            int(item.get("status"))
+            for item in events
+            if str(item.get("status") or "").lstrip("-").isdigit() and int(item.get("status")) >= 100
+        ]
+        observed_all_404 = bool(observed_http_statuses) and all(code == 404 for code in observed_http_statuses)
+        for item in summary_events:
+            tested = int(item.get("tested_count") or 0)
+            success_200 = int(item.get("status_200_count") or 0)
+            if tested > 0 and success_200 == 0 and observed_http_statuses and not observed_all_404:
+                return True
+
+        probe_events = [item for item in events if str(item.get("event") or "") in {"object_probe", "retry_candidate_probe"}]
+        if probe_events:
+            statuses = [int(item.get("status") or -1) for item in probe_events]
+            if all(status >= 500 or status < 0 for status in statuses):
+                return True
+        return False
 
     def _extract_evidence(
         self,
@@ -276,6 +332,20 @@ class ParsingAgent:
 
         return evidence, evidence_index, evidence_contents
 
+    def _extract_json_events(self, raw_output: str) -> list[dict[str, Any]]:
+        events: list[dict[str, Any]] = []
+        for line in (raw_output or "").splitlines():
+            text = line.strip()
+            if not text or not text.startswith("{") or not text.endswith("}"):
+                continue
+            try:
+                payload = json.loads(text)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict) and payload.get("event"):
+                events.append(payload)
+        return events
+
     def _build_state_delta(
         self,
         *,
@@ -292,17 +362,36 @@ class ParsingAgent:
         raw_output: str,
     ) -> StateTableDelta:
         default_refs = [item for ids in evidence_index.values() for item in ids][:3]
+        events = self._extract_json_events(raw_output)
         request_templates = self._build_request_templates(executed_command, evidence_contents, raw_output)
-        object_inventory = self._extract_object_inventory(raw_output)
-        flow_graph = self._build_flow_graph(node_title=node_title, api_paths=evidence_contents.get("api_path", []))
-        frontier_queue = self._build_anomaly_retry_frontier_queue(
+        object_inventory_entries = self._build_object_inventory_entries(raw_output, events)
+        object_inventory_values = self._flatten_object_inventory_values(object_inventory_entries)
+        request_graph_entries = self._build_request_graph_entries(
+            node_id=node_id,
+            evidence_contents=evidence_contents,
+            events=events,
+        )
+        flow_graph = self._build_flow_graph(
+            node_title=node_title,
+            api_paths=evidence_contents.get("api_path", []),
+            request_graph_entries=request_graph_entries,
+        )
+        retry_candidates = self._build_retry_candidates(
             node_id=node_id,
             node_title=node_title,
             family_id=family_id,
             node_type=node_type,
             raw_output=raw_output,
-            object_inventory=object_inventory,
+            object_inventory=object_inventory_values,
             request_templates=request_templates,
+            events=events,
+        )
+        session_bundles = self._build_session_bundles(
+            node_id=node_id,
+            raw_output=raw_output,
+            request_templates=request_templates,
+            evidence_contents=evidence_contents,
+            events=events,
         )
 
         key_entrypoints = [
@@ -371,7 +460,7 @@ class ParsingAgent:
                 refs=evidence_index.get("api_path", [])[:3] or default_refs,
                 source=node_id,
             )
-            for target in object_inventory[:10]
+            for target in object_inventory_values[:10]
         ]
         for edge in flow_graph.get("edges", [])[:10]:
             src = str(edge.get("from") or "")
@@ -395,11 +484,11 @@ class ParsingAgent:
                 source=node_id,
             )
         ]
-        if frontier_queue:
+        if retry_candidates:
             session_risks.append(
                 StateItem(
                     title="frontier_queue",
-                    content=f"待重试项 {len(frontier_queue)} 条（anomaly_retry）",
+                    content=f"待重试项 {len(retry_candidates)} 条（anomaly_retry）",
                     refs=default_refs,
                     source=node_id,
                 )
@@ -409,10 +498,30 @@ class ParsingAgent:
         if trace_content:
             notes.append(trace_content)
         notes.append(f"request_templates={json.dumps(request_templates[:20], ensure_ascii=False)}")
-        notes.append(f"object_inventory={json.dumps(object_inventory[:20], ensure_ascii=False)}")
+        notes.append(f"object_inventory={json.dumps(object_inventory_values[:20], ensure_ascii=False)}")
         notes.append(f"flow_graph={json.dumps(flow_graph, ensure_ascii=False)}")
-        if frontier_queue:
-            notes.append(f"frontier_queue={json.dumps(frontier_queue, ensure_ascii=False)}")
+        if retry_candidates:
+            notes.append(
+                "frontier_queue="
+                + json.dumps(
+                    [
+                        {
+                            "id": item.id,
+                            "retry_key": item.id,
+                            "kind": "anomaly_retry",
+                            "status": item.status,
+                            "reason": item.retry_reason,
+                            "method": item.method,
+                            "path": item.path,
+                            "retries_left": max(item.max_attempts - item.times_attempted, 0),
+                            "needs_retry": item.status != "consumed",
+                            "family_id": family_id,
+                        }
+                        for item in retry_candidates[:20]
+                    ],
+                    ensure_ascii=False,
+                )
+            )
 
         return StateTableDelta(
             identities=identities,
@@ -421,6 +530,10 @@ class ParsingAgent:
             workflow_prerequisites=workflow_prerequisites,
             reusable_artifacts=reusable_artifacts,
             session_risks=session_risks,
+            session_bundles=session_bundles,
+            request_graph=request_graph_entries,
+            object_inventory=object_inventory_entries,
+            retry_candidates=retry_candidates,
             notes=notes,
         )
 
@@ -514,6 +627,276 @@ class ParsingAgent:
 
         return templates[:12]
 
+    def _build_request_graph_entries(
+        self,
+        *,
+        node_id: str,
+        evidence_contents: dict[str, list[str]],
+        events: list[dict[str, Any]],
+    ) -> list[RequestGraphEntry]:
+        entries: list[RequestGraphEntry] = []
+        seen: set[tuple[str, str, int, str]] = set()
+
+        def add_entry(path: str, *, url: str = "", status: int = 0, event: str = "", links: list[str] | None = None) -> None:
+            normalized_path = str(path or "").strip()
+            if not normalized_path:
+                return
+            key = (normalized_path, str(url or "").strip(), int(status or 0), event)
+            if key in seen:
+                return
+            seen.add(key)
+
+            param_keys: list[str] = []
+            if "?" in normalized_path:
+                query = normalized_path.split("?", 1)[1]
+                for segment in query.split("&"):
+                    name = segment.split("=", 1)[0].strip()
+                    if name and name not in param_keys:
+                        param_keys.append(name)
+
+            entries.append(
+                RequestGraphEntry(
+                    url=str(url or ""),
+                    path=normalized_path,
+                    status_code=int(status or 0),
+                    links=list(dict.fromkeys(links or []))[:20],
+                    discovered_params={"query": param_keys} if param_keys else {},
+                    source_node_id=node_id,
+                )
+            )
+
+        for path in evidence_contents.get("api_path", [])[:20]:
+            add_entry(path, event="api_path")
+
+        for item in events:
+            event = str(item.get("event") or "").strip()
+            path = str(item.get("path") or "").strip()
+            url = str(item.get("url") or "").strip()
+            status = int(item.get("status") or 0) if str(item.get("status") or "").isdigit() else 0
+            links = [str(item.get("path") or "").strip()] if event == "discovered_endpoint" else []
+            if event == "discovered_endpoint":
+                discovered = str(item.get("path") or "").strip()
+                add_entry(discovered, event=event)
+                continue
+            if event in {
+                "post_login_recon",
+                "object_probe",
+                "retry_candidate_probe",
+                "login_page_probe",
+                "login_replay",
+                "session_recipe_replay",
+                "anomaly_retry",
+            } and path:
+                add_entry(path, url=url, status=status, event=event, links=links)
+
+        return entries[:60]
+
+    def _build_object_inventory_entries(self, raw_output: str, events: list[dict[str, Any]]) -> list[ObjectInventoryEntry]:
+        grouped: dict[str, list[str]] = {}
+
+        def add(object_type: str, value: str, *, source_path: str = "", method: str = "regex") -> None:
+            normalized = str(value or "").strip().strip("，。！？；,:;)")
+            if len(normalized) < 2:
+                return
+            bucket = grouped.setdefault(object_type, [])
+            if normalized not in bucket:
+                bucket.append(normalized)
+
+        for value in self._extract_object_inventory(raw_output):
+            add(self._infer_object_type(value), value, method="raw_output")
+
+        for item in events:
+            for key in ("candidate_value", "base_value", "target"):
+                value = str(item.get(key) or "").strip()
+                if not value:
+                    continue
+                add(self._infer_object_type(value), value, source_path=str(item.get("path") or ""), method="event")
+
+        entries: list[ObjectInventoryEntry] = []
+        for object_type, values in grouped.items():
+            entries.append(
+                ObjectInventoryEntry(
+                    object_type=object_type,
+                    values=values[:30],
+                    extraction_method="regex+event",
+                    confidence=0.75 if len(values) > 1 else 0.6,
+                )
+            )
+        return entries[:20]
+
+    def _flatten_object_inventory_values(self, entries: list[ObjectInventoryEntry]) -> list[str]:
+        values: list[str] = []
+        for entry in entries:
+            for value in entry.values:
+                if value not in values:
+                    values.append(value)
+        return values[:40]
+
+    def _build_retry_candidates(
+        self,
+        *,
+        node_id: str,
+        node_title: str,
+        family_id: str,
+        node_type: NodeType,
+        raw_output: str,
+        object_inventory: list[str],
+        request_templates: list[dict[str, str]],
+        events: list[dict[str, Any]],
+    ) -> list[RetryCandidate]:
+        candidates: list[RetryCandidate] = []
+        seen: set[str] = set()
+
+        def add_candidate(method: str, path: str, payload: dict[str, Any], reason: str, statuses: list[int] | None = None) -> None:
+            normalized_method = str(method or "GET").upper()
+            normalized_path = str(path or "").strip()
+            if not normalized_path:
+                return
+            key = f"{normalized_method} {normalized_path} {json.dumps(payload, sort_keys=True, ensure_ascii=False)}"
+            if key in seen:
+                return
+            seen.add(key)
+            candidates.append(
+                RetryCandidate(
+                    method=normalized_method,
+                    path=normalized_path,
+                    params_or_body=payload,
+                    retry_reason=reason,
+                    times_attempted=0,
+                    max_attempts=3,
+                    last_statuses=list(statuses or []),
+                    source_node_id=node_id,
+                    status="pending",
+                )
+            )
+
+        legacy_queue = self._build_anomaly_retry_frontier_queue(
+            node_id=node_id,
+            node_title=node_title,
+            family_id=family_id,
+            node_type=node_type,
+            raw_output=raw_output,
+            object_inventory=object_inventory,
+            request_templates=request_templates,
+        )
+        for item in legacy_queue:
+            command = str(item.get("command") or "")
+            method = "GET"
+            path = str(item.get("endpoint") or "").strip()
+            match = re.match(r"(?i)\s*(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s+([^\s]+)", command)
+            if match:
+                method = match.group(1).upper()
+                if not path:
+                    path = match.group(2)
+            add_candidate(method, path, {"target": str(item.get("target") or "")}, str(item.get("reason") or "anomaly_retry"), [500])
+
+        for event in events:
+            event_name = str(event.get("event") or "")
+            if event_name not in {"anomaly_retry", "object_probe", "retry_candidate_probe"}:
+                continue
+            status = int(event.get("status") or -1) if str(event.get("status") or "").lstrip("-").isdigit() else -1
+            if status < 500:
+                continue
+            method = str(event.get("method") or "GET").upper()
+            path = str(event.get("path") or "").strip()
+            payload = {
+                "candidate_value": str(event.get("candidate_value") or ""),
+                "base_value": str(event.get("base_value") or ""),
+                "mutation_type": str(event.get("mutation_type") or ""),
+            }
+            payload = {k: v for k, v in payload.items() if v}
+            add_candidate(method, path, payload, f"{event_name}_status_{status}", [status])
+
+        return candidates[:30]
+
+    def _build_session_bundles(
+        self,
+        *,
+        node_id: str,
+        raw_output: str,
+        request_templates: list[dict[str, str]],
+        evidence_contents: dict[str, list[str]],
+        events: list[dict[str, Any]],
+    ) -> list[SessionBundle]:
+        base_url = ""
+        for item in events:
+            candidate = str(item.get("base_url") or "").strip()
+            if candidate:
+                base_url = candidate
+                break
+
+        if not base_url:
+            url_line = re.search(r"(?im)^url:([^\n]+)", raw_output or "")
+            if url_line:
+                url = url_line.group(1).strip()
+                match = re.match(r"(?i)(https?://[^/]+)", url)
+                if match:
+                    base_url = match.group(1)
+
+        login_recipes: list[dict[str, Any]] = []
+        for item in request_templates:
+            method = str(item.get("method") or "GET").upper()
+            path = str(item.get("path") or "").strip()
+            if not path:
+                continue
+            if any(token in path.lower() for token in ("login", "signin", "password", "auth")):
+                login_recipes.append({"method": method, "path": path})
+
+        for item in events:
+            if str(item.get("event") or "") != "login_replay":
+                continue
+            path = str(item.get("path") or "").strip()
+            method = str(item.get("method") or "POST").upper()
+            payload_keys = item.get("payload_keys") if isinstance(item.get("payload_keys"), list) else []
+            payload = {str(key): "<filled_by_act>" for key in payload_keys[:6]}
+            if path:
+                login_recipes.append({"method": method, "path": path, "payload": payload})
+
+        jwt = ""
+        for token in re.findall(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9._-]{8,}\.[A-Za-z0-9._-]{8,}\b", raw_output or ""):
+            jwt = token
+            break
+
+        headers: dict[str, str] = {}
+        if jwt:
+            headers["Authorization"] = f"Bearer {jwt}"
+
+        identity = ""
+        credentials = self._extract_credential_materials(raw_output)
+        if credentials:
+            identity = credentials[0].split(":", 1)[0]
+
+        has_login_signal = any(
+            str(item.get("event") or "") in {"login_replay", "login_try", "session_recipe_replay", "post_login_recon"}
+            for item in events
+        )
+        if not (base_url or login_recipes or headers or has_login_signal):
+            return []
+
+        return [
+            SessionBundle(
+                base_url=base_url,
+                cookies={},
+                headers=headers,
+                login_recipes=login_recipes[:20],
+                current_identity=identity or None,
+                authenticated_page_fingerprint=(evidence_contents.get("login_surface") or [""])[0][:160] or None,
+                source_node_id=node_id,
+            )
+        ]
+
+    def _infer_object_type(self, value: str) -> str:
+        lowered = str(value or "").lower()
+        if "tenant" in lowered:
+            return "tenant_id"
+        if "user" in lowered:
+            return "user_id"
+        if "order" in lowered:
+            return "order_id"
+        if re.fullmatch(r"\d+", lowered):
+            return "object_id"
+        return "generic"
+
     def _extract_object_inventory(self, raw_output: str) -> list[str]:
         inventory: list[str] = []
         for pattern in OBJECT_CANDIDATE_PATTERNS:
@@ -529,13 +912,26 @@ class ParsingAgent:
                     inventory.append(candidate)
         return inventory[:16]
 
-    def _build_flow_graph(self, *, node_title: str, api_paths: list[str]) -> dict[str, Any]:
+    def _build_flow_graph(
+        self,
+        *,
+        node_title: str,
+        api_paths: list[str],
+        request_graph_entries: list[RequestGraphEntry],
+    ) -> dict[str, Any]:
         nodes = [node_title]
         edges: list[dict[str, str]] = []
         for path in api_paths[:8]:
             if path not in nodes:
                 nodes.append(path)
             edges.append({"from": node_title, "to": path, "relation": "touches"})
+        for entry in request_graph_entries[:20]:
+            path = entry.path
+            if not path:
+                continue
+            if path not in nodes:
+                nodes.append(path)
+            edges.append({"from": node_title, "to": path, "relation": "observed"})
         return {
             "nodes": nodes[:20],
             "edges": edges[:20],

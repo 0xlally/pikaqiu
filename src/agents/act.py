@@ -340,10 +340,13 @@ NO_AUTO_STATE_TABLE_FAMILIES = {
 }
 
 STATE_STRUCTURED_KEYS = (
+    "session_bundles",
+    "request_graph",
     "request_templates",
     "object_inventory",
     "flow_graph",
     "frontier_queue",
+    "retry_candidates",
 )
 
 PARAM_NOISE = {
@@ -746,6 +749,30 @@ class ActAgent:
             if url and url not in urls:
                 urls.append(url)
 
+        for item in state_table_snapshot.get("request_graph") or []:
+            if not isinstance(item, dict):
+                continue
+            path = str(item.get("path") or "").strip()
+            if path and path not in paths:
+                paths.append(path)
+            url = str(item.get("url") or "").strip()
+            if url and url not in urls:
+                urls.append(url)
+            for link in item.get("links") or []:
+                link_text = str(link).strip()
+                if link_text.startswith("/") and link_text not in paths:
+                    paths.append(link_text)
+
+        for item in state_table_snapshot.get("retry_candidates") or []:
+            if not isinstance(item, dict):
+                continue
+            path = str(item.get("path") or "").strip()
+            if path and path not in paths:
+                paths.append(path)
+            url = str(item.get("url") or "").strip()
+            if url and url not in urls:
+                urls.append(url)
+
         return {
             "urls": urls,
             "paths": paths,
@@ -759,10 +786,13 @@ class ActAgent:
                 "key_entrypoints": [],
                 "session_materials": [],
                 "reusable_artifacts": [],
+                "session_bundles": [],
+                "request_graph": [],
                 "request_templates": [],
                 "object_inventory": [],
                 "flow_graph": {},
                 "frontier_queue": [],
+                "retry_candidates": [],
                 "notes": [],
             }
 
@@ -780,20 +810,26 @@ class ActAgent:
             return result
 
         notes = state_table.notes[-30:]
+        session_bundles = [item.model_dump() for item in getattr(state_table, "session_bundles", [])[:30]]
+        request_graph = [item.model_dump() for item in getattr(state_table, "request_graph", [])[:80]]
         request_templates = self._extract_structured_state_list(state_table, "request_templates", notes)
         object_inventory = self._extract_structured_state_list(state_table, "object_inventory", notes)
         flow_graph = self._extract_structured_state_dict(state_table, "flow_graph", notes)
         frontier_queue = self._extract_structured_state_list(state_table, "frontier_queue", notes)
+        retry_candidates = [item.model_dump() for item in getattr(state_table, "retry_candidates", [])[:80]]
 
         return {
             "identities": serialize(state_table.identities),
             "key_entrypoints": serialize(state_table.key_entrypoints),
             "session_materials": serialize(state_table.session_materials),
             "reusable_artifacts": serialize(state_table.reusable_artifacts),
+            "session_bundles": session_bundles,
+            "request_graph": request_graph,
             "request_templates": request_templates[:30],
             "object_inventory": object_inventory[:30],
             "flow_graph": flow_graph,
             "frontier_queue": frontier_queue[:30],
+            "retry_candidates": retry_candidates,
             "notes": notes,
         }
 
@@ -805,7 +841,13 @@ class ActAgent:
     ) -> list[object]:
         direct_value = getattr(state_table, key, None)
         if isinstance(direct_value, list):
-            return direct_value
+            normalized: list[object] = []
+            for item in direct_value:
+                if hasattr(item, "model_dump"):
+                    normalized.append(item.model_dump())
+                else:
+                    normalized.append(item)
+            return normalized
 
         for note in reversed(notes):
             parsed = self._parse_structured_note(note, key)
@@ -913,9 +955,15 @@ class ActAgent:
 
         for item in state_table_snapshot.get("object_inventory") or []:
             if isinstance(item, dict):
-                for key, value in item.items():
-                    add_param(str(key), from_state=True)
-                    add_object_candidate(str(value))
+                object_type = str(item.get("object_type") or "").strip()
+                if object_type:
+                    add_param(object_type, from_state=True)
+                for key in ("source_path", "extraction_method"):
+                    add_from_text(str(item.get(key) or ""), from_state=True)
+                values = item.get("values")
+                if isinstance(values, list):
+                    for value in values:
+                        add_object_candidate(str(value))
                 continue
             value = str(item)
             add_object_candidate(value)
@@ -936,6 +984,19 @@ class ActAgent:
             add_from_text(str(item.get("description") or ""))
             for note in item.get("notes") or []:
                 add_from_text(str(note))
+
+        for entry in state_table_snapshot.get("request_graph") or []:
+            if not isinstance(entry, dict):
+                continue
+            add_from_text(str(entry.get("path") or ""), from_state=True)
+            add_from_text(str(entry.get("url") or ""), from_state=True)
+            for key in ("param_keys", "hidden_fields"):
+                values = entry.get(key)
+                if isinstance(values, list):
+                    for item in values:
+                        add_param(str(item), from_state=True)
+            for value in entry.get("links") or []:
+                add_from_text(str(value), from_state=True)
 
         family_id = node.related_test_family or ""
         family_focus = list(FAMILY_PARAMETER_FOCUS.get(family_id, []))
@@ -959,7 +1020,10 @@ class ActAgent:
             "state_priority": state_prioritized[:20],
             "family_priority": family_focus[:20],
             "recommended_for_this_node": recommended[:20],
-            "object_candidates": object_candidates[:30],
+            "object_candidates": self._sanitize_object_candidates(
+                object_candidates,
+                runtime_texts=[str(node.title or ""), str(node.description or "")],
+            ),
             "request_templates": (state_table_snapshot.get("request_templates") or [])[:20],
             "mutation_hint": FAMILY_MUTATION_HINTS.get(family_id, "优先从对象ID、角色、状态、步骤、额度和token参数开始改参验证。"),
         }
@@ -1205,6 +1269,15 @@ class ActAgent:
         state_table_snapshot: dict[str, object],
     ) -> ActCommand:
         """兜底命令：在模型未返回可执行命令时保证链路不中断。"""
+        retry_candidates = self._resolve_retry_candidates(state_table_snapshot)
+        if node_type == NodeType.TEST.value and retry_candidates:
+            return self._build_retry_candidate_command(
+                node_id=node_id,
+                known_targets=known_targets,
+                state_table_snapshot=state_table_snapshot,
+                retry_candidates=retry_candidates,
+            )
+
         if node_type == NodeType.TEST.value and test_family_id in ACCESS_CONTROL_FAMILY_IDS:
             return self._build_object_access_probe_command(
                 node_id=node_id,
@@ -1229,8 +1302,26 @@ class ActAgent:
                 state_table_snapshot=state_table_snapshot,
             )
 
+        if (
+            node_type == NodeType.TEST.value
+            and test_family_id in AUTH_FAMILY_IDS
+            and self._has_login_materials_for_replay(known_targets=known_targets, state_table_snapshot=state_table_snapshot)
+        ):
+            return self._build_login_replay_command(
+                node_id=node_id,
+                title=title,
+                node_description=node_description,
+                node_notes=node_notes,
+                known_targets=known_targets,
+                state_table_snapshot=state_table_snapshot,
+            )
+
         lowered_text = f"{title}\n{node_description}".lower()
-        if node_type == NodeType.INFO.value and ("登录后侦察" in lowered_text or "post-login" in lowered_text):
+        if node_type == NodeType.INFO.value and (
+            "登录后侦察" in lowered_text
+            or "post-login" in lowered_text
+            or self._resolve_latest_session_bundle(state_table_snapshot) is not None
+        ):
             return self._build_post_login_recon_command(
                 node_id=node_id,
                 title=title,
@@ -1268,12 +1359,21 @@ class ActAgent:
 
         command = "\n".join(
             [
-                "print(" + repr(f"type:{node_type}") + ")",
-                "print(" + repr(f"family:{test_family_id or '-'}") + ")",
-                "print(" + repr(f"node:{node_id}") + ")",
-                "print(" + repr(f"title:{title}") + ")",
-                "print('hint: fallback due to missing/ungrounded command')",
+                "import json",
+                "event = {",
+                "    'event': 'fallback_needs_materials',",
+                "    'node_id': " + repr(node_id) + ",",
+                "    'node_type': " + repr(node_type) + ",",
+                "    'family': " + repr(test_family_id or "-") + ",",
+                "    'title': " + repr(title) + ",",
+                "    'known_path_count': " + repr(len(known_targets.get("paths") or [])) + ",",
+                "    'known_url_count': " + repr(len(known_targets.get("urls") or [])) + ",",
+                "    'hint': 'collect one reachable page and one request template before next test',",
+                "    'result': 'fallback execution path used',",
+                "}",
+                "print(json.dumps(event, ensure_ascii=False))",
                 "print('result: fallback execution path used')",
+                "print('status:0')",
             ]
         )
         return ActCommand(tool_name="python", command=command)
@@ -1297,6 +1397,89 @@ class ActAgent:
             state_table_snapshot=state_table_snapshot,
         )
 
+    def _build_retry_candidate_command(
+        self,
+        *,
+        node_id: str,
+        known_targets: dict[str, list[str]],
+        state_table_snapshot: dict[str, object],
+        retry_candidates: list[dict[str, object]],
+    ) -> ActCommand:
+        base_url = self._resolve_base_url(known_targets, [])
+        session_bundle = self._resolve_latest_session_bundle(state_table_snapshot)
+        bundle_headers = dict((session_bundle or {}).get("headers") or {})
+        bundle_cookies = dict((session_bundle or {}).get("cookies") or {})
+
+        command = "\n".join(
+            [
+                "import json",
+                "import urllib.error",
+                "import urllib.parse",
+                "import urllib.request",
+                "",
+                f"BASE_URL = {base_url!r}",
+                f"RETRY_CANDIDATES = {retry_candidates[:12]!r}",
+                f"BUNDLE_HEADERS = {bundle_headers!r}",
+                f"BUNDLE_COOKIES = {bundle_cookies!r}",
+                "",
+                "def emit(event, **kwargs):",
+                "    payload = {'event': event}",
+                "    payload.update(kwargs)",
+                "    print(json.dumps(payload, ensure_ascii=False))",
+                "",
+                "def to_url(path):",
+                "    p = str(path or '').strip()",
+                "    if p.startswith('http://') or p.startswith('https://'):",
+                "        return p",
+                "    return urllib.parse.urljoin(BASE_URL.rstrip('/') + '/', p.lstrip('/'))",
+                "",
+                "def request(method, path, payload=None, extra_headers=None):",
+                "    url = to_url(path)",
+                "    headers = {'User-Agent': 'pikaqiu-act-agent/0.1', 'Accept': '*/*'}",
+                "    headers.update(BUNDLE_HEADERS)",
+                "    if BUNDLE_COOKIES:",
+                "        headers['Cookie'] = '; '.join(f'{k}={v}' for k, v in BUNDLE_COOKIES.items())",
+                "    if extra_headers:",
+                "        headers.update({str(k): str(v) for k, v in extra_headers.items()})",
+                "    data = None",
+                "    if isinstance(payload, dict):",
+                "        data = urllib.parse.urlencode(payload).encode('utf-8')",
+                "        headers.setdefault('Content-Type', 'application/x-www-form-urlencoded')",
+                "    elif isinstance(payload, str) and payload:",
+                "        data = payload.encode('utf-8')",
+                "    req = urllib.request.Request(url, data=data, method=str(method or 'GET').upper(), headers=headers)",
+                "    try:",
+                "        with urllib.request.urlopen(req, timeout=10) as resp:",
+                "            body = resp.read().decode('utf-8', errors='replace')",
+                "            return int(resp.status), body",
+                "    except urllib.error.HTTPError as e:",
+                "        body = e.read().decode('utf-8', errors='replace')",
+                "        return int(e.code), body",
+                "    except Exception as e:",
+                "        return -1, str(e)",
+                "",
+                "emit('retry_candidate_start', node_id=" + repr(node_id) + ", candidate_count=len(RETRY_CANDIDATES))",
+                "tested = 0",
+                "for candidate in RETRY_CANDIDATES[:12]:",
+                "    method = str(candidate.get('method') or 'GET').upper()",
+                "    path = candidate.get('path') or candidate.get('url') or ''",
+                "    payload = candidate.get('payload')",
+                "    headers = candidate.get('headers') if isinstance(candidate.get('headers'), dict) else {}",
+                "    status, body = request(method, path, payload=payload, extra_headers=headers)",
+                "    tested += 1",
+                "    emit('retry_candidate_probe', method=method, path=str(path), status=status, body_length=len(body))",
+                "    print(f'status:{status}')",
+                "    if 500 <= status < 600:",
+                "        for retry_index in [1, 2]:",
+                "            retry_status, retry_body = request(method, path, payload=payload, extra_headers=headers)",
+                "            emit('anomaly_retry', method=method, path=str(path), retry_index=retry_index, status=retry_status, body_length=len(retry_body))",
+                "            print(f'status:{retry_status}')",
+                "",
+                "emit('summary', tested_count=tested)",
+            ]
+        )
+        return ActCommand(tool_name="python", command=command)
+
     def _build_login_replay_command(
         self,
         *,
@@ -1310,6 +1493,10 @@ class ActAgent:
         runtime_texts = self._filter_runtime_texts([title, node_description, *node_notes])
         base_url = self._resolve_base_url(known_targets, runtime_texts)
         username, password = self._resolve_credentials(state_table_snapshot)
+        session_bundle = self._resolve_latest_session_bundle(state_table_snapshot) or {}
+        bundle_headers = dict(session_bundle.get("headers") or {})
+        bundle_cookies = dict(session_bundle.get("cookies") or {})
+        bundle_recipes = list(session_bundle.get("login_recipes") or [])
         known_paths = list(dict.fromkeys(known_targets.get("paths") or []))
         request_templates = self._resolve_request_templates(known_targets, state_table_snapshot)
 
@@ -1326,6 +1513,9 @@ class ActAgent:
                 f"PASSWORD = {password!r}",
                 f"KNOWN_PATHS = {known_paths!r}",
                 f"REQUEST_TEMPLATES = {request_templates!r}",
+                f"BUNDLE_HEADERS = {bundle_headers!r}",
+                f"BUNDLE_COOKIES = {bundle_cookies!r}",
+                f"BUNDLE_RECIPES = {bundle_recipes!r}",
                 "",
                 "jar = http.cookiejar.CookieJar()",
                 "opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))",
@@ -1341,6 +1531,9 @@ class ActAgent:
                 "def request(method, path, data=None, extra_headers=None):",
                 "    url = abs_url(path)",
                 "    headers = {'User-Agent': 'pikaqiu-act-agent/0.1', 'Accept': '*/*'}",
+                "    headers.update({str(k): str(v) for k, v in BUNDLE_HEADERS.items()})",
+                "    if BUNDLE_COOKIES:",
+                "        headers.setdefault('Cookie', '; '.join(f'{k}={v}' for k, v in BUNDLE_COOKIES.items()))",
                 "    if extra_headers:",
                 "        headers.update(extra_headers)",
                 "    body = None",
@@ -1359,6 +1552,18 @@ class ActAgent:
                 "        return {'ok': False, 'url': url, 'status': -1, 'headers': {}, 'text': str(e)}",
                 "",
                 "emit('login_replay_start', node_id=" + repr(node_id) + ", base_url=BASE_URL, username=USERNAME)",
+                "print('result: fallback execution path used')",
+                "",
+                "for recipe in BUNDLE_RECIPES[:4]:",
+                "    method = str(recipe.get('method') or 'POST').upper()",
+                "    path = str(recipe.get('path') or '')",
+                "    payload = recipe.get('payload') if isinstance(recipe.get('payload'), dict) else {'username': USERNAME, 'password': PASSWORD}",
+                "    headers = recipe.get('headers') if isinstance(recipe.get('headers'), dict) else {}",
+                "    if not path:",
+                "        continue",
+                "    resp = request(method, path, data=payload, extra_headers=headers)",
+                "    emit('session_recipe_replay', method=method, path=path, status=resp.get('status'))",
+                "    print(f\"status:{resp.get('status')}\")",
                 "",
                 "login_pages = []",
                 "for p in ['/login', '/signin', f'/password/{USERNAME}', '/password/test', '/password/']:",
@@ -1402,6 +1607,28 @@ class ActAgent:
         )
         return ActCommand(tool_name="python", command=command)
 
+    def _has_login_materials_for_replay(
+        self,
+        *,
+        known_targets: dict[str, list[str]],
+        state_table_snapshot: dict[str, object],
+    ) -> bool:
+        for path in known_targets.get("paths") or []:
+            lowered = str(path).lower()
+            if any(token in lowered for token in ("login", "signin", "password", "auth", "token")):
+                return True
+
+        if self._resolve_latest_session_bundle(state_table_snapshot) is not None:
+            return True
+
+        for item in state_table_snapshot.get("request_templates") or []:
+            if not isinstance(item, dict):
+                continue
+            path = str(item.get("path") or item.get("url") or "").lower()
+            if any(token in path for token in ("login", "signin", "password", "auth", "token")):
+                return True
+        return False
+
     def _build_post_login_recon_command(
         self,
         *,
@@ -1415,6 +1642,10 @@ class ActAgent:
         runtime_texts = self._filter_runtime_texts([title, node_description, *node_notes])
         base_url = self._resolve_base_url(known_targets, runtime_texts)
         request_templates = self._resolve_request_templates(known_targets, state_table_snapshot)
+        session_bundle = self._resolve_latest_session_bundle(state_table_snapshot) or {}
+        bundle_headers = dict(session_bundle.get("headers") or {})
+        bundle_cookies = dict(session_bundle.get("cookies") or {})
+        bundle_recipes = list(session_bundle.get("login_recipes") or [])
         known_paths = list(dict.fromkeys(known_targets.get("paths") or []))
 
         command = "\n".join(
@@ -1428,6 +1659,9 @@ class ActAgent:
                 f"BASE_URL = {base_url!r}",
                 f"KNOWN_PATHS = {known_paths!r}",
                 f"REQUEST_TEMPLATES = {request_templates!r}",
+                f"BUNDLE_HEADERS = {bundle_headers!r}",
+                f"BUNDLE_COOKIES = {bundle_cookies!r}",
+                f"BUNDLE_RECIPES = {bundle_recipes!r}",
                 "",
                 "def emit(event, **kwargs):",
                 "    payload = {'event': event}",
@@ -1439,7 +1673,11 @@ class ActAgent:
                 "",
                 "def request(method, path):",
                 "    url = abs_url(path)",
-                "    req = urllib.request.Request(url, method=method.upper(), headers={'User-Agent': 'pikaqiu-act-agent/0.1'})",
+                "    headers = {'User-Agent': 'pikaqiu-act-agent/0.1', 'Accept': '*/*'}",
+                "    headers.update({str(k): str(v) for k, v in BUNDLE_HEADERS.items()})",
+                "    if BUNDLE_COOKIES:",
+                "        headers.setdefault('Cookie', '; '.join(f'{k}={v}' for k, v in BUNDLE_COOKIES.items()))",
+                "    req = urllib.request.Request(url, method=method.upper(), headers=headers)",
                 "    try:",
                 "        with urllib.request.urlopen(req, timeout=10) as resp:",
                 "            text = resp.read().decode('utf-8', errors='replace')",
@@ -1449,6 +1687,36 @@ class ActAgent:
                 "        return {'status': e.code, 'url': url, 'text': text}",
                 "    except Exception as e:",
                 "        return {'status': -1, 'url': url, 'text': str(e)}",
+                "",
+                "def replay_recipe_once():",
+                "    for recipe in BUNDLE_RECIPES[:4]:",
+                "        method = str(recipe.get('method') or 'POST').upper()",
+                "        path = str(recipe.get('path') or '')",
+                "        if not path:",
+                "            continue",
+                "        url = abs_url(path)",
+                "        payload = recipe.get('payload') if isinstance(recipe.get('payload'), dict) else {}",
+                "        headers = {'User-Agent': 'pikaqiu-act-agent/0.1', 'Accept': '*/*'}",
+                "        headers.update({str(k): str(v) for k, v in BUNDLE_HEADERS.items()})",
+                "        if BUNDLE_COOKIES:",
+                "            headers.setdefault('Cookie', '; '.join(f'{k}={v}' for k, v in BUNDLE_COOKIES.items()))",
+                "        extra_headers = recipe.get('headers') if isinstance(recipe.get('headers'), dict) else {}",
+                "        headers.update({str(k): str(v) for k, v in extra_headers.items()})",
+                "        body = urllib.parse.urlencode(payload).encode('utf-8') if payload else None",
+                "        if body is not None:",
+                "            headers.setdefault('Content-Type', 'application/x-www-form-urlencoded')",
+                "        req = urllib.request.Request(url, data=body, method=method, headers=headers)",
+                "        try:",
+                "            with urllib.request.urlopen(req, timeout=10) as resp:",
+                "                emit('session_recipe_replay', method=method, path=path, status=int(resp.status))",
+                "                print(f'status:{int(resp.status)}')",
+                "                return True",
+                "        except urllib.error.HTTPError as e:",
+                "            emit('session_recipe_replay', method=method, path=path, status=int(e.code))",
+                "            print(f'status:{int(e.code)}')",
+                "        except Exception:",
+                "            continue",
+                "    return False",
                 "",
                 "candidates = ['/', '/dashboard', '/profile', '/orders', '/admin']",
                 "for p in KNOWN_PATHS:",
@@ -1466,6 +1734,13 @@ class ActAgent:
                 "        continue",
                 "    resp = request('GET', path)",
                 "    status = int(resp.get('status', -1))",
+                "    text_lower = str(resp.get('text') or '').lower()",
+                "    is_auth_wall = status in (401, 403) or 'login' in text_lower[:600]",
+                "    if is_auth_wall and BUNDLE_RECIPES:",
+                "        emit('auth_wall_detected', path=path, status=status)",
+                "        replay_recipe_once()",
+                "        resp = request('GET', path)",
+                "        status = int(resp.get('status', -1))",
                 "    if 200 <= status < 400:",
                 "        status_200_count += 1",
                 "    emit('post_login_recon', method='GET', path=path, status=status, url=resp.get('url'))",
@@ -1494,6 +1769,11 @@ class ActAgent:
         runtime_texts = self._filter_runtime_texts([title, node_description, *node_notes])
         base_url = self._resolve_base_url(known_targets, runtime_texts)
         username, password = self._resolve_credentials(state_table_snapshot)
+        session_bundle = self._resolve_latest_session_bundle(state_table_snapshot) or {}
+        bundle_headers = dict(session_bundle.get("headers") or {})
+        bundle_cookies = dict(session_bundle.get("cookies") or {})
+        bundle_recipes = list(session_bundle.get("login_recipes") or [])
+        retry_candidates = self._resolve_retry_candidates(state_table_snapshot)
         request_templates = self._resolve_request_templates(known_targets, state_table_snapshot)
         object_values = self._resolve_object_values(runtime_texts, state_table_snapshot)
 
@@ -1510,6 +1790,10 @@ class ActAgent:
                 f"PASSWORD = {password!r}",
                 f"REQUEST_TEMPLATES = {request_templates!r}",
                 f"OBJECT_VALUES = {object_values!r}",
+                f"BUNDLE_HEADERS = {bundle_headers!r}",
+                f"BUNDLE_COOKIES = {bundle_cookies!r}",
+                f"BUNDLE_RECIPES = {bundle_recipes!r}",
+                f"RETRY_CANDIDATES = {retry_candidates[:20]!r}",
                 "",
                 "jar = http.cookiejar.CookieJar()",
                 "opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))",
@@ -1525,6 +1809,9 @@ class ActAgent:
                 "def request(method, path, data=None):",
                 "    url = abs_url(path)",
                 "    headers = {'User-Agent': 'pikaqiu-act-agent/0.1', 'Accept': '*/*'}",
+                "    headers.update({str(k): str(v) for k, v in BUNDLE_HEADERS.items()})",
+                "    if BUNDLE_COOKIES:",
+                "        headers.setdefault('Cookie', '; '.join(f'{k}={v}' for k, v in BUNDLE_COOKIES.items()))",
                 "    body = None",
                 "    if data is not None:",
                 "        body = urllib.parse.urlencode(data).encode('utf-8')",
@@ -1597,6 +1884,16 @@ class ActAgent:
                 "print('[ACT] access_control probe started')",
                 "emit('object_probe_start', node_id=" + repr(node_id) + ", base_url=BASE_URL, template_count=len(REQUEST_TEMPLATES), object_seed_count=len(OBJECT_VALUES))",
                 "",
+                "for recipe in BUNDLE_RECIPES[:4]:",
+                "    method = str(recipe.get('method') or 'POST').upper()",
+                "    path = str(recipe.get('path') or '')",
+                "    payload = recipe.get('payload') if isinstance(recipe.get('payload'), dict) else {'username': USERNAME, 'password': PASSWORD}",
+                "    if not path:",
+                "        continue",
+                "    resp = request(method, path, data=payload)",
+                "    emit('session_recipe_replay', method=method, path=path, status=resp.get('status'))",
+                "    print(f\"status:{resp.get('status')}\")",
+                "",
                 "login_paths = ['/login', '/signin']",
                 "for item in REQUEST_TEMPLATES:",
                 "    p = str(item.get('path') or '')",
@@ -1623,8 +1920,18 @@ class ActAgent:
                 "        {'method': 'GET', 'path': '/orders/{id}'},",
                 "        {'method': 'GET', 'path': '/receipt?id={id}'},",
                 "    ]",
+                "for candidate in RETRY_CANDIDATES:",
+                "    method = str(candidate.get('method') or 'GET').upper()",
+                "    path = str(candidate.get('path') or candidate.get('url') or '')",
+                "    if path:",
+                "        templates.append({'method': method, 'path': path})",
                 "",
                 "seed_values = [str(v) for v in OBJECT_VALUES if str(v).strip()]",
+                "for candidate in RETRY_CANDIDATES:",
+                "    for key in ['candidate_value', 'base_value']:",
+                "        value = str(candidate.get(key) or '').strip()",
+                "        if value and value not in seed_values:",
+                "            seed_values.append(value)",
                 "if not seed_values:",
                 "    seed_values = ['1001', '1002']",
                 "mutations = build_mutations(seed_values)",
@@ -1680,11 +1987,26 @@ class ActAgent:
         state_table_snapshot: dict[str, object],
     ) -> list[dict[str, str]]:
         templates: list[dict[str, str]] = []
+
+        for item in state_table_snapshot.get("request_graph") or []:
+            if not isinstance(item, dict):
+                continue
+            method = str(item.get("method") or "GET").upper()
+            path = str(item.get("path") or item.get("url") or "").strip()
+            if path:
+                templates.append({"method": method, "path": path})
+
         for item in state_table_snapshot.get("request_templates") or []:
             if not isinstance(item, dict):
                 continue
             method = str(item.get("method") or "GET").upper()
             path = str(item.get("path") or item.get("url") or "").strip()
+            if path:
+                templates.append({"method": method, "path": path})
+
+        for candidate in self._resolve_retry_candidates(state_table_snapshot):
+            method = str(candidate.get("method") or "GET").upper()
+            path = str(candidate.get("path") or candidate.get("url") or "").strip()
             if path:
                 templates.append({"method": method, "path": path})
 
@@ -1715,6 +2037,26 @@ class ActAgent:
             deduped.append({"method": method, "path": path})
         return deduped[:30]
 
+    def _resolve_latest_session_bundle(self, state_table_snapshot: dict[str, object]) -> dict[str, object] | None:
+        bundles = state_table_snapshot.get("session_bundles") or []
+        if not isinstance(bundles, list):
+            return None
+        for item in reversed(bundles):
+            if isinstance(item, dict):
+                return item
+        return None
+
+    def _resolve_retry_candidates(self, state_table_snapshot: dict[str, object]) -> list[dict[str, object]]:
+        candidates: list[dict[str, object]] = []
+        for item in state_table_snapshot.get("retry_candidates") or []:
+            if isinstance(item, dict):
+                candidates.append(item)
+
+        for item in state_table_snapshot.get("frontier_queue") or []:
+            if isinstance(item, dict) and (item.get("kind") or "") in {"anomaly_retry", "retry_5xx"}:
+                candidates.append(item)
+        return candidates
+
     def _resolve_object_values(self, runtime_texts: list[str], state_table_snapshot: dict[str, object]) -> list[str]:
         values: list[str] = []
 
@@ -1727,13 +2069,22 @@ class ActAgent:
 
         for item in state_table_snapshot.get("object_inventory") or []:
             if isinstance(item, dict):
-                for field_value in item.values():
-                    add_value(str(field_value))
+                object_values = item.get("values")
+                if isinstance(object_values, list):
+                    for field_value in object_values:
+                        add_value(str(field_value))
+                object_type = str(item.get("object_type") or "").strip()
+                if object_type:
+                    add_value(object_type)
                 continue
             text = str(item)
             match = re.search(r"([A-Za-z0-9_-]{2,80})$", text)
             if match:
                 add_value(match.group(1))
+
+        for candidate in self._resolve_retry_candidates(state_table_snapshot):
+            for key in ("candidate_value", "base_value"):
+                add_value(str(candidate.get(key) or ""))
 
         for text in runtime_texts:
             for token in re.findall(r"(?<!\d)(\d{3,12})(?!\d)", text):
@@ -1746,7 +2097,33 @@ class ActAgent:
         if user_id:
             add_value(user_id)
 
-        return values[:40]
+        return self._sanitize_object_candidates(values, runtime_texts=runtime_texts)
+
+    def _sanitize_object_candidates(self, values: list[str], runtime_texts: list[str]) -> list[str]:
+        sanitized: list[str] = []
+        for raw in values:
+            value = str(raw).strip()
+            if not value:
+                continue
+            lowered = value.lower()
+            if lowered in {"http", "https", "localhost", "null", "none", "true", "false"}:
+                continue
+            if self._looks_infra_numeric(value, runtime_texts):
+                continue
+            if value not in sanitized:
+                sanitized.append(value)
+        return sanitized[:40]
+
+    def _looks_infra_numeric(self, value: str, runtime_texts: list[str]) -> bool:
+        if re.fullmatch(r"\d{10,13}", value):
+            return True
+        if re.fullmatch(r"\d{2,5}", value):
+            merged = "\n".join(runtime_texts)
+            if re.search(r"(:|port=|端口)\s*" + re.escape(value), merged, flags=re.IGNORECASE):
+                return True
+        if re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", value):
+            return True
+        return False
 
     def _resolve_base_url(self, known_targets: dict[str, list[str]], texts: list[str]) -> str:
         for url in known_targets.get("urls") or []:
@@ -1768,14 +2145,36 @@ class ActAgent:
         return "http://127.0.0.1"
 
     def _resolve_credentials(self, state_table_snapshot: dict[str, object]) -> tuple[str, str]:
+        latest_bundle = self._resolve_latest_session_bundle(state_table_snapshot) or {}
+        credentials = latest_bundle.get("credentials") if isinstance(latest_bundle, dict) else {}
+        if isinstance(credentials, dict):
+            username = str(credentials.get("username") or credentials.get("account") or "").strip()
+            password = str(credentials.get("password") or "").strip()
+            if username and password:
+                return username, password
+
         identities = state_table_snapshot.get("identities") or []
+        username_candidate = ""
+        password_candidate = ""
         for item in identities:
             if not isinstance(item, dict):
                 continue
+            title = str(item.get("title") or "").lower()
             content = str(item.get("content") or "").strip()
-            match = re.search(r"([A-Za-z0-9_.@-]{2,64})\s*[:/|]\s*([^\s]{2,128})", content)
-            if match:
-                return match.group(1), match.group(2)
+            if not content:
+                continue
+
+            pair_match = re.search(r"([A-Za-z0-9_.@-]{2,64})\s*[:/|]\s*([^\s]{2,128})", content)
+            if pair_match and ("账号" in title or "用户名" in title or "credential" in title or "user" in title):
+                return pair_match.group(1), pair_match.group(2)
+
+            if any(token in title for token in ("账号", "用户名", "username", "account", "email")) and not username_candidate:
+                username_candidate = content.split()[0]
+            if any(token in title for token in ("密码", "password", "pass")) and not password_candidate:
+                password_candidate = content.split()[0]
+
+        if username_candidate and password_candidate:
+            return username_candidate, password_candidate
         return "test", "test"
 
     def _resolve_user_id(self, texts: list[str]) -> str:

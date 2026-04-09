@@ -109,6 +109,69 @@ class StateItem(StrictModel):
         self.source = value
 
 
+class SessionBundle(StrictModel):
+    """可复用登录态与请求材料。"""
+
+    id: str = Field(default_factory=new_id)
+    base_url: str = ""
+    cookies: dict[str, str] = Field(default_factory=dict)
+    headers: dict[str, str] = Field(default_factory=dict)
+    login_recipes: list[dict[str, Any]] = Field(default_factory=list)
+    csrf_tokens: dict[str, str] = Field(default_factory=dict)
+    current_identity: str | None = None
+    authenticated_page_fingerprint: str | None = None
+    last_successful_login_at: str = Field(default_factory=utc_now_iso)
+    source_node_id: str | None = None
+
+
+class RequestGraphEntry(StrictModel):
+    """页面/请求图中的单条记录。"""
+
+    id: str = Field(default_factory=new_id)
+    url: str = ""
+    path: str = ""
+    referer: str = ""
+    title: str = ""
+    status_code: int = 0
+    body_hash: str = ""
+    links: list[str] = Field(default_factory=list)
+    forms: list[dict[str, Any]] = Field(default_factory=list)
+    discovered_params: dict[str, list[str]] = Field(default_factory=dict)
+    discovered_object_ids: dict[str, list[str]] = Field(default_factory=dict)
+    auth_wall_markers: list[str] = Field(default_factory=list)
+    source_node_id: str | None = None
+    created_at: str = Field(default_factory=utc_now_iso)
+
+
+class ObjectInventoryEntry(StrictModel):
+    """业务对象库存条目。"""
+
+    id: str = Field(default_factory=new_id)
+    object_type: str = "generic"
+    values: list[str] = Field(default_factory=list)
+    source_path: str = ""
+    extraction_method: str = "unknown"
+    confidence: float = 0.5
+    last_seen_at: str = Field(default_factory=utc_now_iso)
+
+
+class RetryCandidate(StrictModel):
+    """可重放/重试利用候选。"""
+
+    id: str = Field(default_factory=new_id)
+    method: str = "GET"
+    path: str = ""
+    params_or_body: dict[str, Any] = Field(default_factory=dict)
+    required_session_bundle_id: str | None = None
+    retry_reason: str = "flaky"
+    times_attempted: int = 0
+    max_attempts: int = 3
+    last_statuses: list[int] = Field(default_factory=list)
+    source_node_id: str | None = None
+    status: str = "pending"
+    created_at: str = Field(default_factory=utc_now_iso)
+
+
 class StateTable(StrictModel):
     """只保存高价值上下文的精简状态表。"""
 
@@ -118,6 +181,10 @@ class StateTable(StrictModel):
     workflow_prerequisites: list[StateItem] = Field(default_factory=list)
     reusable_artifacts: list[StateItem] = Field(default_factory=list)
     session_risks: list[StateItem] = Field(default_factory=list)
+    session_bundles: list[SessionBundle] = Field(default_factory=list)
+    request_graph: list[RequestGraphEntry] = Field(default_factory=list)
+    object_inventory: list[ObjectInventoryEntry] = Field(default_factory=list)
+    retry_candidates: list[RetryCandidate] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
 
     @model_validator(mode="before")
@@ -135,6 +202,8 @@ class StateTable(StrictModel):
             normalized["workflow_prerequisites"] = normalized.pop("flow_prerequisites")
         if "session_risks" not in normalized and "risk_hints" in normalized:
             normalized["session_risks"] = normalized.pop("risk_hints")
+        if "retry_candidates" not in normalized and "frontier_queue" in normalized:
+            normalized["retry_candidates"] = normalized.pop("frontier_queue")
         return normalized
 
     @property
@@ -179,6 +248,10 @@ class StateTableDelta(StrictModel):
     workflow_prerequisites: list[StateItem] = Field(default_factory=list)
     reusable_artifacts: list[StateItem] = Field(default_factory=list)
     session_risks: list[StateItem] = Field(default_factory=list)
+    session_bundles: list[SessionBundle] = Field(default_factory=list)
+    request_graph: list[RequestGraphEntry] = Field(default_factory=list)
+    object_inventory: list[ObjectInventoryEntry] = Field(default_factory=list)
+    retry_candidates: list[RetryCandidate] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
 
     @model_validator(mode="before")
@@ -196,6 +269,8 @@ class StateTableDelta(StrictModel):
             normalized["workflow_prerequisites"] = normalized.pop("flow_prerequisites")
         if "session_risks" not in normalized and "risk_hints" in normalized:
             normalized["session_risks"] = normalized.pop("risk_hints")
+        if "retry_candidates" not in normalized and "frontier_queue" in normalized:
+            normalized["retry_candidates"] = normalized.pop("frontier_queue")
         return normalized
 
     @property

@@ -22,6 +22,7 @@ class TaskTree:
         notes: list[str] | None = None,
         evidence_refs: list[str] | None = None,
         description: str = "",
+        metadata: dict[str, object] | None = None,
     ) -> TaskNode:
         """按扁平参数创建并插入一个节点。"""
         node = TaskNode(
@@ -34,6 +35,7 @@ class TaskTree:
             notes=notes or [],
             evidence_refs=evidence_refs or [],
             description=description,
+            metadata=metadata or {},
         )
         return self.add_node(node)
 
@@ -102,14 +104,54 @@ class TaskTree:
         return result
 
     def next_todo(self, kind: NodeType | None = None) -> TaskNode | None:
-        """返回第一个 TODO 节点，兼容旧调用方式。"""
+        """返回优先级最高的 TODO 节点，兼容旧调用方式。"""
+        candidates: list[TaskNode] = []
         for node in self.model.nodes.values():
             if node.status != NodeStatus.TODO:
                 continue
             if kind is not None and node.node_type != kind:
                 continue
-            return node
-        return None
+            candidates.append(node)
+
+        if not candidates:
+            return None
+
+        candidates.sort(key=self._node_sort_key)
+        return candidates[0]
+
+    def _node_sort_key(self, node: TaskNode) -> tuple[int, str]:
+        # 越小越优先
+        score = -self._priority_score(node)
+        return (score, node.id)
+
+    def _priority_score(self, node: TaskNode) -> int:
+        metadata = node.metadata or {}
+        explicit_score = metadata.get("priority_score")
+        if isinstance(explicit_score, int):
+            return explicit_score
+
+        stage = str(metadata.get("stage") or "").strip().lower()
+        stage_scores = {
+            "exploit_retry": 100,
+            "authenticated_object_access": 90,
+            "object_access": 90,
+            "object_enum": 80,
+            "login_restore": 70,
+            "generic_family_test": 50,
+            "info_recon": 30,
+        }
+        if stage in stage_scores:
+            return stage_scores[stage]
+
+        source = (node.source or "").lower()
+        title = (node.title or "").lower()
+        if "retry" in source or "retry" in title:
+            return 100
+        if "登录后" in title or "post_login" in source:
+            return 90
+        if node.node_type == NodeType.TEST:
+            return 50
+        return 30
 
     def create_test_nodes_from_feature(
         self,
