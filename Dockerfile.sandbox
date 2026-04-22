@@ -104,10 +104,10 @@ RUN mkdir -p /opt/exploit-tools \
 
 # ── Sandbox scripts (env-info etc.) ───────────────────────────────────────────
 # COPY provides defaults; docker-compose volume mount overrides for live dev
-COPY scripts/sandbox-tools/ /opt/tpt-tools/
-RUN chmod +x /opt/tpt-tools/* \
-    && find /opt/tpt-tools -type f -exec sed -i 's/\r//' {} + \
-    && printf '#!/bin/bash\nexec python3 /opt/tpt-tools/env-info "$@"\n' > /usr/local/bin/env-info \
+COPY scripts/sandbox-tools/ /opt/pikaqiu-tools/
+RUN chmod +x /opt/pikaqiu-tools/* \
+    && find /opt/pikaqiu-tools -type f -exec sed -i 's/\r//' {} + \
+    && printf '#!/bin/bash\nexec python3 /opt/pikaqiu-tools/env-info "$@"\n' > /usr/local/bin/env-info \
     && chmod +x /usr/local/bin/env-info
 
 # ── Tool initialization (offline-ready) ───────────────────────────────────────
@@ -125,9 +125,9 @@ RUN pip3 install --break-system-packages --no-cache-dir playwright \
 RUN netexec --help >/dev/null 2>&1; crackmapexec --help >/dev/null 2>&1; exit 0
 
 # ── Workspace ────────────────────────────────────────────────────────────────
-RUN mkdir -p /tmp/tpt-agent-workspace
+RUN mkdir -p /tmp/pikaqiu-agent-workspace
 
-WORKDIR /tmp/tpt-agent-workspace
+WORKDIR /tmp/pikaqiu-agent-workspace
 
 # Keep container alive
 CMD ["sleep", "infinity"]

@@ -16,7 +16,7 @@ if _env_path.is_file():
                 if _key and _key not in os.environ:
                     os.environ[_key] = _val
 
-from tpt_agent.web_app import run_server
+from pikaqiu_agent.web_app import run_server
 
 
 if __name__ == "__main__":

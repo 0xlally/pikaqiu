@@ -38,11 +38,11 @@ Orchestrator (ReAct Loop)
 ### 1. Clone & Build
 
 ```bash
-git clone https://github.com/ENOCH-lyn/tencent_penetration_test.git
-cd tencent_penetration_test
+git clone https://github.com/0xlally/pikaqiu.git
+cd pikaqiu
 
 # Build Kali sandbox image (~15-30 min first time)
-docker build -f Dockerfile.sandbox -t tpt-kali-sandbox .
+docker build -f Dockerfile.sandbox -t pikaqiu-kali-sandbox .
 
 # Start sandbox container
 docker compose up -d
@@ -71,7 +71,7 @@ advisor:
 
 sandbox:
   container: "tencent-pentest-agent-sandbox"
-  workdir: "/tmp/tpt-agent-workspace"
+  workdir: "/tmp/pikaqiu-agent-workspace"
 
 web:
   host: "127.0.0.1"
@@ -81,7 +81,7 @@ web:
 ### 3. Run
 
 ```bash
-python -m tpt_agent
+python -m pikaqiu_agent
 # Open http://127.0.0.1:8765
 ```
 
@@ -95,7 +95,7 @@ curl -X POST http://localhost:8765/api/missions \
 ## Project Structure
 
 ```
-tpt_agent/
+pikaqiu_agent/
   ├─ orchestrator.py   # ReAct main loop, mission execution
   ├─ llm_client.py     # LangChain LLM wrapper (model pool, failover)
   ├─ prompts.py        # System prompts and context building

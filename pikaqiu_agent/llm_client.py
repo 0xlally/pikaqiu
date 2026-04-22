@@ -22,7 +22,7 @@ try:
 except ImportError:
     ChatAnthropic = None  # type: ignore[assignment,misc]
 
-from tpt_agent.config import AgentSettings
+from pikaqiu_agent.config import AgentSettings
 
 logger = logging.getLogger(__name__)
 

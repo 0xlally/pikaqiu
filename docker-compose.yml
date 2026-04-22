@@ -1,5 +1,5 @@
 x-sandbox-base: &sandbox-base
-  image: tpt-kali-sandbox:latest
+  image: pikaqiu-kali-sandbox:latest
   restart: unless-stopped
   network_mode: host
   cap_add:
@@ -14,24 +14,24 @@ x-sandbox-base: &sandbox-base
 services:
   sandbox-1:
     <<: *sandbox-base
-    container_name: tpt-sandbox-1
+    container_name: pikaqiu-sandbox-1
     volumes:
-      - sandbox-ws-1:/tmp/tpt-agent-workspace
-      - ./scripts/sandbox-tools:/opt/tpt-tools:ro
+      - sandbox-ws-1:/tmp/pikaqiu-agent-workspace
+      - ./scripts/sandbox-tools:/opt/pikaqiu-tools:ro
 
   sandbox-2:
     <<: *sandbox-base
-    container_name: tpt-sandbox-2
+    container_name: pikaqiu-sandbox-2
     volumes:
-      - sandbox-ws-2:/tmp/tpt-agent-workspace
-      - ./scripts/sandbox-tools:/opt/tpt-tools:ro
+      - sandbox-ws-2:/tmp/pikaqiu-agent-workspace
+      - ./scripts/sandbox-tools:/opt/pikaqiu-tools:ro
 
   sandbox-3:
     <<: *sandbox-base
-    container_name: tpt-sandbox-3
+    container_name: pikaqiu-sandbox-3
     volumes:
-      - sandbox-ws-3:/tmp/tpt-agent-workspace
-      - ./scripts/sandbox-tools:/opt/tpt-tools:ro
+      - sandbox-ws-3:/tmp/pikaqiu-agent-workspace
+      - ./scripts/sandbox-tools:/opt/pikaqiu-tools:ro
 
 volumes:
   sandbox-ws-1:

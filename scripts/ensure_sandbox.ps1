@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$containerName = "tpt-kali-sandbox"
+$containerName = "pikaqiu-kali-sandbox"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 
 # Check if container exists

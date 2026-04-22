@@ -9,19 +9,19 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from tpt_agent.config import AgentSettings
-from tpt_agent.knowledge import KnowledgeIndexer
-from tpt_agent.llm_client import LLMClient, format_llm_error
-from tpt_agent.memory import normalize_memory_enhanced, detect_stall, score_importance, retrieve_forgotten_context
-from tpt_agent.prompts import (
+from pikaqiu_agent.config import AgentSettings
+from pikaqiu_agent.knowledge import KnowledgeIndexer
+from pikaqiu_agent.llm_client import LLMClient, format_llm_error
+from pikaqiu_agent.memory import normalize_memory_enhanced, detect_stall, score_importance, retrieve_forgotten_context
+from pikaqiu_agent.prompts import (
     build_tool_system_prompt,
     build_volatile_context,
     build_tool_memory_prompt,
     build_memory_cleaning_prompt,
 )
-from tpt_agent.sandbox import SandboxExecutor
-from tpt_agent.storage import MissionStore
-from tpt_agent.tools import create_all_tools
+from pikaqiu_agent.sandbox import SandboxExecutor
+from pikaqiu_agent.storage import MissionStore
+from pikaqiu_agent.tools import create_all_tools
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +176,7 @@ class OrchestratorManager:
         sbx = sandbox or self.sandbox
         try:
             result = sbx.run(
-                "python3 /opt/tpt-tools/env-info 2>/dev/null",
+                "python3 /opt/pikaqiu-tools/env-info 2>/dev/null",
                 workdir="/tmp",
                 timeout_sec=15,
             )

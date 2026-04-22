@@ -307,35 +307,35 @@ def load_settings(workspace_root: Path | None = None) -> AgentSettings:
 
 def _load_from_env(root: Path) -> AgentSettings:
     """Legacy .env-based loading."""
-    base_url = _env_str("TPT_LLM_BASE_URL", "TPT_ANTHROPIC_BASE_URL", default=DEFAULT_LLM_BASE_URL)
+    base_url = _env_str("PIKAQIU_LLM_BASE_URL", "PIKAQIU_ANTHROPIC_BASE_URL", default=DEFAULT_LLM_BASE_URL)
     if base_url.endswith("/anthropic"):
         base_url = base_url[:-len("/anthropic")]
 
     return AgentSettings(
         workspace_root=root.resolve(),
-        db_path=(root / ".tpt_agent" / "state.sqlite3").resolve(),
-        sandbox_container=_env_str("TPT_SANDBOX_CONTAINER", default="tencent-pentest-agent-sandbox"),
-        sandbox_workdir=_env_str("TPT_SANDBOX_WORKDIR", default="/tmp/tpt-agent-workspace"),
+        db_path=(root / ".pikaqiu_agent" / "state.sqlite3").resolve(),
+        sandbox_container=_env_str("PIKAQIU_SANDBOX_CONTAINER", default="tencent-pentest-agent-sandbox"),
+        sandbox_workdir=_env_str("PIKAQIU_SANDBOX_WORKDIR", default="/tmp/pikaqiu-agent-workspace"),
         llm_base_url=base_url,
-        llm_api_key=_env_str("TPT_LLM_API_KEY", "TPT_ANTHROPIC_AUTH_TOKEN", default=DEFAULT_LLM_API_KEY),
-        llm_model=_env_str("TPT_LLM_MODEL", "TPT_ANTHROPIC_MODEL", default=DEFAULT_LLM_MODEL),
-        llm_chat_model=_env_str("TPT_LLM_CHAT_MODEL", default=""),
-        llm_thinking=_env_bool("TPT_LLM_THINKING", default=False),
-        llm_timeout_sec=_env_int("TPT_LLM_TIMEOUT_SEC", _env_int("TPT_CLAUDE_TIMEOUT_SEC", 60)),
-        llm_max_retries=_env_int("TPT_LLM_MAX_RETRIES", 10),
-        advisor_base_url=_env_str("TPT_ADVISOR_BASE_URL", default=""),
-        advisor_api_key=_env_str("TPT_ADVISOR_API_KEY", default=""),
-        advisor_model=_env_str("TPT_ADVISOR_MODEL", default=""),
-        advisor_thinking=_env_bool("TPT_ADVISOR_THINKING", default=False),
-        initial_rounds=_env_int("TPT_MAX_ROUNDS", 8),
-        initial_commands=_env_int("TPT_MAX_COMMANDS_PER_ROUND", 32),
-        command_timeout_sec=_env_int("TPT_COMMAND_TIMEOUT_SEC", 60),
-        stdout_limit=_env_int("TPT_STDOUT_LIMIT", 16000),
-        knowledge_top_k=_env_int("TPT_KNOWLEDGE_TOP_K", 6),
-        knowledge_dir=_env_str("TPT_KNOWLEDGE_DIR", default="./knowledge"),
-        host=_env_str("TPT_WEB_HOST", default="127.0.0.1"),
-        port=_env_int("TPT_WEB_PORT", 8765),
-        mock=_env_bool("TPT_MOCK", False),
+        llm_api_key=_env_str("PIKAQIU_LLM_API_KEY", "PIKAQIU_ANTHROPIC_AUTH_TOKEN", default=DEFAULT_LLM_API_KEY),
+        llm_model=_env_str("PIKAQIU_LLM_MODEL", "PIKAQIU_ANTHROPIC_MODEL", default=DEFAULT_LLM_MODEL),
+        llm_chat_model=_env_str("PIKAQIU_LLM_CHAT_MODEL", default=""),
+        llm_thinking=_env_bool("PIKAQIU_LLM_THINKING", default=False),
+        llm_timeout_sec=_env_int("PIKAQIU_LLM_TIMEOUT_SEC", _env_int("PIKAQIU_CLAUDE_TIMEOUT_SEC", 60)),
+        llm_max_retries=_env_int("PIKAQIU_LLM_MAX_RETRIES", 10),
+        advisor_base_url=_env_str("PIKAQIU_ADVISOR_BASE_URL", default=""),
+        advisor_api_key=_env_str("PIKAQIU_ADVISOR_API_KEY", default=""),
+        advisor_model=_env_str("PIKAQIU_ADVISOR_MODEL", default=""),
+        advisor_thinking=_env_bool("PIKAQIU_ADVISOR_THINKING", default=False),
+        initial_rounds=_env_int("PIKAQIU_MAX_ROUNDS", 8),
+        initial_commands=_env_int("PIKAQIU_MAX_COMMANDS_PER_ROUND", 32),
+        command_timeout_sec=_env_int("PIKAQIU_COMMAND_TIMEOUT_SEC", 60),
+        stdout_limit=_env_int("PIKAQIU_STDOUT_LIMIT", 16000),
+        knowledge_top_k=_env_int("PIKAQIU_KNOWLEDGE_TOP_K", 6),
+        knowledge_dir=_env_str("PIKAQIU_KNOWLEDGE_DIR", default="./knowledge"),
+        host=_env_str("PIKAQIU_WEB_HOST", default="127.0.0.1"),
+        port=_env_int("PIKAQIU_WEB_PORT", 8765),
+        mock=_env_bool("PIKAQIU_MOCK", False),
     )
 
 
@@ -379,9 +379,9 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
 
     # Primary model = first in pool (highest priority) or env fallback
     primary = model_pool[0] if model_pool else None
-    llm_base_url = primary.base_url if primary else _env_str("TPT_LLM_BASE_URL", default=DEFAULT_LLM_BASE_URL)
-    llm_api_key = primary.api_key if primary else _env_str("TPT_LLM_API_KEY", default="")
-    llm_model = primary.model if primary else _env_str("TPT_LLM_MODEL", default=DEFAULT_LLM_MODEL)
+    llm_base_url = primary.base_url if primary else _env_str("PIKAQIU_LLM_BASE_URL", default=DEFAULT_LLM_BASE_URL)
+    llm_api_key = primary.api_key if primary else _env_str("PIKAQIU_LLM_API_KEY", default="")
+    llm_model = primary.model if primary else _env_str("PIKAQIU_LLM_MODEL", default=DEFAULT_LLM_MODEL)
     llm_thinking = primary.thinking if primary else False
 
     # Advisor
@@ -400,9 +400,9 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
 
     settings = AgentSettings(
         workspace_root=root.resolve(),
-        db_path=(root / ".tpt_agent" / "state.sqlite3").resolve(),
+        db_path=(root / ".pikaqiu_agent" / "state.sqlite3").resolve(),
         sandbox_container=_sb_containers[0] if _sb_containers else _sb_default,
-        sandbox_workdir=sb.get("workdir", "/tmp/tpt-agent-workspace"),
+        sandbox_workdir=sb.get("workdir", "/tmp/pikaqiu-agent-workspace"),
         sandbox_containers=_sb_containers,
         sandbox_public_ip=sb.get("public_ip", ""),
         llm_base_url=llm_base_url,

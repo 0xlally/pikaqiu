@@ -85,11 +85,11 @@ agent_defaults:
 
 # ─── Sandbox ─────────────────────────────────────────────────────
 sandbox:
-  container: "tpt-sandbox-1"         # Docker container name
+  container: "pikaqiu-sandbox-1"         # Docker container name
   # containers:                      # Multi-sandbox pool (optional)
-  #   - "tpt-sandbox-1"
-  #   - "tpt-sandbox-2"
-  workdir: "/tmp/tpt-agent-workspace"
+  #   - "pikaqiu-sandbox-1"
+  #   - "pikaqiu-sandbox-2"
+  workdir: "/tmp/pikaqiu-agent-workspace"
   public_ip: ""                      # Public IP for reverse shell listeners (optional)
 
 # ─── Web UI ──────────────────────────────────────────────────────

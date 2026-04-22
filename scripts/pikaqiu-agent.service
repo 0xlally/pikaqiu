@@ -7,8 +7,8 @@ Wants=docker.service
 Type=simple
 User=root
 # Update these paths to match your installation
-WorkingDirectory=/opt/tpt-agent
-ExecStart=/opt/tpt-agent/venv/bin/python -m tpt_agent
+WorkingDirectory=/opt/pikaqiu-agent
+ExecStart=/opt/pikaqiu-agent/venv/bin/python -m pikaqiu_agent
 ExecStop=/bin/kill -SIGTERM $MAINPID
 Restart=on-failure
 RestartSec=5
@@ -21,7 +21,7 @@ Environment=PYTHONUNBUFFERED=1
 # 日志
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=tpt-agent
+SyslogIdentifier=pikaqiu-agent
 
 # 安全加固
 NoNewPrivileges=no

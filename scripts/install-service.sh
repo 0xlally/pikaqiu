@@ -1,14 +1,14 @@
 #!/bin/bash
-# TPT Agent systemd 服务安装脚本
+# PikaQiu Agent systemd 服务安装脚本
 # 用法: sudo bash install-service.sh
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-SERVICE_FILE="$SCRIPT_DIR/tpt-agent.service"
-TARGET="/etc/systemd/system/tpt-agent.service"
-TPT_BIN="/usr/local/bin/tpt"
+SERVICE_FILE="$SCRIPT_DIR/pikaqiu-agent.service"
+TARGET="/etc/systemd/system/pikaqiu-agent.service"
+PIKAQIU_BIN="/usr/local/bin/pikaqiu"
 
 if [ "$EUID" -ne 0 ]; then
     echo "请使用 sudo 运行: sudo bash $0"
@@ -21,31 +21,31 @@ if [ ! -f "$SERVICE_FILE" ]; then
 fi
 
 # 如果服务正在运行，先停止
-if systemctl is-active --quiet tpt-agent 2>/dev/null; then
+if systemctl is-active --quiet pikaqiu-agent 2>/dev/null; then
     echo "停止现有服务..."
-    systemctl stop tpt-agent
+    systemctl stop pikaqiu-agent
 fi
 
 # 动态更新路径写入 systemd
 echo "生成服务配置 (项目路径: $PROJECT_DIR)..."
 sed -e "s|WorkingDirectory=.*|WorkingDirectory=$PROJECT_DIR|" \
-    -e "s|ExecStart=.*|ExecStart=$PROJECT_DIR/venv/bin/python -m tpt_agent|" \
+    -e "s|ExecStart=.*|ExecStart=$PROJECT_DIR/venv/bin/python -m pikaqiu_agent|" \
     "$SERVICE_FILE" > "$TARGET"
 
 systemctl daemon-reload
-systemctl enable tpt-agent
+systemctl enable pikaqiu-agent
 
-# 安装 tpt 全局 CLI
-echo "安装 tpt 命令到 $TPT_BIN..."
-cat > "$TPT_BIN" << 'TPTEOF'
+# 安装 pikaqiu 全局 CLI
+echo "安装 pikaqiu 命令到 $PIKAQIU_BIN..."
+cat > "$PIKAQIU_BIN" << 'PIKAQIUEOF'
 #!/bin/bash
-# TPT Agent 管理工具
-SERVICE="tpt-agent"
+# PikaQiu Agent 管理工具
+SERVICE="pikaqiu-agent"
 
 usage() {
-    echo "TPT Agent 管理工具"
+    echo "PikaQiu Agent 管理工具"
     echo ""
-    echo "用法: tpt <command>"
+    echo "用法: pikaqiu <command>"
     echo ""
     echo "命令:"
     echo "  start       启动服务"
@@ -92,19 +92,19 @@ case "${1:-}" in
         usage
         ;;
 esac
-TPTEOF
-chmod +x "$TPT_BIN"
+PIKAQIUEOF
+chmod +x "$PIKAQIU_BIN"
 
 echo ""
 echo "安装完成!"
 echo ""
 echo "使用方式:"
-echo "  tpt start       # 启动"
-echo "  tpt stop        # 停止"
-echo "  tpt restart     # 重启"
-echo "  tpt status      # 状态"
-echo "  tpt logs        # 实时日志"
-echo "  tpt logs -n 50  # 最近50行"
-echo "  tpt update      # 代码更新后重启"
+echo "  pikaqiu start       # 启动"
+echo "  pikaqiu stop        # 停止"
+echo "  pikaqiu restart     # 重启"
+echo "  pikaqiu status      # 状态"
+echo "  pikaqiu logs        # 实时日志"
+echo "  pikaqiu logs -n 50  # 最近50行"
+echo "  pikaqiu update      # 代码更新后重启"
 echo ""
-echo "现在启动: tpt start"
+echo "现在启动: pikaqiu start"

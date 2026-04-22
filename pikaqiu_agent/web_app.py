@@ -6,12 +6,12 @@ from typing import Any
 
 from flask import Flask, jsonify, request, send_from_directory
 
-from tpt_agent.config import AgentSettings, load_settings
-from tpt_agent.knowledge import KnowledgeIndexer
-from tpt_agent.llm_client import LLMClient
-from tpt_agent.orchestrator import OrchestratorManager
-from tpt_agent.sandbox import SandboxExecutor
-from tpt_agent.storage import MissionStore
+from pikaqiu_agent.config import AgentSettings, load_settings
+from pikaqiu_agent.knowledge import KnowledgeIndexer
+from pikaqiu_agent.llm_client import LLMClient
+from pikaqiu_agent.orchestrator import OrchestratorManager
+from pikaqiu_agent.sandbox import SandboxExecutor
+from pikaqiu_agent.storage import MissionStore
 
 logger = logging.getLogger(__name__)
 
