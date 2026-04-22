@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Print a structured JSON summary of available tools, runtimes, and exploit resources.
 
-This script is mounted into the sandbox at /opt/tpt-tools/env-info.
+This script is mounted into the sandbox at /opt/pikaqiu-tools/env-info.
 It can be updated without rebuilding the Docker image.
 """
 import subprocess

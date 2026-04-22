@@ -1,23 +1,47 @@
-FROM docker.1ms.run/vxcontrol/kali-linux:latest
+FROM kalilinux/kali-rolling:latest
 
 # Avoid interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
 
-# vxcontrol/kali-linux already includes: nmap, masscan, sqlmap, nikto,
-# gobuster, dirb, wfuzz, feroxbuster, ffuf, nuclei, metasploit, hydra,
-# john, hashcat, impacket, whatweb, wpscan, commix, dirsearch, httpx,
-# amass, subfinder, katana, seclists, wordlists, etc. (200+ tools)
+# Install baseline runtimes and common tools. The official Kali image is
+# intentionally minimal, so keep this self-contained instead of relying on a
+# third-party preloaded image.
+
+RUN printf 'deb http://mirrors.tuna.tsinghua.edu.cn/kali kali-rolling main contrib non-free non-free-firmware\n' > /etc/apt/sources.list
 
 # ── Language runtimes: multi-version ─────────────────────────────────────────
 RUN apt-get update -q \
     && apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
+    ca-certificates \
+    curl \
+    wget \
+    git \
+    tar \
+    gzip \
+    unzip \
+    xz-utils \
+    procps \
+    psmisc \
+    python3 \
+    python3-pip \
+    python3-venv \
     python2.7 \
+    nodejs \
+    npm \
     maven \
     perl \
     php-cli \
     php-curl \
     php-mbstring \
     jq \
+    nmap \
+    sqlmap \
+    dnsutils \
+    netcat-openbsd \
+    socat \
+    whois \
+    file \
+    vim-common \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Java 8 (Temurin/Adoptium LTS) — needed for ysoserial & legacy deserialization
@@ -55,10 +79,10 @@ RUN update-alternatives --install /usr/bin/java  java  /opt/java/8/bin/java   80
 ENV JAVA_HOME=/opt/java/17
 
 # ── Node.js: additional LTS versions via n ────────────────────────────────────
-RUN /usr/share/nodejs/corepack/shims/npm install -g n jsfuck \
-    && N_PREFIX=/usr/local /usr/lib/node_modules/n/bin/n 18 \
-    && N_PREFIX=/usr/local /usr/lib/node_modules/n/bin/n 20 \
-    && N_PREFIX=/usr/local /usr/lib/node_modules/n/bin/n 22
+RUN npm install -g n jsfuck \
+    && N_PREFIX=/usr/local n 18 \
+    && N_PREFIX=/usr/local n 20 \
+    && N_PREFIX=/usr/local n 22
 
 ENV NODE_PATH=/usr/lib/node_modules
 
@@ -87,7 +111,6 @@ RUN pip3 install --break-system-packages --no-cache-dir \
     bloodyAD \
     dnspython \
     netaddr \
-    netifaces \
     aioquic \
     fastapi \
     fastmcp \

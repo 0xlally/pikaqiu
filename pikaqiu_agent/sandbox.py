@@ -180,7 +180,7 @@ class SandboxExecutor:
         started_at = datetime.now().astimezone().isoformat(timespec="seconds")
         encoded = base64.b64encode(code.encode("utf-8")).decode("ascii")
         # Use workdir-based script path to isolate concurrent missions
-        script_path = f"{work}/_tpt_script.py"
+        script_path = f"{work}/_pikaqiu_script.py"
         shell_script = (
             "set -o pipefail\n"
             f"mkdir -p {work}\n"

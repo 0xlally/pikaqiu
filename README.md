@@ -1,4 +1,4 @@
-# PikaQiu Agent — Tencent Penetration Tool
+# PikaQiu Agent
 
 An LLM-powered autonomous penetration testing agent that runs in a Kali Linux sandbox. It uses a ReAct (Reason + Act) loop to analyze targets, execute commands, and capture flags — all without human intervention.
 
@@ -35,61 +35,58 @@ Orchestrator (ReAct Loop)
 | **RAM** | ≥ 8GB |
 | **Disk** | ≥ 20GB (Kali sandbox image ~6GB) |
 
-### 1. Clone & Build
+### 1. Install dependencies
 
 ```bash
 git clone https://github.com/0xlally/pikaqiu.git
 cd pikaqiu
 
+python -m pip install -r requirements.txt
+```
+
+### 2. Configure LLM
+
+Keep the real API key in `.env` so it is not committed:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env`:
+
+```bash
+PIKAQIU_LLM_BASE_URL=http://10.50.1.215:8080/v1
+PIKAQIU_LLM_MODEL=minimax-m2.7
+PIKAQIU_LLM_API_KEY=replace-with-your-api-key
+```
+
+`config.yml` provides the default model and sandbox settings. Environment variables in `.env` override the main YAML model, so secrets can stay outside tracked files.
+
+### 3. Build and start sandbox
+
+```bash
 # Build Kali sandbox image (~15-30 min first time)
 docker build -f Dockerfile.sandbox -t pikaqiu-kali-sandbox .
 
-# Start sandbox container
+# Start sandbox containers
 docker compose up -d
-
-# Install Python dependencies
-pip install -r requirements.txt
 ```
 
-### 2. Configure
+The default active sandbox is `pikaqiu-sandbox-1`, with workdir `/tmp/pikaqiu-agent-workspace`.
 
-Edit `config.yml`:
-
-```yaml
-model_pool:
-  - id: main
-    base_url: "https://api.deepseek.com"
-    api_key: "sk-your-key"
-    model: "deepseek-reasoner"
-    thinking: true
-    priority: 1
-
-advisor:
-  base_url: "https://api.openai.com/v1"
-  api_key: "sk-your-key"
-  model: "gpt-4o"
-
-sandbox:
-  container: "tencent-pentest-agent-sandbox"
-  workdir: "/tmp/pikaqiu-agent-workspace"
-
-web:
-  host: "127.0.0.1"
-  port: 8765
-```
-
-### 3. Run
+### 4. Run Web UI
 
 ```bash
 python -m pikaqiu_agent
 # Open http://127.0.0.1:8765
 ```
 
-Create a mission via the Web UI or API:
+Create a mission via the Web UI or API. This starts active testing against the target:
+
 ```bash
 curl -X POST http://localhost:8765/api/missions \
   -H "Content-Type: application/json" \
-  -d '{"name":"test","target":"10.0.0.5:8080","goal":"Find and capture all flags","expected_flags":1}'
+  -d '{"name":"pikaqiu-target","target":"http://10.50.1.182:36543/","goal":"Find and capture all flags","expected_flags":1}'
 ```
 
 ## Project Structure
@@ -134,15 +131,14 @@ Place a `cve-poc-index.json` file in `knowledge_dir` for structured CVE search:
 
 ## Sandbox Tools
 
-The Kali Docker sandbox includes 200+ pre-installed tools:
+The Kali Docker sandbox is built from the official `kalilinux/kali-rolling` image and installs a practical baseline toolset:
 
-- **Network**: nmap, masscan, netcat, socat, chisel, proxychains
-- **Web**: sqlmap, gobuster, ffuf, nikto, wpscan, commix
-- **Exploit**: searchsploit, metasploit, nuclei, ysoserial
-- **Python**: requests, httpx, PyJWT, flask-unsign, impacket, scapy
-- **AD/Internal**: smbclient, bloodhound, certipy, crackmapexec
-- **Crypto**: john, hashcat, hydra
-- **Wordlists**: SecLists, rockyou.txt
+- **Network**: nmap, netcat, socat, curl, wget, dig, whois
+- **Web**: sqlmap and Python HTTP tooling
+- **Runtimes**: Python 3, Python 2.7, Node.js, Java 8/17, PHP, Perl
+- **Python packages**: requests/httpx/aiohttp, PyJWT, flask-unsign, impacket, certipy-ad, bloodyAD
+- **Browser automation**: Playwright with Chromium
+- **Project tools**: `/opt/pikaqiu-tools/env-info` for runtime capability discovery
 
 ## Configuration Reference
 

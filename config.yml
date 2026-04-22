@@ -8,9 +8,9 @@
 # priority: lower number = higher priority (auto-assigned to missions)
 model_pool:
   - id: main
-    base_url: "https://api.openai.com/v1"
-    api_key: "sk-your-openai-key"
-    model: "gpt-4o"
+    base_url: "http://10.50.1.215:8080/v1"
+    api_key: ""
+    model: "minimax-m2.7"
     thinking: false
     priority: 1
     max_concurrent: 5

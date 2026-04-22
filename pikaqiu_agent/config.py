@@ -26,9 +26,9 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_LLM_BASE_URL = "https://api.deepseek.com"
+DEFAULT_LLM_BASE_URL = "http://10.50.1.215:8080/v1"
 DEFAULT_LLM_API_KEY = ""
-DEFAULT_LLM_MODEL = "deepseek-reasoner"
+DEFAULT_LLM_MODEL = "minimax-m2.7"
 
 
 # ── Model Pool Entry ──────────────────────────────────────────────
@@ -314,7 +314,7 @@ def _load_from_env(root: Path) -> AgentSettings:
     return AgentSettings(
         workspace_root=root.resolve(),
         db_path=(root / ".pikaqiu_agent" / "state.sqlite3").resolve(),
-        sandbox_container=_env_str("PIKAQIU_SANDBOX_CONTAINER", default="tencent-pentest-agent-sandbox"),
+        sandbox_container=_env_str("PIKAQIU_SANDBOX_CONTAINER", default="pikaqiu-sandbox-1"),
         sandbox_workdir=_env_str("PIKAQIU_SANDBOX_WORKDIR", default="/tmp/pikaqiu-agent-workspace"),
         llm_base_url=base_url,
         llm_api_key=_env_str("PIKAQIU_LLM_API_KEY", "PIKAQIU_ANTHROPIC_AUTH_TOKEN", default=DEFAULT_LLM_API_KEY),
@@ -377,12 +377,22 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
             max_concurrent=entry.get("max_concurrent", 3),
         ))
 
-    # Primary model = first in pool (highest priority) or env fallback
+    # Primary model = first in pool (highest priority) or env fallback.
+    # Environment values intentionally override config.yml so secrets can stay in .env.
     primary = model_pool[0] if model_pool else None
-    llm_base_url = primary.base_url if primary else _env_str("PIKAQIU_LLM_BASE_URL", default=DEFAULT_LLM_BASE_URL)
-    llm_api_key = primary.api_key if primary else _env_str("PIKAQIU_LLM_API_KEY", default="")
-    llm_model = primary.model if primary else _env_str("PIKAQIU_LLM_MODEL", default=DEFAULT_LLM_MODEL)
-    llm_thinking = primary.thinking if primary else False
+    base_default = primary.base_url if primary else DEFAULT_LLM_BASE_URL
+    key_default = primary.api_key if primary else DEFAULT_LLM_API_KEY
+    model_default = primary.model if primary else DEFAULT_LLM_MODEL
+    thinking_default = primary.thinking if primary else False
+    llm_base_url = _env_str("PIKAQIU_LLM_BASE_URL", default=base_default)
+    llm_api_key = _env_str("PIKAQIU_LLM_API_KEY", default=key_default)
+    llm_model = _env_str("PIKAQIU_LLM_MODEL", default=model_default)
+    llm_thinking = _env_bool("PIKAQIU_LLM_THINKING", default=thinking_default)
+    if primary:
+        primary.base_url = llm_base_url
+        primary.api_key = llm_api_key
+        primary.model = llm_model
+        primary.thinking = llm_thinking
 
     # Advisor
     adv = cfg.get("advisor", {})
@@ -395,7 +405,7 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
 
     # Multi-sandbox pool: prefer "containers" list, fallback to single "container"
     _sb_containers_raw = sb.get("containers", [])
-    _sb_default = sb.get("container", "tencent-pentest-agent-sandbox")
+    _sb_default = sb.get("container", "pikaqiu-sandbox-1")
     _sb_containers = _sb_containers_raw if _sb_containers_raw else None
 
     settings = AgentSettings(

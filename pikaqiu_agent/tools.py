@@ -1,4 +1,4 @@
-"""LangChain Tool definitions for the TPT Agent sandbox and knowledge base."""
+"""LangChain Tool definitions for the PikaQiu Agent sandbox and knowledge base."""
 from __future__ import annotations
 
 import logging

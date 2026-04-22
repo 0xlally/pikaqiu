@@ -1,4 +1,4 @@
-"""LangChain-based LLM client for the TPT Agent.
+"""LangChain-based LLM client for the PikaQiu Agent.
 
 Uses langchain-deepseek for DeepSeek Reasoner (thinking model) and
 langchain-openai for advisor / decision models (SiliconFlow, OpenAI, etc.).

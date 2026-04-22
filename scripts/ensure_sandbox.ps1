@@ -1,6 +1,7 @@
 $ErrorActionPreference = "Stop"
 
-$containerName = "pikaqiu-kali-sandbox"
+$containerName = "pikaqiu-sandbox-1"
+$imageName = "pikaqiu-kali-sandbox:latest"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 
 # Check if container exists
@@ -11,10 +12,19 @@ if ($existing -eq $containerName) {
   exit 0
 }
 
-# Build and start via docker-compose
-Write-Host "Building Kali sandbox container..."
 Push-Location $repoRoot
-docker compose up -d --build sandbox
-Pop-Location
+try {
+  docker image inspect $imageName *> $null
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "Building Kali sandbox image..."
+    docker build -f Dockerfile.sandbox -t $imageName .
+  }
+
+  Write-Host "Starting Kali sandbox container..."
+  docker compose up -d sandbox-1
+}
+finally {
+  Pop-Location
+}
 
 docker ps --filter "name=^/$containerName$" --format "sandbox ready: {{.Names}} {{.Status}}"

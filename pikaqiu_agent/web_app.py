@@ -211,7 +211,7 @@ def run_server() -> None:
     runtime.knowledge.ensure_ready()
     app = create_app(runtime)
     print(
-        f"TPT Agent UI: http://{settings.host}:{settings.port} "
+        f"PikaQiu Agent UI: http://{settings.host}:{settings.port} "
         f"mode={'mock' if settings.use_mock_llm else 'direct-api'} "
         f"sandbox={settings.sandbox_container}"
     )

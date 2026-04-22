@@ -62,7 +62,7 @@ TOOLS: dict[str, list[str]] = {
     "rpcclient":          ["rpcclient"],
 }
 
-CONTAINER = "tencent-pentest-agent-sandbox"
+CONTAINER = "pikaqiu-sandbox-1"
 
 
 def get_tool_help(tool_name: str, paths: list[str]) -> tuple[str, str] | None:
