@@ -1,0 +1,211 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import zipfile
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable
+
+from tpt_agent.storage import MissionStore
+
+
+# Domain classification keywords (used to auto-tag knowledge docs)
+DOMAIN_KEYWORDS = {
+    "ctf_web": [
+        "web", "xss", "sqli", "ssrf", "csrf", "jwt", "idor", "cors",
+        "graphql", "xxe", "oauth", "file_upload", "template", "403",
+        "host-header", "race", "deserialization", "injection", "insecure",
+        "upload", "ssti", "lfi", "rfi", "path-traversal", "command-injection",
+        "crlf", "open-redirect", "prototype-pollution", "type-juggling",
+        "nosql", "ldap-injection", "cve-",
+    ],
+    "active_directory": [
+        "active-directory", "active directory", "kerberos", "bloodhound",
+        "ntlm", "dcsync", "adcs", "ldap", "windows-hardening", "domain",
+    ],
+    "cloud": [
+        "cloud", "aws", "azure", "gcp", "iam", "bucket", "s3",
+        "kubernetes", "eks", "gke", "lambda", "serverless", "container", "docker",
+    ],
+    "intranet": [
+        "network", "nmap", "smb", "pivot", "tunnel", "reverse-shell",
+        "privilege", "linux", "windows", "meterpreter", "psexec", "port-forward",
+    ],
+}
+
+
+class KnowledgeIndexer:
+    """Indexes knowledge from zip files and directories for RAG retrieval."""
+
+    def __init__(self, workspace_root: Path, store: MissionStore, knowledge_dir: str = "./knowledge") -> None:
+        self.workspace_root = workspace_root
+        self.store = store
+        kb_path = Path(knowledge_dir)
+        if not kb_path.is_absolute():
+            kb_path = workspace_root / kb_path
+        self.kb_root = kb_path
+        self.cve_index_path = self.kb_root / "cve-poc-index.json"
+
+    def ensure_ready(self) -> dict[str, int]:
+        """Build or verify the knowledge index. Auto-discovers zips and dirs."""
+        if not self.kb_root.is_dir():
+            return {"status": "no_knowledge_dir"}
+
+        signature = self._build_signature()
+        if self.store.get_meta("knowledge_signature") == signature:
+            stats = self.store.get_knowledge_stats()
+            self._ensure_cve_index()
+            return stats
+
+        docs = list(self._iter_docs())
+        count = self.store.replace_knowledge_docs(docs)
+        self.store.set_meta("knowledge_signature", signature)
+        self._ensure_cve_index()
+        stats = self.store.get_knowledge_stats()
+        stats["rebuilt_docs"] = count
+        return stats
+
+    def _ensure_cve_index(self) -> None:
+        """Load CVE POC index from JSON if not already loaded."""
+        if not self.cve_index_path.exists():
+            return
+        stat = self.cve_index_path.stat()
+        sig = f"{stat.st_mtime_ns}:{stat.st_size}"
+        if self.store.get_meta("cve_index_signature") == sig:
+            return
+        try:
+            data = json.loads(self.cve_index_path.read_text(encoding="utf-8"))
+            entries = data.get("entries", [])
+            count = self.store.replace_cve_index(entries)
+            self.store.set_meta("cve_index_signature", sig)
+            self.store.set_meta("cve_index_count", str(count))
+        except Exception:
+            pass
+
+    def read_doc_content(self, source: str, path: str, fallback: str = "") -> str:
+        """Read a knowledge document by source and path."""
+        zip_name, _, inner_path = path.partition(":")
+        if zip_name and inner_path:
+            zip_path = self.kb_root / zip_name
+            if zip_path.exists() and zip_path.suffix == ".zip":
+                try:
+                    with zipfile.ZipFile(zip_path) as zf:
+                        return self._decode_zip_entry(zf.read(inner_path)) or fallback
+                except KeyError:
+                    return fallback
+        # Try as a direct file path relative to kb_root
+        direct = self.kb_root / path
+        if direct.is_file():
+            return self._read_text(direct) or fallback
+        return fallback
+
+    def _iter_docs(self) -> Iterable[dict[str, str]]:
+        """Iterate over all knowledge documents from zips and directories."""
+        seen_hashes: set[str] = set()
+
+        # Read .md files from subdirectories
+        for item in sorted(self.kb_root.iterdir()):
+            if item.is_dir():
+                for md_file in sorted(item.rglob("*.md")):
+                    body = self._read_text(md_file)
+                    if not body:
+                        continue
+                    digest = hashlib.sha1(
+                        f"{md_file.name}\n{body}".encode("utf-8", "ignore")
+                    ).hexdigest()
+                    if digest in seen_hashes:
+                        continue
+                    seen_hashes.add(digest)
+                    rel_path = md_file.relative_to(self.kb_root).as_posix()
+                    domains = self._domains_from_path(rel_path, item.name)
+                    for domain in domains:
+                        yield {
+                            "source": item.name,
+                            "domain": domain,
+                            "title": md_file.stem.replace("-", " ").title(),
+                            "path": rel_path,
+                            "body": self._compact_body(body),
+                        }
+
+        # Read from zip files
+        for zip_path in sorted(self.kb_root.glob("*.zip")):
+            with zipfile.ZipFile(zip_path) as zf:
+                for info in zf.infolist():
+                    if info.is_dir() or not info.filename.lower().endswith((".md", ".rst")):
+                        continue
+                    if "/banners/" in info.filename.lower():
+                        continue
+                    body = self._decode_zip_entry(zf.read(info))
+                    if not body:
+                        continue
+                    digest = hashlib.sha1(
+                        f"{Path(info.filename).name}\n{body}".encode("utf-8", "ignore")
+                    ).hexdigest()
+                    if digest in seen_hashes:
+                        continue
+                    seen_hashes.add(digest)
+                    domains = self._domains_from_path(info.filename, zip_path.stem)
+                    for domain in domains:
+                        yield {
+                            "source": zip_path.name,
+                            "domain": domain,
+                            "title": Path(info.filename).name,
+                            "path": f"{zip_path.name}:{info.filename}",
+                            "body": self._compact_body(body),
+                        }
+
+    def _build_signature(self) -> str:
+        """Build a hash signature of all knowledge sources for cache invalidation."""
+        parts: list[str] = []
+        for item in sorted(self.kb_root.iterdir()):
+            if item.is_file() and item.suffix == ".zip":
+                stat = item.stat()
+                parts.append(f"{item.name}:{stat.st_mtime_ns}:{stat.st_size}")
+            elif item.is_dir():
+                mtimes = [str(p.stat().st_mtime_ns) for p in item.rglob("*.md")]
+                payload = "|".join(sorted(mtimes)).encode("utf-8")
+                parts.append(f"{item.name}:{hashlib.sha1(payload).hexdigest()}")
+        return hashlib.sha1("||".join(parts).encode("utf-8")).hexdigest()
+
+    def _read_text(self, path: Path) -> str:
+        if not path.exists():
+            return ""
+        for encoding in ("utf-8", "utf-8-sig", "gb18030"):
+            try:
+                return path.read_text(encoding=encoding)
+            except UnicodeDecodeError:
+                continue
+        return path.read_text(encoding="utf-8", errors="replace")
+
+    def _decode_zip_entry(self, data: bytes) -> str:
+        for encoding in ("utf-8", "utf-8-sig", "gb18030", "latin-1"):
+            try:
+                return data.decode(encoding).strip()
+            except UnicodeDecodeError:
+                continue
+        return data.decode("utf-8", "replace").strip()
+
+    def _domains_from_path(self, raw_path: str, source_name: str) -> list[str]:
+        """Classify a document into domains based on path keywords."""
+        lowered = raw_path.lower().replace("\\", "/")
+        domains: list[str] = []
+        for domain, keywords in DOMAIN_KEYWORDS.items():
+            if any(keyword in lowered for keyword in keywords):
+                domains.append(domain)
+        if not domains:
+            # Default domain based on source name
+            source_lower = source_name.lower()
+            if "howtohunt" in source_lower or "payloadsallthethings" in source_lower:
+                domains.append("ctf_web")
+            elif "hacktricks" in source_lower:
+                domains.append("intranet")
+            else:
+                domains.append("ctf_web")
+        return domains
+
+    def _compact_body(self, body: str) -> str:
+        body = re.sub(r"\r\n?", "\n", body)
+        body = re.sub(r"\n{4,}", "\n\n\n", body)
+        return body.strip()[:24000]

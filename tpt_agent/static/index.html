@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PikaQiu // MISSIONS</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='0' fill='%230b0f19'/%3E%3Cpath d='M18 20h28v8H36v20h-8V28H18z' fill='%2300e5ff'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand-copy">
+        <h1>PikaQiu <span class="subtitle">// missions</span></h1>
+      </div>
+      <nav class="top-actions">
+        <a href="/" class="nav-link active">missions</a>
+        <a href="/settings.html" class="nav-link">config</a>
+      </nav>
+    </header>
+
+    <main class="layout">
+      <aside class="sidebar">
+        <section class="panel launch-panel">
+          <h2>任务发起</h2>
+          <form id="mission-form" class="compact-form">
+            <label>
+              任务名
+              <input name="name" type="text" value="Pentest" required />
+            </label>
+            <label>
+              目标地址
+              <input name="target" type="text" placeholder="http://127.0.0.1:8080 or 10.10.10.0/24" required />
+            </label>
+            <label>
+              目标说明
+              <textarea name="goal" rows="3" placeholder="例如：找 flag；拿到域内高权限路径；枚举云 IAM 提权链" required></textarea>
+            </label>
+            <div class="param-grid">
+              <label>
+                最大轮次
+                <input name="max_rounds" type="number" min="1" max="200" value="24" />
+              </label>
+              <label>
+                每轮AI对话次数
+                <input name="max_commands" type="number" min="5" max="100" value="30" />
+              </label>
+              <label>
+                命令超时(秒)
+                <input name="command_timeout_sec" type="number" min="5" max="600" value="300" />
+              </label>
+              <label>
+                Flag数量
+                <input name="expected_flags" type="number" min="1" max="10" value="1" title="多flag题目设置>1，agent找齐后才会停止" />
+              </label>
+            </div>
+            <button type="submit" class="primary">启动任务</button>
+            <p id="form-error" class="form-error"></p>
+          </form>
+        </section>
+
+        <section class="panel missions-panel">
+          <h2>任务列表</h2>
+          <div id="missions-list" class="mission-list"></div>
+        </section>
+      </aside>
+
+      <section class="panel details-panel">
+        <div class="detail-header">
+          <h2>执行轨迹</h2>
+          <div class="detail-actions">
+            <button id="delete-btn" type="button" class="secondary" disabled>删除记录</button>
+            <button id="stop-btn" type="button" class="danger" disabled>停止任务</button>
+          </div>
+        </div>
+        <div id="mission-detail" class="mission-detail empty">未选择任务</div>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

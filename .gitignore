@@ -1,0 +1,15 @@
+.tpt_agent/
+__pycache__/
+*.pyc
+*.pyo
+.env
+output/
+.playwright-cli/
+.idea/
+.vscode/
+*.egg-info/
+dist/
+build/
+*.swp
+*.swo
+venv/

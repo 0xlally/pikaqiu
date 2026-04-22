@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TPT // CONFIG</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='0' fill='%230b0f19'/%3E%3Cpath d='M18 20h28v8H36v20h-8V28H18z' fill='%2300e5ff'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand-copy">
+        <h1>TPT <span class="subtitle">// config</span></h1>
+      </div>
+      <nav class="top-actions">
+        <a href="/" class="nav-link">missions</a>
+        <a href="/settings.html" class="nav-link active">config</a>
+      </nav>
+    </header>
+
+    <main class="settings-layout">
+      <div class="settings-container">
+        <h2 class="settings-page-title">系统设置</h2>
+        <p id="settings-status" class="settings-status"></p>
+
+        <!-- 运行模式 -->
+        <section class="settings-section">
+          <h3>运行模式</h3>
+          <div class="field-row">
+            <label class="toggle-label">
+              <span>Mock 模式（无 API Key 时自动启用）</span>
+              <input type="checkbox" data-cfg="mock" />
+            </label>
+          </div>
+        </section>
+
+        <!-- 主模型 -->
+        <section class="settings-section">
+          <h3>主模型（LLM）</h3>
+          <div class="field-grid">
+            <label>
+              API 地址
+              <input type="text" data-cfg="llm_base_url" placeholder="https://api.openai.com/v1" />
+            </label>
+            <label>
+              API Key
+              <input type="password" data-cfg="llm_api_key" placeholder="sk-..." />
+            </label>
+            <label>
+              模型
+              <input type="text" data-cfg="llm_model" placeholder="gpt-4o" />
+            </label>
+            <label>
+              超时(秒)
+              <input type="number" data-cfg="llm_timeout_sec" min="10" max="600" />
+            </label>
+          </div>
+          <div class="field-row">
+            <label class="toggle-label">
+              <span>禁用思维链</span>
+              <input type="checkbox" data-cfg="disable_thinking" />
+            </label>
+          </div>
+        </section>
+
+        <!-- 顾问模型 -->
+        <section class="settings-section">
+          <h3>顾问模型（Advisor）</h3>
+          <p class="section-hint" id="advisor-effective"></p>
+          <div class="field-grid">
+            <label>
+              API 地址
+              <input type="text" data-cfg="advisor_base_url" placeholder="留空则复用主模型地址" />
+            </label>
+            <label>
+              API Key
+              <input type="password" data-cfg="advisor_api_key" placeholder="留空则复用主模型 Key" />
+            </label>
+            <label>
+              模型
+              <input type="text" data-cfg="advisor_model" placeholder="留空则复用主模型" />
+            </label>
+          </div>
+        </section>
+
+        <!-- Agent 参数 -->
+        <section class="settings-section">
+          <h3>Agent 参数</h3>
+          <div class="field-grid">
+            <label>
+              最大轮次
+              <input type="number" data-cfg="initial_rounds" min="1" max="200" />
+            </label>
+            <label>
+              每轮命令数
+              <input type="number" data-cfg="initial_commands" min="1" max="500" />
+            </label>
+            <label>
+              每轮AI调用数
+              <input type="number" data-cfg="max_steps_per_round" min="1" max="50" />
+            </label>
+            <label>
+              命令超时(秒)
+              <input type="number" data-cfg="command_timeout_sec" min="5" max="600" />
+            </label>
+            <label>
+              输出截断长度
+              <input type="number" data-cfg="stdout_limit" min="500" max="100000" />
+            </label>
+            <label>
+              知识库检索数
+              <input type="number" data-cfg="knowledge_top_k" min="1" max="50" />
+            </label>
+          </div>
+          <div class="field-row">
+            <label class="toggle-label">
+              <span>命令自动修复</span>
+              <input type="checkbox" data-cfg="command_repair" />
+            </label>
+          </div>
+           </div>
+        </section>
+
+        <div class="settings-footer">
+          <button type="button" class="primary save-btn" onclick="saveConfig()">保存设置</button>
+        </div>
+
+        <!-- 危险操作 -->
+        <section class="settings-section" style="border:2px solid var(--red);border-radius:var(--radius);margin-top:32px;">
+          <h3 style="color:var(--red);">⚠️ 危险操作</h3>
+          <p class="section-hint" style="color:var(--text-muted);">
+            以下操作不可撤销，请确认后再执行。
+          </p>
+          <div class="field-row" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+            <button type="button" class="danger" style="padding:8px 20px;font-size:13px;border-radius:8px;" onclick="deleteAllData()">
+              删除全部数据
+            </button>
+            <span style="font-size:12px;color:var(--text-muted);">
+              停止所有任务 → 删除所有任务记录、日志和记忆
+            </span>
+          </div>
+          <div id="reset-result" style="margin-top:8px;font-size:12px;display:none;padding:8px 12px;border-radius:8px;"></div>
+        </section>
+      </div>
+    </main>
+
+    <script>
+      async function fetchJson(url, options = {}) {
+        const response = await fetch(url, {
+          headers: { "Content-Type": "application/json" },
+          ...options,
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "HTTP " + response.status);
+        return data;
+      }
+
+      function showStatus(msg, isError) {
+        const el = document.getElementById("settings-status");
+        el.textContent = msg;
+        el.className = "settings-status " + (isError ? "status-err" : "status-ok");
+        setTimeout(() => { el.textContent = ""; el.className = "settings-status"; }, 4000);
+      }
+
+      async function loadConfig() {
+        try {
+          const data = await fetchJson("/api/config");
+          const cfg = data.config || {};
+          document.querySelectorAll("[data-cfg]").forEach((el) => {
+            const key = el.dataset.cfg;
+            if (!(key in cfg)) return;
+            if (el.type === "checkbox") el.checked = !!cfg[key];
+            else el.value = cfg[key] ?? "";
+          });
+          const advEl = document.getElementById("advisor-effective");
+          if (advEl && cfg.effective_advisor_model) {
+            advEl.textContent = "当前生效模型: " + cfg.effective_advisor_model;
+          }
+        } catch (err) {
+          showStatus("加载配置失败: " + err.message, true);
+        }
+      }
+
+      async function saveConfig() {
+        const payload = {};
+        document.querySelectorAll("[data-cfg]").forEach((el) => {
+          const key = el.dataset.cfg;
+          if (el.type === "checkbox") payload[key] = el.checked;
+          else if (el.type === "number") payload[key] = Number(el.value);
+          else payload[key] = el.value;
+        });
+        try {
+          const data = await fetchJson("/api/config", {
+            method: "POST",
+            body: JSON.stringify(payload),
+          });
+          if (data.errors && data.errors.length) {
+            showStatus("部分字段有误: " + data.errors.join("; "), true);
+          } else {
+            showStatus("✅ 设置已保存", false);
+          }
+        } catch (err) {
+          showStatus("保存失败: " + err.message, true);
+        }
+      }
+
+      async function deleteAllData() {
+        if (!confirm("⚠️ 确定要删除全部数据吗？\n\n此操作将停止所有运行中的任务，\n删除所有任务记录、日志和记忆。\n\n此操作不可撤销！")) return;
+        const resultEl = document.getElementById("reset-result");
+        resultEl.style.display = "block";
+        resultEl.style.background = "var(--amber-soft)";
+        resultEl.style.color = "var(--amber)";
+        resultEl.textContent = "⏳ 正在清除数据...";
+        try {
+          const data = await fetchJson("/api/missions", { method: "DELETE" });
+          resultEl.style.background = "var(--green-soft)";
+          resultEl.style.color = "var(--green)";
+          resultEl.textContent = "✅ 数据已清除: 删除 " + (data.deleted ?? 0) + " 个任务";
+          showStatus("✅ 操作完成", false);
+        } catch (err) {
+          resultEl.style.background = "var(--red-soft)";
+          resultEl.style.color = "var(--red)";
+          resultEl.textContent = "❌ 操作失败: " + err.message;
+          showStatus("操作失败: " + err.message, true);
+        }
+        setTimeout(() => { resultEl.style.display = "none"; }, 8000);
+      }
+
+      loadConfig();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,98 @@
+# ╔══════════════════════════════════════════════════════════════╗
+# ║      PikaQiu Agent — Configuration (config.yml)             ║
+# ╚══════════════════════════════════════════════════════════════╝
+
+# ─── Model Pool ───────────────────────────────────────────────────
+# Configure one or more LLMs for the agent to use.
+# id: unique identifier for referencing
+# priority: lower number = higher priority (auto-assigned to missions)
+model_pool:
+  - id: main
+    base_url: "https://api.openai.com/v1"
+    api_key: "sk-your-openai-key"
+    model: "gpt-4o"
+    thinking: false
+    priority: 1
+    max_concurrent: 5
+
+  # Example: add more models as fallbacks
+  # - id: deepseek
+  #   base_url: "https://api.deepseek.com"
+  #   api_key: "sk-your-deepseek-key"
+  #   model: "deepseek-chat"
+  #   thinking: false
+  #   priority: 2
+  #   max_concurrent: 3
+
+# ─── Advisor Model ────────────────────────────────────────────────
+# A separate model for the "ask_adviser" tool (optional).
+# Falls back to the primary model if left empty.
+advisor:
+  base_url: ""
+  api_key: ""
+  model: ""
+  thinking: false
+
+# ─── Compression Model ───────────────────────────────────────────
+# A cheap/fast model for mid-round context compression (optional).
+# Falls back to rule-based truncation if left empty.
+compression:
+  base_url: ""
+  api_key: ""
+  model: ""
+  timeout_sec: 60
+
+# ─── Agent Defaults ──────────────────────────────────────────────
+agent_defaults:
+  initial_rounds: 4
+  initial_commands: 64
+  command_timeout_sec: 60         # per-command sandbox timeout (seconds)
+  llm_timeout_sec: 240            # LLM single response timeout (seconds)
+  llm_max_retries: 10             # LLM timeout/error auto-retry count
+  stdout_limit: 8000              # output truncation (chars); keeps head+tail, drops middle
+  context_compress_threshold: 80000  # mid-round compression trigger (chars)
+  round_timeout_sec: 300          # per-round timeout (seconds)
+  knowledge_top_k: 5              # number of knowledge docs to retrieve
+  knowledge_dir: "./knowledge"    # directory for knowledge zips/folders (drop .zip or dirs here)
+  max_rounds_ceiling: 16          # max rounds for retries
+  max_commands_ceiling: 400       # max commands for retries
+  max_retries: 2                  # number of retry attempts for failed missions
+  mission_timeout_sec: 0          # total mission timeout (0 = no limit)
+  disable_memory_cleaning: false  # keep all confirmed findings on stall
+
+  # Per-difficulty overrides (optional)
+  difficulty_params:
+    easy:
+      initial_rounds: 3
+      initial_commands: 48
+      max_rounds: 6
+      max_commands: 128
+    medium:
+      initial_rounds: 4
+      initial_commands: 64
+      max_rounds: 8
+      max_commands: 256
+    hard:
+      initial_rounds: 6
+      initial_commands: 96
+      max_rounds: 16
+      max_commands: 400
+
+  # Multi-flag scaling — extra resources per additional flag beyond the first
+  multi_flag_scaling:
+    extra_rounds_per_flag: 3
+    extra_commands_per_flag: 12
+
+# ─── Sandbox ─────────────────────────────────────────────────────
+sandbox:
+  container: "tpt-sandbox-1"         # Docker container name
+  # containers:                      # Multi-sandbox pool (optional)
+  #   - "tpt-sandbox-1"
+  #   - "tpt-sandbox-2"
+  workdir: "/tmp/tpt-agent-workspace"
+  public_ip: ""                      # Public IP for reverse shell listeners (optional)
+
+# ─── Web UI ──────────────────────────────────────────────────────
+web:
+  host: "127.0.0.1"
+  port: 8765

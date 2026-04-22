@@ -1,0 +1,39 @@
+x-sandbox-base: &sandbox-base
+  image: tpt-kali-sandbox:latest
+  restart: unless-stopped
+  network_mode: host
+  cap_add:
+    - NET_RAW
+    - NET_ADMIN
+  deploy:
+    resources:
+      limits:
+        memory: 2G
+        cpus: "2.0"
+
+services:
+  sandbox-1:
+    <<: *sandbox-base
+    container_name: tpt-sandbox-1
+    volumes:
+      - sandbox-ws-1:/tmp/tpt-agent-workspace
+      - ./scripts/sandbox-tools:/opt/tpt-tools:ro
+
+  sandbox-2:
+    <<: *sandbox-base
+    container_name: tpt-sandbox-2
+    volumes:
+      - sandbox-ws-2:/tmp/tpt-agent-workspace
+      - ./scripts/sandbox-tools:/opt/tpt-tools:ro
+
+  sandbox-3:
+    <<: *sandbox-base
+    container_name: tpt-sandbox-3
+    volumes:
+      - sandbox-ws-3:/tmp/tpt-agent-workspace
+      - ./scripts/sandbox-tools:/opt/tpt-tools:ro
+
+volumes:
+  sandbox-ws-1:
+  sandbox-ws-2:
+  sandbox-ws-3:

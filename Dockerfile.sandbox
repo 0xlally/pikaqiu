@@ -1,0 +1,133 @@
+FROM docker.1ms.run/vxcontrol/kali-linux:latest
+
+# Avoid interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
+# vxcontrol/kali-linux already includes: nmap, masscan, sqlmap, nikto,
+# gobuster, dirb, wfuzz, feroxbuster, ffuf, nuclei, metasploit, hydra,
+# john, hashcat, impacket, whatweb, wpscan, commix, dirsearch, httpx,
+# amass, subfinder, katana, seclists, wordlists, etc. (200+ tools)
+
+# ── Language runtimes: multi-version ─────────────────────────────────────────
+RUN apt-get update -q \
+    && apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
+    python2.7 \
+    maven \
+    perl \
+    php-cli \
+    php-curl \
+    php-mbstring \
+    jq \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Java 8 (Temurin/Adoptium LTS) — needed for ysoserial & legacy deserialization
+RUN mkdir -p /opt/java/8 \
+    && curl -fSL --retry 5 --retry-delay 10 --retry-connrefused \
+       "https://api.adoptium.net/v3/binary/latest/8/ga/linux/x64/jdk/hotspot/normal/eclipse" \
+       -o /tmp/jdk8.tar.gz \
+    && tar -xzf /tmp/jdk8.tar.gz -C /opt/java/8 --strip-components=1 \
+    && rm /tmp/jdk8.tar.gz \
+    && ln -sf /opt/java/8/bin/java  /usr/local/bin/java8 \
+    && ln -sf /opt/java/8/bin/javac /usr/local/bin/javac8
+
+# Java 17 (Temurin LTS) — default JDK
+RUN mkdir -p /opt/java/17 \
+    && curl -fSL --retry 5 --retry-delay 10 --retry-connrefused \
+       "https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jdk/hotspot/normal/eclipse" \
+       -o /tmp/jdk17.tar.gz \
+    && tar -xzf /tmp/jdk17.tar.gz -C /opt/java/17 --strip-components=1 \
+    && rm /tmp/jdk17.tar.gz \
+    && ln -sf /opt/java/17/bin/java  /usr/local/bin/java17 \
+    && ln -sf /opt/java/17/bin/javac /usr/local/bin/javac17
+
+# Java 21 convenience alias
+RUN ln -sf /usr/lib/jvm/java-21-openjdk-amd64/bin/java  /usr/local/bin/java21 \
+    && ln -sf /usr/lib/jvm/java-21-openjdk-amd64/bin/javac /usr/local/bin/javac21 || true
+
+# Set Java 17 as system default via update-alternatives
+RUN update-alternatives --install /usr/bin/java  java  /opt/java/8/bin/java   80 \
+    && update-alternatives --install /usr/bin/java  java  /opt/java/17/bin/java 2200 \
+    && update-alternatives --install /usr/bin/javac javac /opt/java/8/bin/javac  80 \
+    && update-alternatives --install /usr/bin/javac javac /opt/java/17/bin/javac 2200 \
+    && update-alternatives --set java  /opt/java/17/bin/java \
+    && update-alternatives --set javac /opt/java/17/bin/javac
+
+ENV JAVA_HOME=/opt/java/17
+
+# ── Node.js: additional LTS versions via n ────────────────────────────────────
+RUN /usr/share/nodejs/corepack/shims/npm install -g n jsfuck \
+    && N_PREFIX=/usr/local /usr/lib/node_modules/n/bin/n 18 \
+    && N_PREFIX=/usr/local /usr/lib/node_modules/n/bin/n 20 \
+    && N_PREFIX=/usr/local /usr/lib/node_modules/n/bin/n 22
+
+ENV NODE_PATH=/usr/lib/node_modules
+
+# ── Python: additional packages ───────────────────────────────────────────────
+RUN pip3 install --break-system-packages --no-cache-dir \
+    pycryptodome \
+    flask-unsign \
+    pyjwt \
+    PyYAML \
+    paramiko \
+    beautifulsoup4 \
+    lxml \
+    httpx \
+    aiohttp \
+    python-jose \
+    itsdangerous \
+    Jinja2 \
+    mako \
+    pymysql \
+    psycopg2-binary \
+    redis \
+    pymongo \
+    pycryptodomex \
+    bloodhound \
+    certipy-ad \
+    bloodyAD \
+    dnspython \
+    netaddr \
+    netifaces \
+    aioquic \
+    fastapi \
+    fastmcp \
+    jupyter-client \
+    nbformat
+
+# ── Exploit tools ─────────────────────────────────────────────────────────────
+RUN mkdir -p /opt/exploit-tools \
+    && curl -fSL --retry 5 --retry-delay 10 --retry-connrefused \
+       "https://github.com/frohoff/ysoserial/releases/latest/download/ysoserial-all.jar" \
+       -o /opt/exploit-tools/ysoserial.jar \
+    && echo '#!/bin/bash\njava8 -jar /opt/exploit-tools/ysoserial.jar "$@"' > /usr/local/bin/ysoserial \
+    && chmod +x /usr/local/bin/ysoserial
+
+# ── Sandbox scripts (env-info etc.) ───────────────────────────────────────────
+# COPY provides defaults; docker-compose volume mount overrides for live dev
+COPY scripts/sandbox-tools/ /opt/tpt-tools/
+RUN chmod +x /opt/tpt-tools/* \
+    && find /opt/tpt-tools -type f -exec sed -i 's/\r//' {} + \
+    && printf '#!/bin/bash\nexec python3 /opt/tpt-tools/env-info "$@"\n' > /usr/local/bin/env-info \
+    && chmod +x /usr/local/bin/env-info
+
+# ── Tool initialization (offline-ready) ───────────────────────────────────────
+# Nuclei: download templates at build time so they're baked into the image
+RUN nuclei -update-templates 2>/dev/null; exit 0
+
+# Decompress rockyou.txt for direct use
+RUN gunzip -k /usr/share/wordlists/rockyou.txt.gz 2>/dev/null || true
+
+# Playwright + Chromium (headless browser for JS-heavy targets)
+RUN pip3 install --break-system-packages --no-cache-dir playwright \
+    && playwright install --with-deps chromium
+
+# Pre-initialize netexec/crackmapexec (creates config dirs on first run)
+RUN netexec --help >/dev/null 2>&1; crackmapexec --help >/dev/null 2>&1; exit 0
+
+# ── Workspace ────────────────────────────────────────────────────────────────
+RUN mkdir -p /tmp/tpt-agent-workspace
+
+WORKDIR /tmp/tpt-agent-workspace
+
+# Keep container alive
+CMD ["sleep", "infinity"]

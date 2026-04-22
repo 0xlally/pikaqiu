@@ -1,0 +1,31 @@
+[Unit]
+Description=TPT Agent — 自动化渗透测试智能体
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=root
+# Update these paths to match your installation
+WorkingDirectory=/opt/tpt-agent
+ExecStart=/opt/tpt-agent/venv/bin/python -m tpt_agent
+ExecStop=/bin/kill -SIGTERM $MAINPID
+Restart=on-failure
+RestartSec=5
+StartLimitBurst=3
+StartLimitIntervalSec=60
+
+# 环境
+Environment=PYTHONUNBUFFERED=1
+
+# 日志
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tpt-agent
+
+# 安全加固
+NoNewPrivileges=no
+ProtectSystem=false
+
+[Install]
+WantedBy=multi-user.target
