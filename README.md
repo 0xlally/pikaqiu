@@ -20,6 +20,7 @@ Orchestrator (ReAct Loop)
 - **Auto flag detection**: Scans output for `flag{...}` patterns, multi-flag support
 - **Context management**: Importance-graded compression, output truncation, stall detection
 - **CVE/POC index**: Product+version matching with embedded PoC code
+- **Internet search tools**: `web_search` and `web_fetch` let the agent query public web pages from the sandbox when fresh CVE/PoC data is needed
 - **Advisor tool**: Secondary LLM provides expert guidance when the agent is stuck
 - **Environment auto-discovery**: Sandbox capabilities injected into system prompt
 
@@ -154,4 +155,4 @@ The Kali Docker sandbox is built from the official `kalilinux/kali-rolling` imag
 
 ## License
 
-MIT
+

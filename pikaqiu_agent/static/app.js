@@ -4,6 +4,7 @@ const state = {
   missions: [],
   pollTimer: null,
   selectedMissionId: null,
+  bootstrapDefaults: null,
   openDetailKeys: new Set(),
   expandedContentKeys: new Set(),
   detailStateHydrated: false,
@@ -57,9 +58,29 @@ async function fetchJson(url, options = {}) {
     headers: { "Content-Type": "application/json" },
     ...options,
   });
-  const data = await response.json();
+  const raw = await response.text();
+  let data = {};
+  try {
+    data = raw ? JSON.parse(raw) : {};
+  } catch {
+    data = {};
+  }
   if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
   return data;
+}
+
+function applyFormDefaults(defaults) {
+  if (!defaults || !missionFormEl) return;
+  missionFormEl.max_rounds.value = defaults.max_rounds;
+  missionFormEl.max_commands.value = defaults.max_commands;
+  missionFormEl.command_timeout_sec.value = defaults.command_timeout_sec;
+}
+
+function resetDetailViewState() {
+  state.openDetailKeys.clear();
+  state.expandedContentKeys.clear();
+  state.detailStateHydrated = false;
+  state.lastDetailHash = "";
 }
 
 function escapeHtml(value) {
@@ -320,10 +341,7 @@ function renderMissions() {
   missionsListEl.querySelectorAll(".mission-card").forEach((card) => {
     card.addEventListener("click", async () => {
       if (state.selectedMissionId !== card.dataset.id) {
-        state.openDetailKeys.clear();
-        state.expandedContentKeys.clear();
-        state.detailStateHydrated = false;
-        state.lastDetailHash = "";
+        resetDetailViewState();
       }
       state.selectedMissionId = card.dataset.id;
       renderMissions();
@@ -465,6 +483,7 @@ function renderMissionDetail(data) {
   const flowGroups = groupMissionFlow(rounds, events);
   state.flowGroupCount = flowGroups.length;
   const latestMain = rounds.filter((r) => r.worker_role === "main").at(-1);
+  const memorySummary = displayMemorySummary(memory.summary);
   const rawMission = JSON.stringify({ target: mission.target, goal: mission.goal, memory, error_message: mission.error_message, thread_alive: data.thread_alive }, null, 2);
 
   missionDetailEl.className = "mission-detail";
@@ -501,8 +520,8 @@ function renderMissionDetail(data) {
       <div class="memory-summary-row">
         <div class="memory-summary-content">
           <p class="section-kicker">全局记忆</p>
-          <h4>${escapeHtml(displayMemorySummary(memory.summary).display)}</h4>
-          ${displayMemorySummary(memory.summary).truncated ? `<button class="expand-btn memory-expand-btn" onclick="this.previousElementSibling.textContent=this.dataset.full;this.remove()" data-full="${escapeHtml(displayMemorySummary(memory.summary).full)}">展开全部 (${(memory.summary || "").length} chars)</button>` : ""}
+          <h4>${escapeHtml(memorySummary.display)}</h4>
+          ${memorySummary.truncated ? `<button class="expand-btn memory-expand-btn" onclick="this.previousElementSibling.textContent=this.dataset.full;this.remove()" data-full="${escapeHtml(memorySummary.full)}">展开全部 (${(memory.summary || "").length} chars)</button>` : ""}
         </div>
         <div class="memory-update">${escapeHtml(formatMissionTime(memory.updated_at || mission.updated_at))}</div>
       </div>
@@ -597,11 +616,8 @@ async function refreshAll() {
 async function bootstrap() {
   try {
     const data = await fetchJson("/api/bootstrap");
-    if (data.defaults) {
-      missionFormEl.max_rounds.value = data.defaults.max_rounds;
-      missionFormEl.max_commands.value = data.defaults.max_commands;
-      missionFormEl.command_timeout_sec.value = data.defaults.command_timeout_sec;
-    }
+    state.bootstrapDefaults = data.defaults || null;
+    applyFormDefaults(state.bootstrapDefaults);
   } catch (err) {
     console.error("bootstrap error:", err);
   }
@@ -637,15 +653,7 @@ missionFormEl.addEventListener("submit", async (event) => {
     });
     state.selectedMissionId = data.mission_id;
     missionFormEl.reset();
-    // Re-apply defaults from last bootstrap
-    try {
-      const boot = await fetchJson("/api/bootstrap");
-      if (boot.defaults) {
-        missionFormEl.max_rounds.value = boot.defaults.max_rounds;
-        missionFormEl.max_commands.value = boot.defaults.max_commands;
-        missionFormEl.command_timeout_sec.value = boot.defaults.command_timeout_sec;
-      }
-    } catch (_) {}
+    applyFormDefaults(state.bootstrapDefaults);
     await refreshAll();
   } catch (err) {
     formErrorEl.textContent = String(err.message || err);
@@ -680,10 +688,7 @@ deleteBtnEl.addEventListener("click", async () => {
     return;
   }
   state.selectedMissionId = null;
-  state.openDetailKeys.clear();
-  state.expandedContentKeys.clear();
-  state.detailStateHydrated = false;
-  state.lastDetailHash = "";
+  resetDetailViewState();
   await refreshAll();
 });
 

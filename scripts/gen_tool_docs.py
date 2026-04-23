@@ -65,22 +65,26 @@ TOOLS: dict[str, list[str]] = {
 CONTAINER = "pikaqiu-sandbox-1"
 
 
+def _run_help_capture(path: str) -> str:
+    script = (
+        f"{{ {path} --help 2>&1 || {path} -h 2>&1; }} | head -100; "
+        f"echo ''; echo 'BINARY_PATH:'; which {path} 2>/dev/null || echo 'not in PATH'"
+    )
+    result = subprocess.run(
+        ["docker", "exec", CONTAINER, "bash", "-c", script],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=15,
+    )
+    return (result.stdout or "").strip()
+
+
 def get_tool_help(tool_name: str, paths: list[str]) -> tuple[str, str] | None:
     for path in paths:
-        script = (
-            f"{{ {path} --help 2>&1 || {path} -h 2>&1; }} | head -100; "
-            f"echo ''; echo 'BINARY_PATH:'; which {path} 2>/dev/null || echo 'not in PATH'"
-        )
         try:
-            res = subprocess.run(
-                ["docker", "exec", CONTAINER, "bash", "-c", script],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=15,
-            )
-            output = (res.stdout or "").strip()
+            output = _run_help_capture(path)
             if output and len(output) > 60 and "not found" not in output.split("\n")[0]:
                 return path, output
         except (subprocess.TimeoutExpired, FileNotFoundError):

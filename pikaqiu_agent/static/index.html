@@ -20,8 +20,8 @@
 
     <main class="layout">
       <aside class="sidebar">
-        <section class="panel launch-panel">
-          <h2>任务发起</h2>
+        <section class="panel launch-panel" aria-labelledby="launch-title">
+          <h2 id="launch-title">任务发起</h2>
           <form id="mission-form" class="compact-form">
             <label>
               任务名
@@ -58,15 +58,15 @@
           </form>
         </section>
 
-        <section class="panel missions-panel">
-          <h2>任务列表</h2>
+        <section class="panel missions-panel" aria-labelledby="missions-title">
+          <h2 id="missions-title">任务列表</h2>
           <div id="missions-list" class="mission-list"></div>
         </section>
       </aside>
 
-      <section class="panel details-panel">
+      <section class="panel details-panel" aria-labelledby="trace-title">
         <div class="detail-header">
-          <h2>执行轨迹</h2>
+          <h2 id="trace-title">执行轨迹</h2>
           <div class="detail-actions">
             <button id="delete-btn" type="button" class="secondary" disabled>删除记录</button>
             <button id="stop-btn" type="button" class="danger" disabled>停止任务</button>

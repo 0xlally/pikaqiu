@@ -33,6 +33,100 @@ def _parse_version_tuple(ver_str: str) -> tuple[int, ...]:
     return tuple(int(p) for p in parts) if parts else ()
 
 
+def _score_version_part(part: str, target: tuple[int, ...], target_raw: str) -> float | None:
+    # Exact version mentioned
+    if target_raw in part:
+        return 1.0
+
+    # Range: "5.0.0-5.0.24"
+    range_match = re.match(r"(\d+(?:\.\d+)+)\s*-\s*(\d+(?:\.\d+)+)", part)
+    if range_match:
+        low = _parse_version_tuple(range_match.group(1))
+        high = _parse_version_tuple(range_match.group(2))
+        if low and high and low <= target <= high:
+            return 1.0
+        if low and high:
+            return 0.1
+        return None
+
+    # Comparison: "<=5.0.5", "<5.0.5", ">=3.0", ">3.0"
+    cmp_match = re.match(r"([<>]=?)\s*(\d+(?:\.\d+)+)", part)
+    if cmp_match:
+        op = cmp_match.group(1)
+        ver = _parse_version_tuple(cmp_match.group(2))
+        if not ver:
+            return None
+        if op == "<=" and target <= ver:
+            return 1.0
+        if op == "<" and target < ver:
+            return 1.0
+        if op == ">=" and target >= ver:
+            return 0.9
+        if op == ">" and target > ver:
+            return 0.9
+        return 0.1
+
+    # Wildcard: "5.x"
+    wild_match = re.match(r"(\d+)\.x", part)
+    if wild_match:
+        major = int(wild_match.group(1))
+        if target and target[0] == major:
+            return 0.9
+        return 0.1
+
+    single_ver = _parse_version_tuple(part)
+    if not single_ver:
+        return None
+    if single_ver == target:
+        return 1.0
+    if len(single_ver) >= 2 and len(target) >= 2 and single_ver[:2] == target[:2]:
+        return 0.7
+    if single_ver and target and single_ver[0] == target[0]:
+        return 0.5
+    return None
+
+
+def _knowledge_relevance_score(row: dict[str, Any], tokens: list[str], body_limit: int) -> float:
+    title_lower = (row.get("title") or "").lower()
+    body_lower = (row.get("body") or row.get("snippet") or "").lower()[:body_limit]
+    combined = title_lower + " " + body_lower
+    hit_count = sum(1 for token in tokens if token.lower() in combined)
+    title_hits = sum(1 for token in tokens if token.lower() in title_lower)
+    source = (row.get("source") or "").lower()
+    source_boost = 2.0 if "pentest-wiki" in source else 0.0
+    return hit_count + title_hits * 0.5 + source_boost
+
+
+def _build_cve_search_conditions(
+    *,
+    product: str,
+    cve_id: str,
+    vuln_type: str,
+    keyword: str,
+) -> tuple[list[str], list[Any]]:
+    conditions: list[str] = []
+    params: list[Any] = []
+
+    if cve_id:
+        conditions.append("cve_id LIKE ?")
+        params.append(f"%{cve_id.upper().strip()}%")
+
+    if product:
+        conditions.append("product LIKE ?")
+        params.append(f"%{product.lower().strip()}%")
+
+    if vuln_type:
+        conditions.append("vuln_type LIKE ?")
+        params.append(f"%{vuln_type.lower().strip()}%")
+
+    if keyword:
+        kw = keyword.strip()
+        conditions.append("(title LIKE ? OR description LIKE ?)")
+        params.extend([f"%{kw}%", f"%{kw}%"])
+
+    return conditions, params
+
+
 def _version_match_score(version_info: str, target: tuple[int, ...], target_raw: str) -> float:
     """Score how well a CVE's version_info matches the target version.
 
@@ -47,11 +141,6 @@ def _version_match_score(version_info: str, target: tuple[int, ...], target_raw:
         return 0.5
 
     info = version_info.lower().strip()
-
-    # Exact version mentioned → strong match
-    if target_raw in info:
-        return 1.0
-
     best_score = 0.3  # Default: has version info but doesn't match well
 
     for part in info.split(","):
@@ -59,53 +148,12 @@ def _version_match_score(version_info: str, target: tuple[int, ...], target_raw:
         if not part:
             continue
 
-        # Range: "5.0.0-5.0.24"
-        range_match = re.match(r"(\d+(?:\.\d+)+)\s*-\s*(\d+(?:\.\d+)+)", part)
-        if range_match:
-            low = _parse_version_tuple(range_match.group(1))
-            high = _parse_version_tuple(range_match.group(2))
-            if low and high and low <= target <= high:
-                return 1.0
-            if low and high:
-                best_score = max(best_score, 0.1)
+        part_score = _score_version_part(part, target, target_raw)
+        if part_score is None:
             continue
-
-        # Comparison: "<=5.0.5", "<5.0.5", ">=3.0", ">3.0"
-        cmp_match = re.match(r"([<>]=?)\s*(\d+(?:\.\d+)+)", part)
-        if cmp_match:
-            op = cmp_match.group(1)
-            ver = _parse_version_tuple(cmp_match.group(2))
-            if ver:
-                if op == "<=" and target <= ver:
-                    return 1.0
-                if op == "<" and target < ver:
-                    return 1.0
-                if op == ">=" and target >= ver:
-                    return 0.9
-                if op == ">" and target > ver:
-                    return 0.9
-                best_score = max(best_score, 0.1)
-            continue
-
-        # Wildcard: "5.x"
-        wild_match = re.match(r"(\d+)\.x", part)
-        if wild_match:
-            major = int(wild_match.group(1))
-            if target and target[0] == major:
-                return 0.9
-            best_score = max(best_score, 0.1)
-            continue
-
-        # Single version: check if target is close
-        single_ver = _parse_version_tuple(part)
-        if single_ver:
-            if single_ver == target:
-                return 1.0
-            # Same major.minor → likely relevant
-            if len(single_ver) >= 2 and len(target) >= 2 and single_ver[:2] == target[:2]:
-                best_score = max(best_score, 0.7)
-            elif single_ver and target and single_ver[0] == target[0]:
-                best_score = max(best_score, 0.5)
+        if part_score >= 0.9:
+            return part_score
+        best_score = max(best_score, part_score)
 
     return best_score
 
@@ -667,15 +715,7 @@ class MissionStore:
             # Re-rank AND results by full token hit count + source weight
             scored_and: list[tuple[float, dict[str, Any]]] = []
             for row in and_results:
-                title_lower = (row.get("title") or "").lower()
-                body_lower = (row.get("body") or row.get("snippet") or "").lower()[:3000]
-                combined = title_lower + " " + body_lower
-                hit_count = sum(1 for t in tokens if t.lower() in combined)
-                title_hits = sum(1 for t in tokens if t.lower() in title_lower)
-                # Boost pentest-wiki (curated) over skill/zip docs
-                source = (row.get("source") or "").lower()
-                source_boost = 2.0 if "pentest-wiki" in source else 0.0
-                score = hit_count + title_hits * 0.5 + source_boost
+                score = _knowledge_relevance_score(row, tokens, body_limit=3000)
                 scored_and.append((score, row))
             scored_and.sort(key=lambda x: x[0], reverse=True)
             return [row for _, row in scored_and[:limit]]
@@ -687,14 +727,7 @@ class MissionStore:
         # Phase 3: Re-rank by token hit count + source weight
         scored: list[tuple[float, dict[str, Any]]] = []
         for row in or_results:
-            title_lower = (row.get("title") or "").lower()
-            body_lower = (row.get("body") or row.get("snippet") or "").lower()[:2000]
-            combined = title_lower + " " + body_lower
-            hit_count = sum(1 for t in tokens if t.lower() in combined)
-            title_hits = sum(1 for t in tokens if t.lower() in title_lower)
-            source = (row.get("source") or "").lower()
-            source_boost = 2.0 if "pentest-wiki" in source else 0.0
-            score = hit_count + title_hits * 0.5 + source_boost
+            score = _knowledge_relevance_score(row, tokens, body_limit=2000)
             scored.append((score, row))
         scored.sort(key=lambda x: x[0], reverse=True)
 
@@ -853,27 +886,12 @@ class MissionStore:
             keyword: Free-text keyword search in title/description
             limit: Max results to return
         """
-        conditions: list[str] = []
-        params: list[Any] = []
-
-        if cve_id:
-            cve_id_upper = cve_id.upper().strip()
-            conditions.append("cve_id LIKE ?")
-            params.append(f"%{cve_id_upper}%")
-
-        if product:
-            product_lower = product.lower().strip()
-            conditions.append("product LIKE ?")
-            params.append(f"%{product_lower}%")
-
-        if vuln_type:
-            conditions.append("vuln_type LIKE ?")
-            params.append(f"%{vuln_type.lower().strip()}%")
-
-        if keyword:
-            kw = keyword.strip()
-            conditions.append("(title LIKE ? OR description LIKE ?)")
-            params.extend([f"%{kw}%", f"%{kw}%"])
+        conditions, params = _build_cve_search_conditions(
+            product=product,
+            cve_id=cve_id,
+            vuln_type=vuln_type,
+            keyword=keyword,
+        )
 
         if not conditions:
             return []

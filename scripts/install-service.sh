@@ -10,24 +10,31 @@ SERVICE_FILE="$SCRIPT_DIR/pikaqiu-agent.service"
 TARGET="/etc/systemd/system/pikaqiu-agent.service"
 PIKAQIU_BIN="/usr/local/bin/pikaqiu"
 
-if [ "$EUID" -ne 0 ]; then
-    echo "请使用 sudo 运行: sudo bash $0"
+die() {
+    echo "$1"
     exit 1
+}
+
+info() {
+    echo "$1"
+}
+
+if [ "$EUID" -ne 0 ]; then
+    die "请使用 sudo 运行: sudo bash $0"
 fi
 
 if [ ! -f "$SERVICE_FILE" ]; then
-    echo "找不到 $SERVICE_FILE"
-    exit 1
+    die "找不到 $SERVICE_FILE"
 fi
 
 # 如果服务正在运行，先停止
 if systemctl is-active --quiet pikaqiu-agent 2>/dev/null; then
-    echo "停止现有服务..."
+    info "停止现有服务..."
     systemctl stop pikaqiu-agent
 fi
 
 # 动态更新路径写入 systemd
-echo "生成服务配置 (项目路径: $PROJECT_DIR)..."
+info "生成服务配置 (项目路径: $PROJECT_DIR)..."
 sed -e "s|WorkingDirectory=.*|WorkingDirectory=$PROJECT_DIR|" \
     -e "s|ExecStart=.*|ExecStart=$PROJECT_DIR/venv/bin/python -m pikaqiu_agent|" \
     "$SERVICE_FILE" > "$TARGET"
@@ -36,7 +43,7 @@ systemctl daemon-reload
 systemctl enable pikaqiu-agent
 
 # 安装 pikaqiu 全局 CLI
-echo "安装 pikaqiu 命令到 $PIKAQIU_BIN..."
+info "安装 pikaqiu 命令到 $PIKAQIU_BIN..."
 cat > "$PIKAQIU_BIN" << 'PIKAQIUEOF'
 #!/bin/bash
 # PikaQiu Agent 管理工具

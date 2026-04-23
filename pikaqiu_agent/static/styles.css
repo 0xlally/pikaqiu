@@ -36,6 +36,7 @@
   --radius-lg: 6px;
   --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
   --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+  --transition-fast: 0.15s;
   --font-display: 'Chakra Petch', sans-serif;
   --font-mono: 'Victor Mono', 'JetBrains Mono', 'Fira Code', monospace;
 }
@@ -113,7 +114,7 @@ h1, h2, h3, h4, h5, h6 {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   border-bottom: 2px solid transparent;
-  transition: color 0.15s, border-color 0.15s;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
 }
 .nav-link:hover { background: transparent; color: var(--blue); border-bottom-color: var(--blue); }
 .nav-link.active { color: var(--blue); border-bottom-color: var(--blue); }
@@ -179,7 +180,7 @@ input, textarea, select {
   color: var(--text);
   font: inherit;
   font-size: 13px;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 input:focus, textarea:focus, select:focus {
@@ -211,7 +212,7 @@ button {
   font: inherit;
   font-size: 13px;
   font-weight: 600;
-  transition: all 0.15s;
+  transition: all var(--transition-fast);
 }
 button:hover:not(:disabled) { box-shadow: var(--shadow-sm); border-color: var(--border-strong); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -270,7 +271,7 @@ button.danger {
   border-radius: var(--radius);
   background: var(--surface);
   cursor: pointer;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 .mission-card:hover {
   border-color: var(--blue);
@@ -626,7 +627,7 @@ pre {
   font-weight: 600;
   cursor: pointer;
   width: auto;
-  transition: background 0.15s;
+  transition: background var(--transition-fast);
 }
 .expand-btn:hover { background: rgba(0,229,255,0.2); }
 

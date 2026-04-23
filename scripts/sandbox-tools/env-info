@@ -33,6 +33,19 @@ def check_tool(name, version_cmd=None):
     return path
 
 
+def safe_count(command: str, timeout: int = 10, default: int = 0) -> int:
+    try:
+        out = subprocess.run(
+            ["bash", "-c", command],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        ).stdout.strip()
+        return int(out or str(default))
+    except Exception:
+        return default
+
+
 info = {}
 
 # ── Language Runtimes ─────────────────────────────────────────────────────
@@ -169,13 +182,11 @@ offline_dbs = {}
 if shutil.which("searchsploit"):
     sdb_path = "/usr/share/exploitdb"
     if os.path.isdir(sdb_path):
-        try:
-            n_exploits = int(subprocess.run(
-                ["bash", "-c", f"find {sdb_path}/exploits -type f 2>/dev/null | wc -l"],
-                capture_output=True, text=True, timeout=10
-            ).stdout.strip() or "0")
-        except Exception:
-            n_exploits = 0
+        n_exploits = safe_count(
+            f"find {sdb_path}/exploits -type f 2>/dev/null | wc -l",
+            timeout=10,
+            default=0,
+        )
         offline_dbs["searchsploit"] = {
             "path": sdb_path,
             "exploits_count": n_exploits,
@@ -187,13 +198,11 @@ if shutil.which("searchsploit"):
 # Metasploit modules
 msf_modules = "/usr/share/metasploit-framework/modules"
 if os.path.isdir(msf_modules):
-    try:
-        n_exploits = int(subprocess.run(
-            ["bash", "-c", f"find {msf_modules}/exploits -type f -name '*.rb' 2>/dev/null | wc -l"],
-            capture_output=True, text=True, timeout=10
-        ).stdout.strip() or "0")
-    except Exception:
-        n_exploits = 0
+    n_exploits = safe_count(
+        f"find {msf_modules}/exploits -type f -name '*.rb' 2>/dev/null | wc -l",
+        timeout=10,
+        default=0,
+    )
     offline_dbs["metasploit"] = {
         "modules_path": msf_modules,
         "exploit_modules": n_exploits,
@@ -201,13 +210,11 @@ if os.path.isdir(msf_modules):
 # nmap scripts
 nse_dir = "/usr/share/nmap/scripts"
 if os.path.isdir(nse_dir):
-    try:
-        n_scripts = int(subprocess.run(
-            ["bash", "-c", f"ls {nse_dir}/*.nse 2>/dev/null | wc -l"],
-            capture_output=True, text=True, timeout=5
-        ).stdout.strip() or "0")
-    except Exception:
-        n_scripts = 0
+    n_scripts = safe_count(
+        f"ls {nse_dir}/*.nse 2>/dev/null | wc -l",
+        timeout=5,
+        default=0,
+    )
     offline_dbs["nmap_scripts"] = {"path": nse_dir, "count": n_scripts}
 # nuclei templates
 nuclei_tmpl = os.path.expanduser("~/nuclei-templates")

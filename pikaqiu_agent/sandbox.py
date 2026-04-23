@@ -49,6 +49,53 @@ class SandboxExecutor:
             timeout_sec=20,
         )
 
+    def _docker_exec_cmd(self, shell_script: str) -> list[str]:
+        return [
+            "docker",
+            "exec",
+            self._container,
+            "bash",
+            "-lc",
+            shell_script,
+        ]
+
+    @staticmethod
+    def _script_preamble(workdir: str) -> str:
+        return (
+            "set -o pipefail\n"
+            f"mkdir -p {workdir}\n"
+            f"cd {workdir}\n"
+        )
+
+    def _run_shell_script(
+        self,
+        shell_script: str,
+        timeout_sec: int,
+        stop_fn: Callable[[], bool] | None,
+        on_chunk: Callable[[str], None] | None,
+    ) -> tuple[str, str, int]:
+        cmd = self._docker_exec_cmd(shell_script)
+        return self._run_popen(cmd, timeout_sec, stop_fn, on_chunk=on_chunk)
+
+    def _build_result(
+        self,
+        *,
+        command: str,
+        raw_stdout: str,
+        raw_stderr: str,
+        exit_code: int,
+        started_at: str,
+    ) -> CommandResult:
+        ended_at = datetime.now().astimezone().isoformat(timespec="seconds")
+        return CommandResult(
+            command=command,
+            exit_code=exit_code,
+            stdout=self._truncate(raw_stdout),
+            stderr=self._truncate(raw_stderr),
+            started_at=started_at,
+            ended_at=ended_at,
+        )
+
     def _run_popen(
         self,
         cmd: list[str],
@@ -82,13 +129,29 @@ class SandboxExecutor:
         last_chunk_at = time.time()
         CHUNK_INTERVAL = 1.5  # seconds between on_chunk calls
 
+        def _terminate_process() -> None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+        def _drain_queue() -> None:
+            while True:
+                try:
+                    tag, line = line_queue.get_nowait()
+                except queue.Empty:
+                    return
+                if line is None:
+                    continue
+                if tag == "out":
+                    stdout_parts.append(line)
+                else:
+                    stderr_parts.append(line)
+
         while eof_count < 2:
             if stop_fn and stop_fn():
-                try:
-                    proc.terminate()
-                    proc.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
+                _terminate_process()
                 return _strip_ansi("".join(stdout_parts)) + "\n[KILLED: stop requested]", "", -15
 
             try:
@@ -111,16 +174,7 @@ class SandboxExecutor:
                 # Check hard deadline
                 if time.time() > deadline:
                     proc.kill()
-                    # Drain remaining lines
-                    while True:
-                        try:
-                            tag2, line2 = line_queue.get_nowait()
-                            if line2 and tag2 == "out":
-                                stdout_parts.append(line2)
-                            elif line2 and tag2 == "err":
-                                stderr_parts.append(line2)
-                        except queue.Empty:
-                            break
+                    _drain_queue()
                     stdout = _strip_ansi("".join(stdout_parts))
                     stderr = _strip_ansi("".join(stderr_parts))
                     return stdout + f"\n[TIMEOUT after {timeout_sec}s]", stderr, 124
@@ -138,29 +192,20 @@ class SandboxExecutor:
     ) -> CommandResult:
         work = workdir or self.settings.sandbox_workdir
         started_at = datetime.now().astimezone().isoformat(timespec="seconds")
-        shell_script = (
-            "set -o pipefail\n"
-            f"mkdir -p {work}\n"
-            f"cd {work}\n"
-            f"{command}\n"
-        )
         timeout = timeout_sec or self.settings.command_timeout_sec
-        cmd = [
-            "docker", "exec",
-            self._container,
-            "bash", "-lc", shell_script,
-        ]
-        raw_stdout, raw_stderr, exit_code = self._run_popen(cmd, timeout, stop_fn, on_chunk=on_chunk)
-        stdout = self._truncate(raw_stdout)
-        stderr = self._truncate(raw_stderr)
-        ended_at = datetime.now().astimezone().isoformat(timespec="seconds")
-        return CommandResult(
+        shell_script = self._script_preamble(work) + f"{command}\n"
+        raw_stdout, raw_stderr, exit_code = self._run_shell_script(
+            shell_script,
+            timeout_sec=timeout,
+            stop_fn=stop_fn,
+            on_chunk=on_chunk,
+        )
+        return self._build_result(
             command=command,
             exit_code=exit_code,
-            stdout=stdout,
-            stderr=stderr,
+            raw_stdout=raw_stdout,
+            raw_stderr=raw_stderr,
             started_at=started_at,
-            ended_at=ended_at,
         )
 
     def run_python(
@@ -181,30 +226,25 @@ class SandboxExecutor:
         encoded = base64.b64encode(code.encode("utf-8")).decode("ascii")
         # Use workdir-based script path to isolate concurrent missions
         script_path = f"{work}/_pikaqiu_script.py"
-        shell_script = (
-            "set -o pipefail\n"
-            f"mkdir -p {work}\n"
-            f"cd {work}\n"
-            f"echo '{encoded}' | base64 -d > {script_path}\n"
-            f"python3 {script_path}\n"
-        )
         timeout = timeout_sec or self.settings.command_timeout_sec
-        cmd = [
-            "docker", "exec",
-            self._container,
-            "bash", "-lc", shell_script,
-        ]
-        raw_stdout, raw_stderr, exit_code = self._run_popen(cmd, timeout, stop_fn, on_chunk=on_chunk)
-        stdout = self._truncate(raw_stdout)
-        stderr = self._truncate(raw_stderr)
-        ended_at = datetime.now().astimezone().isoformat(timespec="seconds")
-        return CommandResult(
-            command=f"[python3 script]\n{code[:200]}{'...' if len(code)>200 else ''}",
+        shell_script = (
+            self._script_preamble(work)
+            + f"echo '{encoded}' | base64 -d > {script_path}\n"
+            + f"python3 {script_path}\n"
+        )
+        raw_stdout, raw_stderr, exit_code = self._run_shell_script(
+            shell_script,
+            timeout_sec=timeout,
+            stop_fn=stop_fn,
+            on_chunk=on_chunk,
+        )
+        command_preview = f"[python3 script]\n{code[:200]}{'...' if len(code) > 200 else ''}"
+        return self._build_result(
+            command=command_preview,
             exit_code=exit_code,
-            stdout=stdout,
-            stderr=stderr,
+            raw_stdout=raw_stdout,
+            raw_stderr=raw_stderr,
             started_at=started_at,
-            ended_at=ended_at,
         )
 
     def _truncate(self, value: str) -> str:

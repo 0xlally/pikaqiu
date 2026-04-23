@@ -203,7 +203,17 @@ def retrieve_forgotten_context(
                     # Check if this info is already in current memory
                     memory_text = json.dumps(current_memory, ensure_ascii=False).lower()
                     # Extract the relevant snippet
-                    snippet = _extract_relevant_snippet(content, term, max_len=200)
+                    idx = content.lower().find(term.lower())
+                    if idx == -1:
+                        snippet = content[:200] if len(content) > 200 else content
+                    else:
+                        start = max(0, idx - 100)
+                        end = min(len(content), idx + 100)
+                        snippet = content[start:end].strip()
+                        if start > 0:
+                            snippet = "..." + snippet
+                        if end < len(content):
+                            snippet += "..."
                     if snippet and snippet.lower() not in memory_text:
                         source = f"[Round {event.get('round_no', '?')}, {event.get('type', 'event')}]"
                         forgotten.append(f"{source} {snippet}")
@@ -214,24 +224,6 @@ def retrieve_forgotten_context(
         logger.warning("Long-term memory retrieval error: %s", e)
     
     return forgotten
-
-
-def _extract_relevant_snippet(text: str, keyword: str, max_len: int = 200) -> str:
-    """Extract a snippet around a keyword from text."""
-    idx = text.lower().find(keyword.lower())
-    if idx == -1:
-        return text[:max_len] if len(text) > max_len else text
-    
-    start = max(0, idx - max_len // 2)
-    end = min(len(text), idx + max_len // 2)
-    snippet = text[start:end].strip()
-    
-    if start > 0:
-        snippet = "..." + snippet
-    if end < len(text):
-        snippet = snippet + "..."
-    
-    return snippet
 
 
 # ── Enhanced normalize_memory (drop-in replacement) ───────────────────
@@ -249,22 +241,24 @@ def normalize_memory_enhanced(
     - Low-priority findings are trimmed first
     - Multi-node support: nodes dict + topology list
     """
-    # Fix: memory agent sometimes nests the entire result as a JSON string inside summary
     summary_val = payload.get("summary", "")
-    if isinstance(summary_val, str) and summary_val.strip().startswith("{"):
+    if isinstance(summary_val, str):
         candidate = summary_val.strip()
-        if candidate.startswith("{{") and not candidate.startswith("{{{"):
-            candidate = candidate[1:]
-        if candidate.endswith("}}") and not candidate.endswith("}}}"):
-            candidate = candidate[:-1]
-        try:
-            nested = json.loads(candidate)
+        if candidate.startswith("{"):
+            if candidate.startswith("{{") and not candidate.startswith("{{{"):
+                candidate = candidate[1:]
+            if candidate.endswith("}}") and not candidate.endswith("}}}"):
+                candidate = candidate[:-1]
+            try:
+                nested = json.loads(candidate)
+            except (json.JSONDecodeError, TypeError):
+                nested = None
             if isinstance(nested, dict) and ("findings" in nested or "leads" in nested):
                 payload = nested
-        except (json.JSONDecodeError, TypeError):
-            pass
 
-    memory_updates = payload.get("memory_updates") if isinstance(payload.get("memory_updates"), dict) else {}
+    updates = payload.get("memory_updates")
+    updates = updates if isinstance(updates, dict) else {}
+
     result = {
         "summary": str(payload.get("summary") or fallback.get("summary", "")),
         "findings": _dedupe(_as_str_list(payload.get("findings", fallback.get("findings", [])))),
@@ -273,7 +267,7 @@ def normalize_memory_enhanced(
             _as_str_list(
                 payload.get(
                     "dead_ends",
-                    memory_updates.get("dead_ends", fallback.get("dead_ends", [])),
+                    updates.get("dead_ends", fallback.get("dead_ends", [])),
                 )
             )
         ),
@@ -464,34 +458,30 @@ def detect_stall(
     curr_creds = set(str(c).strip().lower() for c in current_memory.get("credentials", []))
     new_creds = curr_creds - prev_creds
 
-    # Check node-level progress
     new_node_progress = False
     curr_nodes = current_memory.get("nodes", {})
     prev_nodes = previous_memory.get("nodes", {})
-    if curr_nodes:
-        # New nodes discovered?
-        new_node_keys = set(curr_nodes.keys()) - set(prev_nodes.keys())
-        if new_node_keys:
+    if isinstance(curr_nodes, dict) and curr_nodes:
+        if not isinstance(prev_nodes, dict):
+            prev_nodes = {}
+        if set(curr_nodes) - set(prev_nodes):
             new_node_progress = True
         else:
-            # Check per-node findings/credentials/access changes
-            for key in curr_nodes:
-                if key not in prev_nodes:
+            for key, curr_node in curr_nodes.items():
+                prev_node = prev_nodes.get(key)
+                if not isinstance(curr_node, dict) or not isinstance(prev_node, dict):
+                    if curr_node != prev_node:
+                        new_node_progress = True
+                        break
+                    continue
+                if curr_node.get("access_level", "none") != prev_node.get("access_level", "none"):
                     new_node_progress = True
                     break
-                curr_n = curr_nodes[key]
-                prev_n = prev_nodes[key]
-                if curr_n.get("access_level", "none") != prev_n.get("access_level", "none"):
-                    new_node_progress = True
-                    break
-                curr_node_findings = set(str(f).lower() for f in curr_n.get("findings", []))
-                prev_node_findings = set(str(f).lower() for f in prev_n.get("findings", []))
-                if curr_node_findings - prev_node_findings:
-                    new_node_progress = True
-                    break
-                curr_node_flags = set(curr_n.get("flags_found", []))
-                prev_node_flags = set(prev_n.get("flags_found", []))
-                if curr_node_flags - prev_node_flags:
+                curr_findings = {str(item).lower() for item in curr_node.get("findings", [])}
+                prev_findings = {str(item).lower() for item in prev_node.get("findings", [])}
+                curr_flags = set(curr_node.get("flags_found", []))
+                prev_flags = set(prev_node.get("flags_found", []))
+                if curr_findings - prev_findings or curr_flags - prev_flags:
                     new_node_progress = True
                     break
 

@@ -16,12 +16,24 @@ from pikaqiu_agent.storage import MissionStore
 logger = logging.getLogger(__name__)
 
 
+def _json_error(message: str, status: int):
+    return jsonify({"error": message}), status
+
+
+def _clamp_int(value: Any, default: int, *, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(parsed, maximum))
+
+
 class AppRuntime:
     def __init__(self, settings: AgentSettings) -> None:
         self.settings = settings
         self.store = MissionStore(settings.db_path)
         self.store.reset_stale_missions()
-        self.knowledge = KnowledgeIndexer(settings.knowledge_dir, self.store)
+        self.knowledge = KnowledgeIndexer(settings.workspace_root, self.store, settings.knowledge_dir)
         self.sandbox = SandboxExecutor(settings)
         self.llm = LLMClient(settings)
         self.orchestrator = OrchestratorManager(
@@ -50,6 +62,12 @@ def create_app(runtime: AppRuntime | None = None) -> Flask:
 
     def rt() -> AppRuntime:
         return app.config["rt"]
+
+    def mission_or_404(mission_id: str):
+        mission = rt().store.get_mission(mission_id)
+        if mission:
+            return mission
+        return None
 
     # ── Static / SPA ──────────────────────────────────────────
 
@@ -87,10 +105,10 @@ def create_app(runtime: AppRuntime | None = None) -> Flask:
 
     @app.route("/api/config", methods=["POST"])
     def api_config_post():
-        changes = request.json or {}
+        changes = request.get_json(silent=True) or {}
         changes = changes.get("config", changes)
         if not isinstance(changes, dict) or not changes:
-            return jsonify({"error": "provide 'config' dict with fields to update"}), 400
+            return _json_error("provide 'config' dict with fields to update", 400)
         errors = rt().settings.update(changes)
         # Rebuild LLM client if relevant fields changed
         llm_fields = {"llm_base_url", "llm_api_key", "llm_model", "llm_timeout_sec",
@@ -110,26 +128,30 @@ def create_app(runtime: AppRuntime | None = None) -> Flask:
 
     @app.route("/api/missions", methods=["POST"])
     def api_missions_create():
-        payload = request.json or {}
+        payload = request.get_json(silent=True) or {}
         s = rt().settings
+        max_rounds = _clamp_int(payload.get("max_rounds"), s.initial_rounds, minimum=1, maximum=s.max_rounds)
+        max_commands = _clamp_int(payload.get("max_commands"), s.initial_commands, minimum=1, maximum=s.max_commands)
+        command_timeout = _clamp_int(payload.get("command_timeout_sec"), s.command_timeout_sec, minimum=5, maximum=600)
+        expected_flags = _clamp_int(payload.get("expected_flags"), 1, minimum=1, maximum=50)
         mission_id = rt().orchestrator.start_mission(
             name=str(payload.get("name") or "未命名任务"),
             target=str(payload.get("target") or "").strip(),
             goal=str(payload.get("goal") or "").strip(),
             scope=str(payload.get("target") or "").strip(),
             domains=[str(item) for item in payload.get("domains", ["web"]) if str(item)],
-            max_rounds=max(1, min(int(payload.get("max_rounds") or s.initial_rounds), s.max_rounds)),
-            max_commands=max(1, min(int(payload.get("max_commands") or s.initial_commands), s.max_commands)),
-            command_timeout_sec=max(5, min(int(payload.get("command_timeout_sec") or s.command_timeout_sec), 600)),
-            expected_flags=max(1, int(payload.get("expected_flags") or 1)),
+            max_rounds=max_rounds,
+            max_commands=max_commands,
+            command_timeout_sec=command_timeout,
+            expected_flags=expected_flags,
         )
         return jsonify({"mission_id": mission_id}), 201
 
     @app.route("/api/missions/<mission_id>")
     def api_mission_detail(mission_id: str):
-        mission = rt().store.get_mission(mission_id)
+        mission = mission_or_404(mission_id)
         if not mission:
-            return jsonify({"error": "mission not found"}), 404
+            return _json_error("mission not found", 404)
         return jsonify({
             "mission": mission,
             "memory": rt().store.get_memory(mission_id),
@@ -145,14 +167,14 @@ def create_app(runtime: AppRuntime | None = None) -> Flask:
 
     @app.route("/api/missions/<mission_id>", methods=["DELETE"])
     def api_mission_delete(mission_id: str):
-        mission = rt().store.get_mission(mission_id)
+        mission = mission_or_404(mission_id)
         if not mission:
-            return jsonify({"error": "mission not found"}), 404
+            return _json_error("mission not found", 404)
         if mission["status"] in {"queued", "running"} or rt().orchestrator.thread_alive(mission_id):
-            return jsonify({"error": "任务仍在执行中，请先停止任务再删除记录"}), 409
+            return _json_error("任务仍在执行中，请先停止任务再删除记录", 409)
         deleted = rt().store.delete_mission(mission_id)
         if not deleted:
-            return jsonify({"error": "mission not found"}), 404
+            return _json_error("mission not found", 404)
         return jsonify({"ok": True, "deleted_id": mission_id})
 
     # ── Knowledge ─────────────────────────────────────────────
@@ -161,7 +183,7 @@ def create_app(runtime: AppRuntime | None = None) -> Flask:
     def api_knowledge_search():
         q = request.args.get("q", "")
         domains = request.args.getlist("domain")
-        limit = int(request.args.get("limit", "8"))
+        limit = _clamp_int(request.args.get("limit", "8"), 8, minimum=1, maximum=50)
         return jsonify({
             "items": rt().store.search_knowledge(q, domains=domains or None, limit=limit)
         })
@@ -173,7 +195,7 @@ def create_app(runtime: AppRuntime | None = None) -> Flask:
         cve_id = request.args.get("cve_id", "")
         vuln_type = request.args.get("vuln_type", "")
         keyword = request.args.get("keyword", "")
-        limit = int(request.args.get("limit", "10"))
+        limit = _clamp_int(request.args.get("limit", "10"), 10, minimum=1, maximum=100)
         return jsonify({
             "items": rt().store.search_cve_poc(
                 product=product, version=version, cve_id=cve_id,
@@ -186,10 +208,10 @@ def create_app(runtime: AppRuntime | None = None) -> Flask:
     def api_knowledge_doc():
         raw_id = request.args.get("id", "").strip()
         if not raw_id.isdigit():
-            return jsonify({"error": "invalid knowledge doc id"}), 400
+            return _json_error("invalid knowledge doc id", 400)
         doc = rt().store.get_knowledge_doc(int(raw_id))
         if not doc:
-            return jsonify({"error": "knowledge doc not found"}), 404
+            return _json_error("knowledge doc not found", 404)
         full_body = rt().knowledge.read_doc_content(
             str(doc["source"]), str(doc["path"]), fallback=str(doc["body"]),
         )

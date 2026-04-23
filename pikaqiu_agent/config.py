@@ -8,12 +8,14 @@ from pathlib import Path
 from typing import Any
 
 # Load .env file if present (backward compatibility)
+_ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    load_dotenv(_ENV_FILE if _ENV_FILE.is_file() else None)
 except ImportError:
-    _env_file = Path.cwd() / ".env"
-    if _env_file.is_file():
+    for _env_file in (_ENV_FILE, Path.cwd() / ".env"):
+        if not _env_file.is_file():
+            continue
         for _line in _env_file.read_text(encoding="utf-8").splitlines():
             _line = _line.strip()
             if not _line or _line.startswith("#"):
@@ -23,6 +25,7 @@ except ImportError:
                 _k, _v = _k.strip(), _v.strip()
                 if _k and _k not in os.environ:
                     os.environ[_k] = _v
+        break
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +100,42 @@ _RUNTIME_MUTABLE_FIELDS = {
 
 # Sensitive fields: shown as masked in API responses
 _SENSITIVE_FIELDS = {"llm_api_key", "advisor_api_key"}
+
+
+def _coerce_runtime_value(current: Any, value: Any) -> Any:
+    if isinstance(current, bool):
+        if isinstance(value, bool):
+            return value
+        return str(value).lower() not in {"0", "false", "no", "off", ""}
+    if isinstance(current, int):
+        return int(value)
+    if isinstance(current, str):
+        return str(value)
+    return value
+
+
+def _cfg_section(cfg: dict[str, Any], key: str) -> dict[str, Any]:
+    section = cfg.get(key, {})
+    return section if isinstance(section, dict) else {}
+
+
+def _parse_model_pool(entries: list[dict[str, Any]]) -> list[ModelPoolEntry]:
+    pool: list[ModelPoolEntry] = []
+    for idx, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            continue
+        pool.append(
+            ModelPoolEntry(
+                id=entry.get("id", f"model-{idx}"),
+                base_url=entry.get("base_url", DEFAULT_LLM_BASE_URL),
+                api_key=entry.get("api_key", ""),
+                model=entry.get("model", DEFAULT_LLM_MODEL),
+                thinking=bool(entry.get("thinking", False)),
+                priority=entry.get("priority", idx + 1),
+                max_concurrent=entry.get("max_concurrent", 3),
+            )
+        )
+    return pool
 
 
 @dataclass
@@ -219,14 +258,7 @@ class AgentSettings:
                     continue
                 current = getattr(self, key)
                 try:
-                    if isinstance(current, bool):
-                        coerced = value if isinstance(value, bool) else str(value).lower() not in {"0", "false", "no", "off", ""}
-                    elif isinstance(current, int):
-                        coerced = int(value)
-                    elif isinstance(current, str):
-                        coerced = str(value)
-                    else:
-                        coerced = value
+                    coerced = _coerce_runtime_value(current, value)
                     setattr(self, key, coerced)
                 except (ValueError, TypeError) as e:
                     errors[key] = f"invalid value for '{key}': {e}"
@@ -268,29 +300,23 @@ class AgentSettings:
         return params
 
 
-def _env_int(name: str, default: int) -> int:
-    value = os.getenv(name)
-    if not value:
-        return default
-    try:
-        return int(value)
-    except ValueError:
-        return default
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() not in {"0", "false", "no", "off", ""}
-
-
-def _env_str(name: str, *fallback_names: str, default: str = "") -> str:
+def _env(name: str, *fallback_names: str, default: Any = "", cast: Any = str) -> Any:
     """Read env var, with fallback names for backward compatibility."""
     for n in (name, *fallback_names):
-        v = os.getenv(n)
-        if v and v.strip():
-            return v.strip()
+        raw = os.getenv(n)
+        if raw is None:
+            continue
+        value = raw.strip()
+        if cast is bool:
+            return value.lower() not in {"0", "false", "no", "off", ""}
+        if not value:
+            continue
+        if cast is str:
+            return value
+        try:
+            return cast(value)
+        except (ValueError, TypeError):
+            continue
     return default
 
 
@@ -307,41 +333,43 @@ def load_settings(workspace_root: Path | None = None) -> AgentSettings:
 
 def _load_from_env(root: Path) -> AgentSettings:
     """Legacy .env-based loading."""
-    base_url = _env_str("PIKAQIU_LLM_BASE_URL", "PIKAQIU_ANTHROPIC_BASE_URL", default=DEFAULT_LLM_BASE_URL)
+    base_url = _env("PIKAQIU_LLM_BASE_URL", "PIKAQIU_ANTHROPIC_BASE_URL", default=DEFAULT_LLM_BASE_URL)
     if base_url.endswith("/anthropic"):
         base_url = base_url[:-len("/anthropic")]
 
     return AgentSettings(
         workspace_root=root.resolve(),
         db_path=(root / ".pikaqiu_agent" / "state.sqlite3").resolve(),
-        sandbox_container=_env_str("PIKAQIU_SANDBOX_CONTAINER", default="pikaqiu-sandbox-1"),
-        sandbox_workdir=_env_str("PIKAQIU_SANDBOX_WORKDIR", default="/tmp/pikaqiu-agent-workspace"),
+        sandbox_container=_env("PIKAQIU_SANDBOX_CONTAINER", default="pikaqiu-sandbox-1"),
+        sandbox_workdir=_env("PIKAQIU_SANDBOX_WORKDIR", default="/tmp/pikaqiu-agent-workspace"),
         llm_base_url=base_url,
-        llm_api_key=_env_str("PIKAQIU_LLM_API_KEY", "PIKAQIU_ANTHROPIC_AUTH_TOKEN", default=DEFAULT_LLM_API_KEY),
-        llm_model=_env_str("PIKAQIU_LLM_MODEL", "PIKAQIU_ANTHROPIC_MODEL", default=DEFAULT_LLM_MODEL),
-        llm_chat_model=_env_str("PIKAQIU_LLM_CHAT_MODEL", default=""),
-        llm_thinking=_env_bool("PIKAQIU_LLM_THINKING", default=False),
-        llm_timeout_sec=_env_int("PIKAQIU_LLM_TIMEOUT_SEC", _env_int("PIKAQIU_CLAUDE_TIMEOUT_SEC", 60)),
-        llm_max_retries=_env_int("PIKAQIU_LLM_MAX_RETRIES", 10),
-        advisor_base_url=_env_str("PIKAQIU_ADVISOR_BASE_URL", default=""),
-        advisor_api_key=_env_str("PIKAQIU_ADVISOR_API_KEY", default=""),
-        advisor_model=_env_str("PIKAQIU_ADVISOR_MODEL", default=""),
-        advisor_thinking=_env_bool("PIKAQIU_ADVISOR_THINKING", default=False),
-        initial_rounds=_env_int("PIKAQIU_MAX_ROUNDS", 8),
-        initial_commands=_env_int("PIKAQIU_MAX_COMMANDS_PER_ROUND", 32),
-        command_timeout_sec=_env_int("PIKAQIU_COMMAND_TIMEOUT_SEC", 60),
-        stdout_limit=_env_int("PIKAQIU_STDOUT_LIMIT", 16000),
-        knowledge_top_k=_env_int("PIKAQIU_KNOWLEDGE_TOP_K", 6),
-        knowledge_dir=_env_str("PIKAQIU_KNOWLEDGE_DIR", default="./knowledge"),
-        host=_env_str("PIKAQIU_WEB_HOST", default="127.0.0.1"),
-        port=_env_int("PIKAQIU_WEB_PORT", 8765),
-        mock=_env_bool("PIKAQIU_MOCK", False),
+        llm_api_key=_env("PIKAQIU_LLM_API_KEY", "PIKAQIU_ANTHROPIC_AUTH_TOKEN", default=DEFAULT_LLM_API_KEY),
+        llm_model=_env("PIKAQIU_LLM_MODEL", "PIKAQIU_ANTHROPIC_MODEL", default=DEFAULT_LLM_MODEL),
+        llm_chat_model=_env("PIKAQIU_LLM_CHAT_MODEL", default=""),
+        llm_thinking=_env("PIKAQIU_LLM_THINKING", default=False, cast=bool),
+        llm_timeout_sec=_env("PIKAQIU_LLM_TIMEOUT_SEC", "PIKAQIU_CLAUDE_TIMEOUT_SEC", default=60, cast=int),
+        llm_max_retries=_env("PIKAQIU_LLM_MAX_RETRIES", default=10, cast=int),
+        advisor_base_url=_env("PIKAQIU_ADVISOR_BASE_URL", default=""),
+        advisor_api_key=_env("PIKAQIU_ADVISOR_API_KEY", default=""),
+        advisor_model=_env("PIKAQIU_ADVISOR_MODEL", default=""),
+        advisor_thinking=_env("PIKAQIU_ADVISOR_THINKING", default=False, cast=bool),
+        initial_rounds=_env("PIKAQIU_MAX_ROUNDS", default=8, cast=int),
+        initial_commands=_env("PIKAQIU_MAX_COMMANDS_PER_ROUND", default=32, cast=int),
+        command_timeout_sec=_env("PIKAQIU_COMMAND_TIMEOUT_SEC", default=60, cast=int),
+        stdout_limit=_env("PIKAQIU_STDOUT_LIMIT", default=16000, cast=int),
+        knowledge_top_k=_env("PIKAQIU_KNOWLEDGE_TOP_K", default=6, cast=int),
+        knowledge_dir=_env("PIKAQIU_KNOWLEDGE_DIR", default="./knowledge"),
+        host=_env("PIKAQIU_WEB_HOST", default="127.0.0.1"),
+        port=_env("PIKAQIU_WEB_PORT", default=8765, cast=int),
+        mock=_env("PIKAQIU_MOCK", default=False, cast=bool),
     )
 
 
 def _parse_difficulty_params(raw: dict) -> dict[str, DifficultyParams]:
     """Parse difficulty_params section from config.yml."""
     result: dict[str, DifficultyParams] = {}
+    if not isinstance(raw, dict):
+        return result
     for diff_name, vals in raw.items():
         if isinstance(vals, dict):
             result[diff_name.lower()] = DifficultyParams(
@@ -364,18 +392,7 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
     with open(yml_path, "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f) or {}
 
-    # Parse model pool
-    model_pool: list[ModelPoolEntry] = []
-    for entry in cfg.get("model_pool", []):
-        model_pool.append(ModelPoolEntry(
-            id=entry.get("id", f"model-{len(model_pool)}"),
-            base_url=entry.get("base_url", DEFAULT_LLM_BASE_URL),
-            api_key=entry.get("api_key", ""),
-            model=entry.get("model", DEFAULT_LLM_MODEL),
-            thinking=entry.get("thinking", False),
-            priority=entry.get("priority", len(model_pool) + 1),
-            max_concurrent=entry.get("max_concurrent", 3),
-        ))
+    model_pool = _parse_model_pool(cfg.get("model_pool", []))
 
     # Primary model = first in pool (highest priority) or env fallback.
     # Environment values intentionally override config.yml so secrets can stay in .env.
@@ -384,10 +401,10 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
     key_default = primary.api_key if primary else DEFAULT_LLM_API_KEY
     model_default = primary.model if primary else DEFAULT_LLM_MODEL
     thinking_default = primary.thinking if primary else False
-    llm_base_url = _env_str("PIKAQIU_LLM_BASE_URL", default=base_default)
-    llm_api_key = _env_str("PIKAQIU_LLM_API_KEY", default=key_default)
-    llm_model = _env_str("PIKAQIU_LLM_MODEL", default=model_default)
-    llm_thinking = _env_bool("PIKAQIU_LLM_THINKING", default=thinking_default)
+    llm_base_url = _env("PIKAQIU_LLM_BASE_URL", default=base_default)
+    llm_api_key = _env("PIKAQIU_LLM_API_KEY", default=key_default)
+    llm_model = _env("PIKAQIU_LLM_MODEL", default=model_default)
+    llm_thinking = _env("PIKAQIU_LLM_THINKING", default=thinking_default, cast=bool)
     if primary:
         primary.base_url = llm_base_url
         primary.api_key = llm_api_key
@@ -395,13 +412,11 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
         primary.thinking = llm_thinking
 
     # Advisor
-    adv = cfg.get("advisor", {})
-    # Agent defaults
-    ag = cfg.get("agent_defaults", {})
-    # Sandbox
-    sb = cfg.get("sandbox", {})
-    # Web
-    web = cfg.get("web", {})
+    adv = _cfg_section(cfg, "advisor")
+    ag = _cfg_section(cfg, "agent_defaults")
+    sb = _cfg_section(cfg, "sandbox")
+    web = _cfg_section(cfg, "web")
+    compression = _cfg_section(cfg, "compression")
 
     # Multi-sandbox pool: prefer "containers" list, fallback to single "container"
     _sb_containers_raw = sb.get("containers", [])
@@ -422,10 +437,10 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
         llm_thinking=llm_thinking,
         llm_timeout_sec=ag.get("llm_timeout_sec", 240),
         llm_max_retries=ag.get("llm_max_retries", 10),
-        compression_base_url=cfg.get("compression", {}).get("base_url", ""),
-        compression_api_key=cfg.get("compression", {}).get("api_key", ""),
-        compression_model=cfg.get("compression", {}).get("model", ""),
-        compression_timeout_sec=cfg.get("compression", {}).get("timeout_sec", 60),
+        compression_base_url=compression.get("base_url", ""),
+        compression_api_key=compression.get("api_key", ""),
+        compression_model=compression.get("model", ""),
+        compression_timeout_sec=compression.get("timeout_sec", 60),
         advisor_base_url=adv.get("base_url", ""),
         advisor_api_key=adv.get("api_key", ""),
         advisor_model=adv.get("model", ""),

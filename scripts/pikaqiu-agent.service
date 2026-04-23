@@ -6,7 +6,7 @@ Wants=docker.service
 [Service]
 Type=simple
 User=root
-# Update these paths to match your installation
+# 安装路径可由 install-service.sh 动态覆写
 WorkingDirectory=/opt/pikaqiu-agent
 ExecStart=/opt/pikaqiu-agent/venv/bin/python -m pikaqiu_agent
 ExecStop=/bin/kill -SIGTERM $MAINPID
@@ -17,6 +17,7 @@ StartLimitIntervalSec=60
 
 # 环境
 Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/opt/pikaqiu-agent/.env
 
 # 日志
 StandardOutput=journal

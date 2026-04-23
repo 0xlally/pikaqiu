@@ -4,9 +4,20 @@ $containerName = "pikaqiu-sandbox-1"
 $imageName = "pikaqiu-kali-sandbox:latest"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 
-# Check if container exists
-$existing = docker ps -a --filter "name=^/$containerName$" --format "{{.Names}}"
-if ($existing -eq $containerName) {
+function Get-ContainerName([string]$Name) {
+  docker ps -a --filter "name=^/$Name$" --format "{{.Names}}"
+}
+
+function Ensure-Image([string]$Name) {
+  docker image inspect $Name *> $null
+  if ($LASTEXITCODE -eq 0) {
+    return
+  }
+  Write-Host "Building Kali sandbox image..."
+  docker build -f Dockerfile.sandbox -t $Name .
+}
+
+if ((Get-ContainerName $containerName) -eq $containerName) {
   docker start $containerName *> $null
   docker ps --filter "name=^/$containerName$" --format "sandbox ready: {{.Names}} {{.Status}}"
   exit 0
@@ -14,11 +25,7 @@ if ($existing -eq $containerName) {
 
 Push-Location $repoRoot
 try {
-  docker image inspect $imageName *> $null
-  if ($LASTEXITCODE -ne 0) {
-    Write-Host "Building Kali sandbox image..."
-    docker build -f Dockerfile.sandbox -t $imageName .
-  }
+  Ensure-Image $imageName
 
   Write-Host "Starting Kali sandbox container..."
   docker compose up -d sandbox-1

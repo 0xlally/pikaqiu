@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import zipfile
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
 from pikaqiu_agent.storage import MissionStore
+
+logger = logging.getLogger(__name__)
 
 
 # Domain classification keywords (used to auto-tag knowledge docs)
@@ -81,8 +83,8 @@ class KnowledgeIndexer:
             count = self.store.replace_cve_index(entries)
             self.store.set_meta("cve_index_signature", sig)
             self.store.set_meta("cve_index_count", str(count))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to refresh cve index %s: %s", self.cve_index_path, exc)
 
     def read_doc_content(self, source: str, path: str, fallback: str = "") -> str:
         """Read a knowledge document by source and path."""
@@ -105,56 +107,60 @@ class KnowledgeIndexer:
         """Iterate over all knowledge documents from zips and directories."""
         seen_hashes: set[str] = set()
 
-        # Read .md files from subdirectories
-        for item in sorted(self.kb_root.iterdir()):
-            if item.is_dir():
-                for md_file in sorted(item.rglob("*.md")):
-                    body = self._read_text(md_file)
-                    if not body:
-                        continue
-                    digest = hashlib.sha1(
-                        f"{md_file.name}\n{body}".encode("utf-8", "ignore")
-                    ).hexdigest()
-                    if digest in seen_hashes:
-                        continue
-                    seen_hashes.add(digest)
-                    rel_path = md_file.relative_to(self.kb_root).as_posix()
-                    domains = self._domains_from_path(rel_path, item.name)
-                    for domain in domains:
-                        yield {
-                            "source": item.name,
-                            "domain": domain,
-                            "title": md_file.stem.replace("-", " ").title(),
-                            "path": rel_path,
-                            "body": self._compact_body(body),
-                        }
+        def emit(
+            *,
+            source: str,
+            source_name: str,
+            raw_path: str,
+            display_path: str,
+            title: str,
+            dedupe_name: str,
+            body: str,
+        ) -> Iterable[dict[str, str]]:
+            if not body:
+                return
+            digest = hashlib.sha1(f"{dedupe_name}\n{body}".encode("utf-8", "ignore")).hexdigest()
+            if digest in seen_hashes:
+                return
+            seen_hashes.add(digest)
+            compact_body = re.sub(r"\n{4,}", "\n\n\n", re.sub(r"\r\n?", "\n", body)).strip()[:24000]
+            for domain in self._domains_from_path(raw_path, source_name):
+                yield {
+                    "source": source,
+                    "domain": domain,
+                    "title": title,
+                    "path": display_path,
+                    "body": compact_body,
+                }
 
-        # Read from zip files
+        for source_dir in sorted(item for item in self.kb_root.iterdir() if item.is_dir()):
+            for md_file in sorted(source_dir.rglob("*.md")):
+                rel_path = md_file.relative_to(self.kb_root).as_posix()
+                yield from emit(
+                    source=source_dir.name,
+                    source_name=source_dir.name,
+                    raw_path=rel_path,
+                    display_path=rel_path,
+                    title=md_file.stem.replace("-", " ").title(),
+                    dedupe_name=md_file.name,
+                    body=self._read_text(md_file),
+                )
+
         for zip_path in sorted(self.kb_root.glob("*.zip")):
             with zipfile.ZipFile(zip_path) as zf:
                 for info in zf.infolist():
-                    if info.is_dir() or not info.filename.lower().endswith((".md", ".rst")):
+                    lowered = info.filename.lower()
+                    if info.is_dir() or not lowered.endswith((".md", ".rst")) or "/banners/" in lowered:
                         continue
-                    if "/banners/" in info.filename.lower():
-                        continue
-                    body = self._decode_zip_entry(zf.read(info))
-                    if not body:
-                        continue
-                    digest = hashlib.sha1(
-                        f"{Path(info.filename).name}\n{body}".encode("utf-8", "ignore")
-                    ).hexdigest()
-                    if digest in seen_hashes:
-                        continue
-                    seen_hashes.add(digest)
-                    domains = self._domains_from_path(info.filename, zip_path.stem)
-                    for domain in domains:
-                        yield {
-                            "source": zip_path.name,
-                            "domain": domain,
-                            "title": Path(info.filename).name,
-                            "path": f"{zip_path.name}:{info.filename}",
-                            "body": self._compact_body(body),
-                        }
+                    yield from emit(
+                        source=zip_path.name,
+                        source_name=zip_path.stem,
+                        raw_path=info.filename,
+                        display_path=f"{zip_path.name}:{info.filename}",
+                        title=Path(info.filename).name,
+                        dedupe_name=Path(info.filename).name,
+                        body=self._decode_zip_entry(zf.read(info)),
+                    )
 
     def _build_signature(self) -> str:
         """Build a hash signature of all knowledge sources for cache invalidation."""
@@ -164,9 +170,13 @@ class KnowledgeIndexer:
                 stat = item.stat()
                 parts.append(f"{item.name}:{stat.st_mtime_ns}:{stat.st_size}")
             elif item.is_dir():
-                mtimes = [str(p.stat().st_mtime_ns) for p in item.rglob("*.md")]
-                payload = "|".join(sorted(mtimes)).encode("utf-8")
-                parts.append(f"{item.name}:{hashlib.sha1(payload).hexdigest()}")
+                markers = []
+                for file_path in sorted(item.rglob("*.md")):
+                    stat = file_path.stat()
+                    rel = file_path.relative_to(item).as_posix()
+                    markers.append(f"{rel}:{stat.st_mtime_ns}:{stat.st_size}")
+                digest = hashlib.sha1("|".join(markers).encode("utf-8")).hexdigest()
+                parts.append(f"{item.name}:{digest}")
         return hashlib.sha1("||".join(parts).encode("utf-8")).hexdigest()
 
     def _read_text(self, path: Path) -> str:
@@ -190,10 +200,11 @@ class KnowledgeIndexer:
     def _domains_from_path(self, raw_path: str, source_name: str) -> list[str]:
         """Classify a document into domains based on path keywords."""
         lowered = raw_path.lower().replace("\\", "/")
-        domains: list[str] = []
-        for domain, keywords in DOMAIN_KEYWORDS.items():
-            if any(keyword in lowered for keyword in keywords):
-                domains.append(domain)
+        domains = [
+            domain
+            for domain, keywords in DOMAIN_KEYWORDS.items()
+            if any(keyword in lowered for keyword in keywords)
+        ]
         if not domains:
             # Default domain based on source name
             source_lower = source_name.lower()
@@ -204,8 +215,3 @@ class KnowledgeIndexer:
             else:
                 domains.append("ctf_web")
         return domains
-
-    def _compact_body(self, body: str) -> str:
-        body = re.sub(r"\r\n?", "\n", body)
-        body = re.sub(r"\n{4,}", "\n\n\n", body)
-        return body.strip()[:24000]

@@ -118,7 +118,6 @@
               <input type="checkbox" data-cfg="command_repair" />
             </label>
           </div>
-           </div>
         </section>
 
         <div class="settings-footer">
@@ -145,12 +144,20 @@
     </main>
 
     <script>
+      const configInputs = () => Array.from(document.querySelectorAll("[data-cfg]"));
+
       async function fetchJson(url, options = {}) {
         const response = await fetch(url, {
           headers: { "Content-Type": "application/json" },
           ...options,
         });
-        const data = await response.json();
+        const raw = await response.text();
+        let data = {};
+        try {
+          data = raw ? JSON.parse(raw) : {};
+        } catch {
+          data = {};
+        }
         if (!response.ok) throw new Error(data.error || "HTTP " + response.status);
         return data;
       }
@@ -166,7 +173,7 @@
         try {
           const data = await fetchJson("/api/config");
           const cfg = data.config || {};
-          document.querySelectorAll("[data-cfg]").forEach((el) => {
+          configInputs().forEach((el) => {
             const key = el.dataset.cfg;
             if (!(key in cfg)) return;
             if (el.type === "checkbox") el.checked = !!cfg[key];
@@ -183,7 +190,7 @@
 
       async function saveConfig() {
         const payload = {};
-        document.querySelectorAll("[data-cfg]").forEach((el) => {
+        configInputs().forEach((el) => {
           const key = el.dataset.cfg;
           if (el.type === "checkbox") payload[key] = el.checked;
           else if (el.type === "number") payload[key] = Number(el.value);
@@ -194,8 +201,12 @@
             method: "POST",
             body: JSON.stringify(payload),
           });
-          if (data.errors && data.errors.length) {
-            showStatus("部分字段有误: " + data.errors.join("; "), true);
+          const errors = data.errors && typeof data.errors === "object"
+            ? Object.entries(data.errors)
+            : [];
+          if (errors.length) {
+            const message = errors.map(([key, value]) => `${key}: ${value}`).join("; ");
+            showStatus("部分字段有误: " + message, true);
           } else {
             showStatus("✅ 设置已保存", false);
           }
@@ -204,26 +215,36 @@
         }
       }
 
-      async function deleteAllData() {
-        if (!confirm("⚠️ 确定要删除全部数据吗？\n\n此操作将停止所有运行中的任务，\n删除所有任务记录、日志和记忆。\n\n此操作不可撤销！")) return;
+      function showResetResult(message, tone) {
         const resultEl = document.getElementById("reset-result");
         resultEl.style.display = "block";
-        resultEl.style.background = "var(--amber-soft)";
-        resultEl.style.color = "var(--amber)";
-        resultEl.textContent = "⏳ 正在清除数据...";
-        try {
-          const data = await fetchJson("/api/missions", { method: "DELETE" });
+        if (tone === "pending") {
+          resultEl.style.background = "var(--amber-soft)";
+          resultEl.style.color = "var(--amber)";
+        } else if (tone === "ok") {
           resultEl.style.background = "var(--green-soft)";
           resultEl.style.color = "var(--green)";
-          resultEl.textContent = "✅ 数据已清除: 删除 " + (data.deleted ?? 0) + " 个任务";
-          showStatus("✅ 操作完成", false);
-        } catch (err) {
+        } else {
           resultEl.style.background = "var(--red-soft)";
           resultEl.style.color = "var(--red)";
-          resultEl.textContent = "❌ 操作失败: " + err.message;
+        }
+        resultEl.textContent = message;
+      }
+
+      async function deleteAllData() {
+        if (!window.confirm("⚠️ 确定要删除全部数据吗？\n\n此操作将停止所有运行中的任务，\n删除所有任务记录、日志和记忆。\n\n此操作不可撤销！")) return;
+        showResetResult("⏳ 正在清除数据...", "pending");
+        try {
+          const data = await fetchJson("/api/missions", { method: "DELETE" });
+          showResetResult("✅ 数据已清除: 删除 " + (data.deleted ?? 0) + " 个任务", "ok");
+          showStatus("✅ 操作完成", false);
+        } catch (err) {
+          showResetResult("❌ 操作失败: " + err.message, "err");
           showStatus("操作失败: " + err.message, true);
         }
-        setTimeout(() => { resultEl.style.display = "none"; }, 8000);
+        setTimeout(() => {
+          document.getElementById("reset-result").style.display = "none";
+        }, 8000);
       }
 
       loadConfig();

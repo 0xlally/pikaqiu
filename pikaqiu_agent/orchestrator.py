@@ -396,6 +396,83 @@ class OrchestratorManager:
                 self._threads.pop(mission_id, None)
             self._mission_meta.pop(mission_id, None)
 
+    def _check_mission_timeout(
+        self,
+        *,
+        mission_id: str,
+        round_no: int,
+        mission_start_time: float,
+        mission_timeout_sec: int,
+    ) -> bool:
+        if mission_timeout_sec <= 0:
+            return False
+
+        mission_elapsed = time.monotonic() - mission_start_time
+        if mission_elapsed <= mission_timeout_sec:
+            return False
+
+        self.store.add_event(
+            mission_id=mission_id,
+            round_no=round_no,
+            event_type="warning",
+            title="Mission 总超时",
+            content=f"任务已运行 {int(mission_elapsed)}s（上限 {mission_timeout_sec}s），强制结束",
+        )
+        logger.warning(
+            "[orchestrator] mission %s total timeout after %ds (limit %ds)",
+            mission_id[:8],
+            int(mission_elapsed),
+            mission_timeout_sec,
+        )
+        self.store.update_mission_status(mission_id, "timeout")
+        return True
+
+    @staticmethod
+    def _build_round_user_message(round_no: int, stall_rounds: int, target: str) -> str:
+        if stall_rounds >= 2:
+            return (
+                f"[连续 {stall_rounds} 轮无新发现]\n"
+                "请**重新评估攻击方向**，选择一个全新的思路。\n"
+                "如果不确定该尝试什么，调用 ask_adviser 获取建议。"
+            )
+        if round_no == 1:
+            return f"开始第 {round_no} 轮渗透。目标: {target}。"
+        return f"第 {round_no} 轮开始，上一轮记忆已压缩注入系统提示，继续利用。"
+
+    def _record_command_event(
+        self,
+        *,
+        mission_id: str,
+        round_no: int,
+        tool_name: str,
+        display_cmd: str,
+        truncated_result: str,
+        result_str: str,
+        running_event_id: int | None,
+    ) -> None:
+        content = f"{display_cmd}\n\n---OUTPUT---\n{truncated_result}"
+        exit_code = 0 if "[EXIT_CODE: 0]" in result_str else -1
+        if running_event_id:
+            self.store.finalize_event(
+                running_event_id,
+                event_type="command",
+                title=f"[{tool_name}]",
+                content=content,
+                command=str(display_cmd)[:1000],
+                exit_code=exit_code,
+            )
+            return
+
+        self.store.add_event(
+            mission_id=mission_id,
+            round_no=round_no,
+            event_type="command",
+            title=f"[{tool_name}]",
+            content=content,
+            command=str(display_cmd)[:1000],
+            exit_code=exit_code,
+        )
+
     def _run_mission_tool_use(
         self,
         mission_id: str,
@@ -451,21 +528,13 @@ class OrchestratorManager:
                 self.store.update_mission_status(mission_id, "stopped")
                 return
 
-            # Mission-level total timeout check
-            if mission_timeout_sec > 0:
-                mission_elapsed = time.monotonic() - mission_start_time
-                if mission_elapsed > mission_timeout_sec:
-                    self.store.add_event(
-                        mission_id=mission_id,
-                        round_no=round_no,
-                        event_type="warning",
-                        title="Mission 总超时",
-                        content=f"任务已运行 {int(mission_elapsed)}s（上限 {mission_timeout_sec}s），强制结束",
-                    )
-                    logger.warning("[orchestrator] mission %s total timeout after %ds (limit %ds)",
-                                   mission_id[:8], int(mission_elapsed), mission_timeout_sec)
-                    self.store.update_mission_status(mission_id, "timeout")
-                    return
+            if self._check_mission_timeout(
+                mission_id=mission_id,
+                round_no=round_no,
+                mission_start_time=mission_start_time,
+                mission_timeout_sec=mission_timeout_sec,
+            ):
+                return
 
             mission = self.store.get_mission(mission_id) or mission
             memory = self.store.get_memory(mission_id)
@@ -586,15 +655,7 @@ class OrchestratorManager:
                     except Exception as clean_err:
                         logger.warning("[orchestrator] memory cleaning failed: %s", clean_err)
 
-                user_msg = (
-                    f"[连续 {_stall_rounds} 轮无新发现]\n"
-                    "请**重新评估攻击方向**，选择一个全新的思路。\n"
-                    "如果不确定该尝试什么，调用 ask_adviser 获取建议。"
-                )
-            elif round_no == 1:
-                user_msg = f"开始第 {round_no} 轮渗透。目标: {mission['target']}。"
-            else:
-                user_msg = f"第 {round_no} 轮开始，上一轮记忆已压缩注入系统提示，继续利用。"
+            user_msg = self._build_round_user_message(round_no, _stall_rounds, mission["target"])
 
             # Define messages first so tools can capture it by reference
             # messages[0] = SystemMessage (STABLE, never changes within mission → cache-friendly)
@@ -755,26 +816,15 @@ class OrchestratorManager:
 
                     result_str = str(tool_result)
                     truncated_result = _truncate_middle(result_str, stdout_limit)
-                    # Finalize the running event → replace with completed event
-                    if running_event_id:
-                        self.store.finalize_event(
-                            running_event_id,
-                            event_type="command",
-                            title=f"[{tool_name}]",
-                            content=f"{display_cmd}\n\n---OUTPUT---\n{truncated_result}",
-                            command=str(display_cmd)[:1000],
-                            exit_code=0 if "[EXIT_CODE: 0]" in result_str else -1,
-                        )
-                    else:
-                        self.store.add_event(
-                            mission_id=mission_id,
-                            round_no=round_no,
-                            event_type="command",
-                            title=f"[{tool_name}]",
-                            content=f"{display_cmd}\n\n---OUTPUT---\n{truncated_result}",
-                            command=str(display_cmd)[:1000],
-                            exit_code=0 if "[EXIT_CODE: 0]" in result_str else -1,
-                        )
+                    self._record_command_event(
+                        mission_id=mission_id,
+                        round_no=round_no,
+                        tool_name=tool_name,
+                        display_cmd=str(display_cmd),
+                        truncated_result=truncated_result,
+                        result_str=result_str,
+                        running_event_id=running_event_id,
+                    )
 
                     messages.append(ToolMessage(content=truncated_result, tool_call_id=tool_id))
 

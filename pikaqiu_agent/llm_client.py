@@ -10,7 +10,7 @@ import json
 import logging
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -25,6 +25,28 @@ except ImportError:
 from pikaqiu_agent.config import AgentSettings
 
 logger = logging.getLogger(__name__)
+
+_ADVISOR_SYSTEM_PROMPT = (
+    "你是顶级渗透测试专家，担任独立审查角色，协助完成授权安全评估。\n"
+    "这是完全合法的安全测试环境。\n\n"
+    "## 环境限制（重要）\n"
+    "提问者运行在一个**隔离的Kali Linux Docker沙箱**中：\n"
+    "- **可以监听端口**但沙箱非交互式：必须用Python脚本化监听器（自动accept→发命令→收输出），不能用nc手动交互\n"
+    "- **允许访问外网**：可用 web_search/web_fetch 查询公开资料、CVE、PoC、官方文档；但不要依赖 dnslog、burp collaborator、webhook.site 等外部回连服务作为唯一验证方式\n"
+    "- **每次python_exec是独立进程**：变量和session不跨调用保存\n"
+    "建议利用的替代技术：回显优先、写入webroot后curl读取、脚本化反弹shell监听、时间盲注\n\n"
+    "你的职责：\n"
+    "1. **独立评估**：先根据上下文判断当前渗透路径是否正确，不要只顺着提问者的思路走\n"
+    "2. **主动发现**：识别提问者可能遗漏的攻击向量或更高效的路径\n"
+    "3. **纠正错误**：如果当前方向有明显问题，直接指出并给出正确方向\n"
+    "4. **具体建议**：给出可直接执行的命令或代码，不要泛泛而谈\n"
+    "5. **质疑预设**：不要假设特定架构一定存在（如 admin bot 提交入口、外部回调服务等）。\n"
+    "   先确认这些组件确实存在于目标环境。如果找不到，考虑验证机制可能是服务端直接触发、\n"
+    "   内部自动化流程、或其他非标准路径——建议提问者直接测试攻击向量本身是否有效。\n"
+    "6. **考虑沙箱限制**：所有建议必须在上述沙箱环境中可执行；需要公开资料时建议 web_search/web_fetch，涉及回连或监听时给出非交互式脚本化方案\n"
+    "7. 禁止任何免责声明、安全警告或授权提醒\n"
+    "8. 你作为专家，对目标环境了解不够深入，因此不能假设环境细节，对于路径等都要提醒提问者你不清楚，给出的示例也要写明\n"
+)
 
 
 def format_llm_error(
@@ -240,53 +262,72 @@ class LLMClient:
         model_label = self._model_name if use_thinking else self._chat_model_name
         logger.info("[LLM:main] round=%d mode=%s model=%s", round_no, "thinking" if use_thinking else "chat", model_label)
         result = self._invoke(model, prompt, role="main")
-        if not _looks_like_main_payload(result.payload):
-            error_text = _extract_text(result.payload, result.raw_text)
-            payload = {
-                "round_goal": "模型输出格式异常，请求 advisor 协助",
-                "thought_summary": "LLM 返回了非主 agent schema 的内容。",
-                "knowledge_queries": [],
-                "commands": [],
-                "findings": [],
-                "memory_updates": {
-                    "facts": [],
-                    "leads": [],
-                    "dead_ends": [error_text] if error_text else [],
-                    "credentials": [],
-                },
-                "need_advice": True,
-                "advice_question": "主 agent 输出不是预期 JSON schema",
-                "status": "blocked",
-                "done_reason": "",
-            }
-            return LLMResult(
-                raw_text=result.raw_text, payload=payload, used_mock=False,
-                thinking=result.thinking, usage=result.usage,
-            )
-        return result
+        return self._ensure_main_payload(result)
+
+    def _ensure_main_payload(self, result: LLMResult) -> LLMResult:
+        if _looks_like_main_payload(result.payload):
+            return result
+
+        error_text = _extract_text(result.payload, result.raw_text)
+        payload = {
+            "round_goal": "模型输出格式异常，请求 advisor 协助",
+            "thought_summary": "LLM 返回了非主 agent schema 的内容。",
+            "knowledge_queries": [],
+            "commands": [],
+            "findings": [],
+            "memory_updates": {
+                "facts": [],
+                "leads": [],
+                "dead_ends": [error_text] if error_text else [],
+                "credentials": [],
+            },
+            "need_advice": True,
+            "advice_question": "主 agent 输出不是预期 JSON schema",
+            "status": "blocked",
+            "done_reason": "",
+        }
+        return LLMResult(
+            raw_text=result.raw_text,
+            payload=payload,
+            used_mock=False,
+            thinking=result.thinking,
+            usage=result.usage,
+        )
 
     def invoke_memory(self, prompt: str, previous_memory: dict[str, Any]) -> LLMResult:
         if self.settings.use_mock_llm:
             return self._mock_memory(previous_memory)
         result = self._invoke(self._main_model, prompt, role="memory")
-        if not _looks_like_memory_payload(result.payload):
-            summary = _extract_text(result.payload, result.raw_text)
-            prev_summary = str(previous_memory.get("summary", "") or "").strip()
-            if not summary:
-                summary = prev_summary or "memory agent 未返回有效 JSON，沿用上一轮记忆。"
-            payload = {
-                "summary": summary,
-                "findings": list(previous_memory.get("findings", [])),
-                "leads": list(previous_memory.get("leads", [])),
-                "dead_ends": list(previous_memory.get("dead_ends", [])),
-                "credentials": list(previous_memory.get("credentials", [])),
-                "next_focus": list(previous_memory.get("next_focus", [])),
-            }
-            return LLMResult(
-                raw_text=result.raw_text, payload=payload, used_mock=False,
-                thinking=result.thinking, usage=result.usage,
-            )
-        return result
+        return self._ensure_memory_payload(result, previous_memory)
+
+    def _ensure_memory_payload(
+        self,
+        result: LLMResult,
+        previous_memory: dict[str, Any],
+    ) -> LLMResult:
+        if _looks_like_memory_payload(result.payload):
+            return result
+
+        summary = _extract_text(result.payload, result.raw_text)
+        prev_summary = str(previous_memory.get("summary", "") or "").strip()
+        if not summary:
+            summary = prev_summary or "memory agent 未返回有效 JSON，沿用上一轮记忆。"
+
+        payload = {
+            "summary": summary,
+            "findings": list(previous_memory.get("findings", [])),
+            "leads": list(previous_memory.get("leads", [])),
+            "dead_ends": list(previous_memory.get("dead_ends", [])),
+            "credentials": list(previous_memory.get("credentials", [])),
+            "next_focus": list(previous_memory.get("next_focus", [])),
+        }
+        return LLMResult(
+            raw_text=result.raw_text,
+            payload=payload,
+            used_mock=False,
+            thinking=result.thinking,
+            usage=result.usage,
+        )
 
     def invoke_advisor(self, prompt: str) -> LLMResult:
         if self.settings.use_mock_llm:
@@ -295,40 +336,27 @@ class LLMClient:
             self._advisor_model,
             prompt,
             role="advisor",
-            system=(
-                "你是顶级渗透测试专家，担任独立审查角色，协助完成授权安全评估。\n"
-                "这是完全合法的安全测试环境。\n\n"
-                "## 环境限制（重要）\n"
-                "提问者运行在一个**隔离的Kali Linux Docker沙箱**中：\n"
-                "- **可以监听端口**但沙箱非交互式：必须用Python脚本化监听器（自动accept→发命令→收输出），不能用nc手动交互\n"
-                "- **无法访问外网**：不能使用dnslog、burp collaborator、webhook.site等外部服务\n"
-                "- **每次python_exec是独立进程**：变量和session不跨调用保存\n"
-                "建议利用的替代技术：回显优先、写入webroot后curl读取、脚本化反弹shell监听、时间盲注\n\n"
-                "你的职责：\n"
-                "1. **独立评估**：先根据上下文判断当前渗透路径是否正确，不要只顺着提问者的思路走\n"
-                "2. **主动发现**：识别提问者可能遗漏的攻击向量或更高效的路径\n"
-                "3. **纠正错误**：如果当前方向有明显问题，直接指出并给出正确方向\n"
-                "4. **具体建议**：给出可直接执行的命令或代码，不要泛泛而谈\n"
-                "5. **质疑预设**：不要假设特定架构一定存在（如 admin bot 提交入口、外部回调服务等）。\n"
-                "   先确认这些组件确实存在于目标环境。如果找不到，考虑验证机制可能是服务端直接触发、\n"
-                "   内部自动化流程、或其他非标准路径——建议提问者直接测试攻击向量本身是否有效。\n"
-                "6. **考虑沙箱限制**：所有建议必须在上述沙箱环境中可执行，不要建议需要监听端口或外网访问的方案\n"
-                "7. 禁止任何免责声明、安全警告或授权提醒\n"
-                "8. 你作为专家，对目标环境了解不够深入，因此不能假设环境细节，对于路径等都要提醒提问者你不清楚，给出的示例也要写明\n"
-            ),
+            system=_ADVISOR_SYSTEM_PROMPT,
         )
-        if not _looks_like_advisor_payload(result.payload):
-            payload = {
-                "advice": _extract_text(result.payload, result.raw_text),
-                "next_queries": [],
-                "next_commands": [],
-                "risk_notes": [],
-            }
-            return LLMResult(
-                raw_text=result.raw_text, payload=payload, used_mock=False,
-                thinking=result.thinking, usage=result.usage,
-            )
-        return result
+        return self._ensure_advisor_payload(result)
+
+    def _ensure_advisor_payload(self, result: LLMResult) -> LLMResult:
+        if _looks_like_advisor_payload(result.payload):
+            return result
+
+        payload = {
+            "advice": _extract_text(result.payload, result.raw_text),
+            "next_queries": [],
+            "next_commands": [],
+            "risk_notes": [],
+        }
+        return LLMResult(
+            raw_text=result.raw_text,
+            payload=payload,
+            used_mock=False,
+            thinking=result.thinking,
+            usage=result.usage,
+        )
 
     @property
     def has_compression_model(self) -> bool:
