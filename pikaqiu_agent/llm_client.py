@@ -265,7 +265,7 @@ class LLMClient:
         return self._ensure_main_payload(result)
 
     def _ensure_main_payload(self, result: LLMResult) -> LLMResult:
-        if _looks_like_main_payload(result.payload):
+        if any(key in result.payload for key in ("round_goal", "commands", "findings", "status", "memory_updates")):
             return result
 
         error_text = _extract_text(result.payload, result.raw_text)
@@ -305,7 +305,7 @@ class LLMClient:
         result: LLMResult,
         previous_memory: dict[str, Any],
     ) -> LLMResult:
-        if _looks_like_memory_payload(result.payload):
+        if any(key in result.payload for key in ("summary", "findings", "leads", "dead_ends", "next_focus")):
             return result
 
         summary = _extract_text(result.payload, result.raw_text)
@@ -341,7 +341,7 @@ class LLMClient:
         return self._ensure_advisor_payload(result)
 
     def _ensure_advisor_payload(self, result: LLMResult) -> LLMResult:
-        if _looks_like_advisor_payload(result.payload):
+        if any(key in result.payload for key in ("advice", "next_queries", "next_commands", "risk_notes")):
             return result
 
         payload = {
@@ -605,27 +605,6 @@ def _fix_double_braces(text: str) -> str:
     if s.endswith("}}") and not s.endswith("}}}"):
         s = s[:-1]  # strip one trailing brace
     return s
-
-
-def _looks_like_main_payload(payload: dict[str, Any]) -> bool:
-    return any(
-        key in payload
-        for key in ("round_goal", "commands", "findings", "status", "memory_updates")
-    )
-
-
-def _looks_like_memory_payload(payload: dict[str, Any]) -> bool:
-    return any(
-        key in payload
-        for key in ("summary", "findings", "leads", "dead_ends", "next_focus")
-    )
-
-
-def _looks_like_advisor_payload(payload: dict[str, Any]) -> bool:
-    return any(
-        key in payload
-        for key in ("advice", "next_queries", "next_commands", "risk_notes")
-    )
 
 
 def _extract_text(payload: dict[str, Any], raw_text: str) -> str:

@@ -49,16 +49,6 @@ class SandboxExecutor:
             timeout_sec=20,
         )
 
-    def _docker_exec_cmd(self, shell_script: str) -> list[str]:
-        return [
-            "docker",
-            "exec",
-            self._container,
-            "bash",
-            "-lc",
-            shell_script,
-        ]
-
     @staticmethod
     def _script_preamble(workdir: str) -> str:
         return (
@@ -66,16 +56,6 @@ class SandboxExecutor:
             f"mkdir -p {workdir}\n"
             f"cd {workdir}\n"
         )
-
-    def _run_shell_script(
-        self,
-        shell_script: str,
-        timeout_sec: int,
-        stop_fn: Callable[[], bool] | None,
-        on_chunk: Callable[[str], None] | None,
-    ) -> tuple[str, str, int]:
-        cmd = self._docker_exec_cmd(shell_script)
-        return self._run_popen(cmd, timeout_sec, stop_fn, on_chunk=on_chunk)
 
     def _build_result(
         self,
@@ -194,8 +174,8 @@ class SandboxExecutor:
         started_at = datetime.now().astimezone().isoformat(timespec="seconds")
         timeout = timeout_sec or self.settings.command_timeout_sec
         shell_script = self._script_preamble(work) + f"{command}\n"
-        raw_stdout, raw_stderr, exit_code = self._run_shell_script(
-            shell_script,
+        raw_stdout, raw_stderr, exit_code = self._run_popen(
+            ["docker", "exec", self._container, "bash", "-lc", shell_script],
             timeout_sec=timeout,
             stop_fn=stop_fn,
             on_chunk=on_chunk,
@@ -232,8 +212,8 @@ class SandboxExecutor:
             + f"echo '{encoded}' | base64 -d > {script_path}\n"
             + f"python3 {script_path}\n"
         )
-        raw_stdout, raw_stderr, exit_code = self._run_shell_script(
-            shell_script,
+        raw_stdout, raw_stderr, exit_code = self._run_popen(
+            ["docker", "exec", self._container, "bash", "-lc", shell_script],
             timeout_sec=timeout,
             stop_fn=stop_fn,
             on_chunk=on_chunk,

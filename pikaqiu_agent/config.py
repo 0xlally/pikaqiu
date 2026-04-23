@@ -102,42 +102,6 @@ _RUNTIME_MUTABLE_FIELDS = {
 _SENSITIVE_FIELDS = {"llm_api_key", "advisor_api_key"}
 
 
-def _coerce_runtime_value(current: Any, value: Any) -> Any:
-    if isinstance(current, bool):
-        if isinstance(value, bool):
-            return value
-        return str(value).lower() not in {"0", "false", "no", "off", ""}
-    if isinstance(current, int):
-        return int(value)
-    if isinstance(current, str):
-        return str(value)
-    return value
-
-
-def _cfg_section(cfg: dict[str, Any], key: str) -> dict[str, Any]:
-    section = cfg.get(key, {})
-    return section if isinstance(section, dict) else {}
-
-
-def _parse_model_pool(entries: list[dict[str, Any]]) -> list[ModelPoolEntry]:
-    pool: list[ModelPoolEntry] = []
-    for idx, entry in enumerate(entries):
-        if not isinstance(entry, dict):
-            continue
-        pool.append(
-            ModelPoolEntry(
-                id=entry.get("id", f"model-{idx}"),
-                base_url=entry.get("base_url", DEFAULT_LLM_BASE_URL),
-                api_key=entry.get("api_key", ""),
-                model=entry.get("model", DEFAULT_LLM_MODEL),
-                thinking=bool(entry.get("thinking", False)),
-                priority=entry.get("priority", idx + 1),
-                max_concurrent=entry.get("max_concurrent", 3),
-            )
-        )
-    return pool
-
-
 @dataclass
 class AgentSettings:
     workspace_root: Path
@@ -258,8 +222,13 @@ class AgentSettings:
                     continue
                 current = getattr(self, key)
                 try:
-                    coerced = _coerce_runtime_value(current, value)
-                    setattr(self, key, coerced)
+                    if isinstance(current, bool):
+                        value = value if isinstance(value, bool) else str(value).lower() not in {"0", "false", "no", "off", ""}
+                    elif isinstance(current, int):
+                        value = int(value)
+                    elif isinstance(current, str):
+                        value = str(value)
+                    setattr(self, key, value)
                 except (ValueError, TypeError) as e:
                     errors[key] = f"invalid value for '{key}': {e}"
         if changes and not errors:
@@ -365,22 +334,6 @@ def _load_from_env(root: Path) -> AgentSettings:
     )
 
 
-def _parse_difficulty_params(raw: dict) -> dict[str, DifficultyParams]:
-    """Parse difficulty_params section from config.yml."""
-    result: dict[str, DifficultyParams] = {}
-    if not isinstance(raw, dict):
-        return result
-    for diff_name, vals in raw.items():
-        if isinstance(vals, dict):
-            result[diff_name.lower()] = DifficultyParams(
-                initial_rounds=vals.get("initial_rounds", 4),
-                initial_commands=vals.get("initial_commands", 64),
-                max_rounds=vals.get("max_rounds", 16),
-                max_commands=vals.get("max_commands", 400),
-            )
-    return result
-
-
 def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
     """Load settings from config.yml (preferred)."""
     try:
@@ -392,7 +345,19 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
     with open(yml_path, "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f) or {}
 
-    model_pool = _parse_model_pool(cfg.get("model_pool", []))
+    model_pool: list[ModelPoolEntry] = []
+    for idx, entry in enumerate(cfg.get("model_pool", [])):
+        if not isinstance(entry, dict):
+            continue
+        model_pool.append(ModelPoolEntry(
+            id=entry.get("id", f"model-{idx}"),
+            base_url=entry.get("base_url", DEFAULT_LLM_BASE_URL),
+            api_key=entry.get("api_key", ""),
+            model=entry.get("model", DEFAULT_LLM_MODEL),
+            thinking=bool(entry.get("thinking", False)),
+            priority=entry.get("priority", idx + 1),
+            max_concurrent=entry.get("max_concurrent", 3),
+        ))
 
     # Primary model = first in pool (highest priority) or env fallback.
     # Environment values intentionally override config.yml so secrets can stay in .env.
@@ -411,17 +376,34 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
         primary.model = llm_model
         primary.thinking = llm_thinking
 
-    # Advisor
-    adv = _cfg_section(cfg, "advisor")
-    ag = _cfg_section(cfg, "agent_defaults")
-    sb = _cfg_section(cfg, "sandbox")
-    web = _cfg_section(cfg, "web")
-    compression = _cfg_section(cfg, "compression")
+    sections: dict[str, dict[str, Any]] = {}
+    for key in ("advisor", "agent_defaults", "sandbox", "web", "compression"):
+        section = cfg.get(key, {})
+        sections[key] = section if isinstance(section, dict) else {}
+    adv, ag, sb, web, compression = (
+        sections["advisor"],
+        sections["agent_defaults"],
+        sections["sandbox"],
+        sections["web"],
+        sections["compression"],
+    )
 
     # Multi-sandbox pool: prefer "containers" list, fallback to single "container"
     _sb_containers_raw = sb.get("containers", [])
     _sb_default = sb.get("container", "pikaqiu-sandbox-1")
     _sb_containers = _sb_containers_raw if _sb_containers_raw else None
+
+    raw_difficulty_params = ag.get("difficulty_params", {})
+    difficulty_params: dict[str, DifficultyParams] = {}
+    if isinstance(raw_difficulty_params, dict):
+        for diff_name, vals in raw_difficulty_params.items():
+            if isinstance(vals, dict):
+                difficulty_params[diff_name.lower()] = DifficultyParams(
+                    initial_rounds=vals.get("initial_rounds", 4),
+                    initial_commands=vals.get("initial_commands", 64),
+                    max_rounds=vals.get("max_rounds", 16),
+                    max_commands=vals.get("max_commands", 400),
+                )
 
     settings = AgentSettings(
         workspace_root=root.resolve(),
@@ -457,7 +439,7 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
         max_commands=ag.get("max_commands_ceiling", ag.get("retry_max_commands_per_round", 128)),
         max_retries=ag.get("max_retries", 2),
         mission_timeout_sec=ag.get("mission_timeout_sec", 0),
-        difficulty_params=_parse_difficulty_params(ag.get("difficulty_params", {})),
+        difficulty_params=difficulty_params,
         multi_flag_scaling=MultiFlagScaling(
             extra_rounds_per_flag=ag.get("multi_flag_scaling", {}).get("extra_rounds_per_flag", 3),
             extra_commands_per_flag=ag.get("multi_flag_scaling", {}).get("extra_commands_per_flag", 12),

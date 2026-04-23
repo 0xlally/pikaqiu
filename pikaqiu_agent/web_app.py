@@ -63,12 +63,6 @@ def create_app(runtime: AppRuntime | None = None) -> Flask:
     def rt() -> AppRuntime:
         return app.config["rt"]
 
-    def mission_or_404(mission_id: str):
-        mission = rt().store.get_mission(mission_id)
-        if mission:
-            return mission
-        return None
-
     # ── Static / SPA ──────────────────────────────────────────
 
     @app.route("/")
@@ -149,7 +143,7 @@ def create_app(runtime: AppRuntime | None = None) -> Flask:
 
     @app.route("/api/missions/<mission_id>")
     def api_mission_detail(mission_id: str):
-        mission = mission_or_404(mission_id)
+        mission = rt().store.get_mission(mission_id)
         if not mission:
             return _json_error("mission not found", 404)
         return jsonify({
@@ -167,7 +161,7 @@ def create_app(runtime: AppRuntime | None = None) -> Flask:
 
     @app.route("/api/missions/<mission_id>", methods=["DELETE"])
     def api_mission_delete(mission_id: str):
-        mission = mission_or_404(mission_id)
+        mission = rt().store.get_mission(mission_id)
         if not mission:
             return _json_error("mission not found", 404)
         if mission["status"] in {"queued", "running"} or rt().orchestrator.thread_alive(mission_id):

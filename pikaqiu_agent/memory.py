@@ -15,21 +15,14 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# ── Auto credential extraction ────────────────────────────────────────
-
 _CREDENTIAL_PATTERNS = [
-    # Explicit key=value pairs
     re.compile(r'(?:user(?:name)?|login|account)\s*[:=]\s*["\']?([^\s"\'<>,;]{2,40})["\']?', re.I),
     re.compile(r'(?:pass(?:word)?|passwd|pwd|secret)\s*[:=]\s*["\']?([^\s"\'<>,;]{2,60})["\']?', re.I),
-    # Colon-separated user:pass (e.g., admin:password123)
     re.compile(r'\b([\w.@+-]{2,30})\s*:\s*([\w@$!#%^&*()_+={}\[\]|;:<>,.?/~`-]{3,60})\b'),
-    # Token patterns
     re.compile(r'(?:token|jwt|bearer|api[_-]?key)\s*[:=]\s*["\']?([A-Za-z0-9_\-./+]{16,})["\']?', re.I),
-    # Session cookie values (flask, php)
     re.compile(r'(?:session|PHPSESSID|connect\.sid)\s*[:=]\s*["\']?([A-Za-z0-9_\-./+=]{16,})["\']?', re.I),
 ]
 
-# Patterns that look like credentials but aren't
 _CREDENTIAL_NOISE = re.compile(
     r'^(?:text/|application/|image/|http[s]?://|/[a-z]|\.\.|\d+\.\d+|true|false|null|none|'
     r'Content-|Accept|Host|User-Agent|Server|Date|X-|Cache-|Set-Cookie|Location)',
@@ -38,39 +31,30 @@ _CREDENTIAL_NOISE = re.compile(
 
 
 def extract_credentials(text: str) -> list[str]:
-    """Auto-extract credentials, tokens, and session values from tool output.
-
-    Returns deduplicated list of 'key: value' strings.
-    """
+    """Auto-extract credentials, tokens, and session values from tool output."""
     if not text or len(text) < 10:
         return []
 
     found: list[str] = []
-    # Only scan first 8000 chars to avoid parsing huge outputs
-    text = text[:8000]
-
     for pattern in _CREDENTIAL_PATTERNS:
-        for match in pattern.finditer(text):
+        for match in pattern.finditer(text[:8000]):
             groups = match.groups()
             if len(groups) == 2:
                 user, passwd = groups
-                # Filter noise
-                if _CREDENTIAL_NOISE.match(user) or _CREDENTIAL_NOISE.match(passwd):
-                    continue
-                if user == passwd:
+                if user == passwd or _CREDENTIAL_NOISE.match(user) or _CREDENTIAL_NOISE.match(passwd):
                     continue
                 cred = f"{user}:{passwd}"
             elif len(groups) == 1:
-                val = groups[0]
-                if _CREDENTIAL_NOISE.match(val):
+                cred = groups[0]
+                if _CREDENTIAL_NOISE.match(cred):
                     continue
-                cred = val
             else:
                 continue
             if len(cred) > 3 and cred not in found:
                 found.append(cred)
+    return found[:10]
 
-    return found[:10]  # Cap to avoid flooding
+# ── Auto credential extraction ────────────────────────────────────────
 
 # ── Importance scoring ────────────────────────────────────────────────
 
