@@ -49,6 +49,7 @@ const missionFormEl = document.getElementById("mission-form");
 const formErrorEl = document.getElementById("form-error");
 const missionsListEl = document.getElementById("missions-list");
 const missionDetailEl = document.getElementById("mission-detail");
+const resumeBtnEl = document.getElementById("resume-btn");
 const deleteBtnEl = document.getElementById("delete-btn");
 const stopBtnEl = document.getElementById("stop-btn");
 
@@ -588,6 +589,7 @@ function renderFlowRound(group, index) {
 
 function renderMissionDetail(data) {
   const mission = data.mission;
+  resumeBtnEl.disabled = !mission || ["running", "queued"].includes(mission.status) || Boolean(data.thread_alive);
   stopBtnEl.disabled = !mission || !["running", "queued"].includes(mission.status);
   deleteBtnEl.disabled = !mission || ["running", "queued"].includes(mission.status) || Boolean(data.thread_alive);
 
@@ -778,6 +780,25 @@ missionFormEl.addEventListener("submit", async (event) => {
 });
 
 // ─── Stop / Delete ───
+
+resumeBtnEl.addEventListener("click", async () => {
+  if (!state.selectedMissionId) return;
+  resumeBtnEl.disabled = true;
+  resumeBtnEl.textContent = "继续中...";
+  formErrorEl.textContent = "";
+  try {
+    await fetchJson(`/api/missions/${state.selectedMissionId}/resume`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  } catch (err) {
+    formErrorEl.textContent = "继续任务失败: " + (err.message || err);
+  } finally {
+    state.lastDetailHash = "";
+    await refreshAll();
+    resumeBtnEl.textContent = "继续任务";
+  }
+});
 
 stopBtnEl.addEventListener("click", async () => {
   if (!state.selectedMissionId) return;
