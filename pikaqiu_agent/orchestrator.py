@@ -161,6 +161,45 @@ class OrchestratorManager:
         thread.start()
         return mission_id
 
+    def resume_mission(
+        self,
+        mission_id: str,
+        *,
+        extra_rounds: int,
+        mission_timeout_sec: int = 0,
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            existing = self._threads.get(mission_id)
+            if existing and existing.is_alive():
+                raise RuntimeError("mission is already running")
+
+        mission = self.store.get_mission(mission_id)
+        if not mission:
+            return None
+        if mission["status"] in {"queued", "running"}:
+            raise RuntimeError("mission is already queued or running")
+
+        resumed = self.store.prepare_mission_resume(mission_id, extra_rounds)
+        if not resumed:
+            return None
+
+        self._mission_meta[mission_id] = {
+            "mission_timeout_sec": mission_timeout_sec,
+        }
+        thread = threading.Thread(
+            target=self._run_mission,
+            args=(mission_id,),
+            name=f"mission-{mission_id[:8]}",
+            daemon=True,
+        )
+        with self._lock:
+            existing = self._threads.get(mission_id)
+            if existing and existing.is_alive():
+                raise RuntimeError("mission is already running")
+            self._threads[mission_id] = thread
+        thread.start()
+        return resumed
+
     def stop_mission(self, mission_id: str) -> None:
         self.store.request_stop(mission_id)
 
@@ -471,6 +510,42 @@ class OrchestratorManager:
             exit_code=exit_code,
         )
 
+    def _inject_human_guidance(
+        self,
+        *,
+        mission_id: str,
+        round_no: int,
+        messages: list[Any],
+    ) -> bool:
+        guidance_items = self.store.consume_pending_human_guidance(mission_id)
+        if not guidance_items:
+            return False
+
+        guidance_text = "\n".join(
+            f"- {item['content']}" for item in guidance_items if str(item.get("content", "")).strip()
+        )
+        if not guidance_text.strip():
+            return False
+
+        injection = (
+            "[HUMAN_GUIDANCE]\n"
+            "The operator has provided high-priority guidance for this authorized mission.\n"
+            "Before the next tool call, re-evaluate the current memory, revise the penetration path, "
+            "and choose actions that align with the guidance. Stay within the mission scope and avoid "
+            "repeating dead ends unless the guidance explicitly asks for it.\n\n"
+            f"{guidance_text}\n"
+            "[/HUMAN_GUIDANCE]"
+        )
+        messages.append(HumanMessage(content=injection))
+        self.store.add_event(
+            mission_id=mission_id,
+            round_no=round_no,
+            event_type="human_guidance",
+            title=f"Human guidance injected ({len(guidance_items)})",
+            content=guidance_text,
+        )
+        return True
+
     def _run_mission_tool_use(
         self,
         mission_id: str,
@@ -521,7 +596,23 @@ class OrchestratorManager:
         flag_captured = threading.Event()
         captured_flags: list[str] = []
 
-        for round_no in range(1, max_rounds + 1):
+        start_round = max(1, self.store.get_max_round_no(mission_id) + 1)
+        if start_round > max_rounds:
+            self.store.update_mission_status(
+                mission_id,
+                "stopped",
+                error_message="No remaining rounds; resume the mission to add more rounds.",
+            )
+            self.store.add_event(
+                mission_id=mission_id,
+                round_no=max_rounds,
+                event_type="warning",
+                title="No remaining rounds",
+                content=f"start_round={start_round} max_rounds={max_rounds}",
+            )
+            return
+
+        for round_no in range(start_round, max_rounds + 1):
             if self.store.should_stop(mission_id):
                 self.store.update_mission_status(mission_id, "stopped")
                 return
@@ -721,6 +812,13 @@ class OrchestratorManager:
                     )
                     logger.warning("[orchestrator] round %d timed out after %ds", round_no, int(elapsed))
                     break
+
+                if self._inject_human_guidance(
+                    mission_id=mission_id,
+                    round_no=round_no,
+                    messages=messages,
+                ):
+                    consecutive_no_tool = 0
 
                 response, new_model = self._invoke_llm_with_retry(
                     model_with_tools, messages, tools,

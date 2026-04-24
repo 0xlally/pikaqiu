@@ -30,6 +30,7 @@ const EVENT_TITLES = {
   main_agent: "主决策",
   memory_agent: "记忆压缩",
   advisor_agent: "策略纠偏",
+  human_guidance: "人类协同",
   error: "异常",
   flag: "🚩 Flag",
 };
@@ -213,6 +214,97 @@ function renderMemoryList(items, emptyText) {
       ${list.map((item) => `<li class="memory-item">${escapeHtml(item)}</li>`).join("")}
     </ul>
   `;
+}
+
+function renderGuidanceHistory(items) {
+  const list = Array.isArray(items) ? items.slice(-8) : [];
+  if (!list.length) return `<div class="guidance-empty">暂无人工引导</div>`;
+  return `
+    <div class="guidance-history">
+      ${list.map((item) => `
+        <article class="guidance-entry">
+          <div class="guidance-entry-head">
+            <span class="guidance-status status-${escapeHtml(item.status || "pending")}">${escapeHtml(item.status || "pending")}</span>
+            <span>${escapeHtml(formatMissionTime(item.created_at))}</span>
+          </div>
+          <p>${escapeHtml(item.content || "")}</p>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderHumanCollabPanel(mission, guidanceItems, threadAlive, draft) {
+  const enabled = Boolean(mission?.human_collab_enabled);
+  const canSend = enabled && Boolean(threadAlive || ["queued", "running"].includes(mission?.status));
+  return `
+    <section class="human-collab-panel">
+      <div class="human-collab-head">
+        <div>
+          <p class="section-kicker">human collaboration</p>
+          <h4>人类协同引导</h4>
+        </div>
+        <label class="collab-toggle">
+          <input id="human-collab-toggle" type="checkbox" ${enabled ? "checked" : ""} />
+          <span>${enabled ? "已开启" : "已关闭"}</span>
+        </label>
+      </div>
+      <form id="human-guidance-form" class="collab-form">
+        <textarea id="human-guidance-input" rows="3" maxlength="4000" ${canSend ? "" : "disabled"} placeholder="${enabled ? "输入下一步渗透方向、假设或需要优先验证的路径" : "开启人类协同后可发送引导词"}">${escapeHtml(draft || "")}</textarea>
+        <button id="human-guidance-submit" type="submit" class="secondary" ${canSend ? "" : "disabled"}>发送给 agent</button>
+      </form>
+      <p id="human-guidance-status" class="collab-status"></p>
+      ${renderGuidanceHistory(guidanceItems)}
+    </section>
+  `;
+}
+
+function bindHumanCollabControls(missionId) {
+  const toggle = document.getElementById("human-collab-toggle");
+  const form = document.getElementById("human-guidance-form");
+  const input = document.getElementById("human-guidance-input");
+  const status = document.getElementById("human-guidance-status");
+
+  toggle?.addEventListener("change", async () => {
+    toggle.disabled = true;
+    if (status) status.textContent = "正在更新协同开关...";
+    try {
+      await fetchJson(`/api/missions/${missionId}/collaboration`, {
+        method: "POST",
+        body: JSON.stringify({ enabled: toggle.checked }),
+      });
+      state.lastDetailHash = "";
+      await refreshAll();
+    } catch (err) {
+      if (status) status.textContent = `更新失败: ${err.message || err}`;
+      toggle.checked = !toggle.checked;
+      toggle.disabled = false;
+    }
+  });
+
+  form?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const content = String(input?.value || "").trim();
+    if (!content) {
+      if (status) status.textContent = "请输入引导词。";
+      return;
+    }
+    const submit = document.getElementById("human-guidance-submit");
+    if (submit) submit.disabled = true;
+    if (status) status.textContent = "正在发送给 agent...";
+    try {
+      await fetchJson(`/api/missions/${missionId}/guidance`, {
+        method: "POST",
+        body: JSON.stringify({ content }),
+      });
+      if (input) input.value = "";
+      state.lastDetailHash = "";
+      await refreshAll();
+    } catch (err) {
+      if (status) status.textContent = `发送失败: ${err.message || err}`;
+      if (submit) submit.disabled = false;
+    }
+  });
 }
 
 // ─── Detail open/close state ───
@@ -508,6 +600,8 @@ function renderMissionDetail(data) {
   const memory = data.memory || {};
   const rounds = data.rounds || [];
   const events = data.events || [];
+  const guidanceItems = data.human_guidance || [];
+  const guidanceDraft = document.getElementById("human-guidance-input")?.value || "";
   const flowGroups = groupMissionFlow(rounds, events);
   state.flowGroupCount = flowGroups.length;
   const latestMain = rounds.filter((r) => r.worker_role === "main").at(-1);
@@ -544,6 +638,8 @@ function renderMissionDetail(data) {
         </div>
       </div>
     </section>
+
+    ${renderHumanCollabPanel(mission, guidanceItems, data.thread_alive, guidanceDraft)}
 
     <section class="memory-dossier">
       <div class="memory-summary-row">
@@ -583,6 +679,7 @@ function renderMissionDetail(data) {
     ${flowGroups.length ? flowGroups.map((g, i) => renderFlowRound(g, i)).join("") : `<div class="empty-state">暂无轮次</div>`}
   `;
   restoreDetailOpenState();
+  bindHumanCollabControls(mission.id);
   state.detailStateHydrated = true;
 }
 
@@ -615,6 +712,8 @@ async function refreshMissionDetail() {
     s: data.mission?.status, u: data.mission?.updated_at,
     rc: data.rounds?.length, ec: data.events?.length,
     ta: data.thread_alive, ms: data.memory?.updated_at,
+    hc: data.mission?.human_collab_enabled,
+    hg: (data.human_guidance || []).map((g) => [g.id, g.status, g.consumed_at]).join("|"),
   });
   if (hash === state.lastDetailHash) return;
   state.lastDetailHash = hash;

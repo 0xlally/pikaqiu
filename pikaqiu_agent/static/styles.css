@@ -401,6 +401,109 @@ button.danger {
 .stat-time { font-size: 13px; }
 .stat-foot { margin-top: 6px; font-size: 11px; color: var(--text-muted); }
 
+/* ========== Human Collaboration ========== */
+.human-collab-panel {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  display: grid;
+  gap: 12px;
+}
+
+.human-collab-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.human-collab-head h4 {
+  margin: 4px 0 0;
+  font-size: 15px;
+  font-family: var(--font-display);
+}
+
+.collab-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: auto;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.collab-toggle input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--blue);
+}
+
+.collab-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.collab-form textarea {
+  margin: 0;
+  min-height: 88px;
+}
+
+.collab-form button {
+  width: auto;
+  min-width: 130px;
+  height: 40px;
+}
+
+.collab-status {
+  margin: 0;
+  min-height: 18px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.collab-status:empty { display: none; }
+
+.guidance-history {
+  display: grid;
+  gap: 8px;
+}
+
+.guidance-entry {
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.guidance-entry-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.guidance-entry p {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.7;
+}
+
+.guidance-status {
+  color: var(--amber);
+  text-transform: uppercase;
+}
+.guidance-status.status-consumed { color: var(--green); }
+
+.guidance-empty {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 /* ========== Memory Dossier ========== */
 .memory-dossier {
   padding: 14px;
@@ -1096,6 +1199,9 @@ pre {
   }
   .layout { padding: 12px; gap: 12px; }
   .hero-right { grid-template-columns: 1fr; }
+  .human-collab-head { flex-direction: column; }
+  .collab-form { grid-template-columns: 1fr; }
+  .collab-form button { width: 100%; }
   .memory-grid { grid-template-columns: 1fr; }
   .knowledge-search-row { grid-template-columns: 1fr; }
 }

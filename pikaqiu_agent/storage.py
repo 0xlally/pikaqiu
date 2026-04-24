@@ -192,6 +192,7 @@ class MissionStore:
                   command_timeout_sec INTEGER NOT NULL,
                   model TEXT NOT NULL,
                   expected_flags INTEGER NOT NULL DEFAULT 1,
+                  human_collab_enabled INTEGER NOT NULL DEFAULT 0,
                   error_message TEXT NOT NULL DEFAULT '',
                   stop_requested INTEGER NOT NULL DEFAULT 0,
                   created_at TEXT NOT NULL,
@@ -222,6 +223,16 @@ class MissionStore:
                   metadata_json TEXT NOT NULL DEFAULT '{}',
                   started_at TEXT NOT NULL,
                   ended_at TEXT NOT NULL,
+                  FOREIGN KEY(mission_id) REFERENCES missions(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS human_guidance (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  mission_id TEXT NOT NULL,
+                  content TEXT NOT NULL,
+                  status TEXT NOT NULL DEFAULT 'pending',
+                  created_at TEXT NOT NULL,
+                  consumed_at TEXT NOT NULL DEFAULT '',
                   FOREIGN KEY(mission_id) REFERENCES missions(id)
                 );
 
@@ -275,6 +286,7 @@ class MissionStore:
                 CREATE INDEX IF NOT EXISTS idx_cve_id ON cve_poc_index(cve_id);
                 CREATE INDEX IF NOT EXISTS idx_cve_vuln ON cve_poc_index(vuln_type);
                 CREATE INDEX IF NOT EXISTS idx_events_mission ON events(mission_id);
+                CREATE INDEX IF NOT EXISTS idx_human_guidance_mission ON human_guidance(mission_id, id);
 
                 
                 """
@@ -282,6 +294,11 @@ class MissionStore:
             # Migration: add expected_flags column for existing databases
             try:
                 self._conn.execute("ALTER TABLE missions ADD COLUMN expected_flags INTEGER NOT NULL DEFAULT 1")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+            # Migration: add per-mission human collaboration toggle
+            try:
+                self._conn.execute("ALTER TABLE missions ADD COLUMN human_collab_enabled INTEGER NOT NULL DEFAULT 0")
             except sqlite3.OperationalError:
                 pass  # Column already exists
             # Migration: add poc_content column to cve_poc_index
@@ -388,6 +405,43 @@ class MissionStore:
                 (status, error_message, _now(), mission_id),
             )
 
+    def prepare_mission_resume(self, mission_id: str, extra_rounds: int) -> dict[str, Any] | None:
+        """Requeue an ended mission while preserving memory, events, and guidance history."""
+        now = _now()
+        extra_rounds = max(1, int(extra_rounds))
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT * FROM missions WHERE id = ?",
+                (mission_id,),
+            ).fetchone()
+            if not row:
+                return None
+
+            last_round = self._max_round_no_locked(mission_id)
+            current_max = int(row["max_rounds"])
+            new_max = max(current_max, last_round + extra_rounds)
+            self._conn.execute(
+                """
+                UPDATE missions
+                SET status = 'queued',
+                    stop_requested = 0,
+                    error_message = '',
+                    max_rounds = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (new_max, now, mission_id),
+            )
+            updated = self._conn.execute(
+                "SELECT * FROM missions WHERE id = ?",
+                (mission_id,),
+            ).fetchone()
+        return self._mission_row(updated) if updated else None
+
+    def get_max_round_no(self, mission_id: str) -> int:
+        with self._lock:
+            return self._max_round_no_locked(mission_id)
+
     def update_mission_target(
         self, mission_id: str, *, target: str, scope: str | None = None
     ) -> None:
@@ -408,6 +462,80 @@ class MissionStore:
                 (_now(), mission_id),
             )
 
+    def set_human_collab_enabled(self, mission_id: str, enabled: bool) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE missions SET human_collab_enabled = ?, updated_at = ? WHERE id = ?",
+                (1 if enabled else 0, _now(), mission_id),
+            )
+
+    def add_human_guidance(self, mission_id: str, content: str) -> dict[str, Any]:
+        now = _now()
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                """
+                INSERT INTO human_guidance(mission_id, content, status, created_at, consumed_at)
+                VALUES(?, ?, 'pending', ?, '')
+                """,
+                (mission_id, content, now),
+            )
+            self._conn.execute(
+                "UPDATE missions SET updated_at = ? WHERE id = ?",
+                (now, mission_id),
+            )
+            guidance_id = int(cur.lastrowid)
+        return {
+            "id": guidance_id,
+            "mission_id": mission_id,
+            "content": content,
+            "status": "pending",
+            "created_at": now,
+            "consumed_at": "",
+        }
+
+    def get_human_guidance(self, mission_id: str, limit: int = 30) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT id, mission_id, content, status, created_at, consumed_at
+                FROM human_guidance
+                WHERE mission_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (mission_id, limit),
+            ).fetchall()
+        return list(reversed([self._guidance_row(row) for row in rows]))
+
+    def consume_pending_human_guidance(self, mission_id: str, limit: int = 5) -> list[dict[str, Any]]:
+        now = _now()
+        with self._lock, self._conn:
+            mission = self._conn.execute(
+                "SELECT human_collab_enabled FROM missions WHERE id = ?",
+                (mission_id,),
+            ).fetchone()
+            if not mission or not bool(mission["human_collab_enabled"]):
+                return []
+            rows = self._conn.execute(
+                """
+                SELECT id, mission_id, content, status, created_at, consumed_at
+                FROM human_guidance
+                WHERE mission_id = ? AND status = 'pending'
+                ORDER BY id ASC
+                LIMIT ?
+                """,
+                (mission_id, limit),
+            ).fetchall()
+            if not rows:
+                return []
+            ids = [int(row["id"]) for row in rows]
+            placeholders = ",".join("?" for _ in ids)
+            self._conn.execute(
+                f"UPDATE human_guidance SET status = 'consumed', consumed_at = ? WHERE id IN ({placeholders})",
+                [now, *ids],
+            )
+        return [{**self._guidance_row(row), "status": "consumed", "consumed_at": now} for row in rows]
+
     def reset_stale_missions(self) -> int:
         """On server startup, mark any running/queued missions as stopped (they can't still be running)."""
         with self._lock, self._conn:
@@ -425,6 +553,7 @@ class MissionStore:
             ).fetchone()
             if not row:
                 return False
+            self._conn.execute("DELETE FROM human_guidance WHERE mission_id = ?", (mission_id,))
             self._conn.execute("DELETE FROM events WHERE mission_id = ?", (mission_id,))
             self._conn.execute("DELETE FROM rounds WHERE mission_id = ?", (mission_id,))
             self._conn.execute("DELETE FROM memories WHERE mission_id = ?", (mission_id,))
@@ -435,6 +564,7 @@ class MissionStore:
         """Delete ALL missions and associated data."""
         with self._lock, self._conn:
             count = self._conn.execute("SELECT COUNT(*) FROM missions").fetchone()[0]
+            self._conn.execute("DELETE FROM human_guidance")
             self._conn.execute("DELETE FROM events")
             self._conn.execute("DELETE FROM rounds")
             self._conn.execute("DELETE FROM memories")
@@ -1037,6 +1167,7 @@ class MissionStore:
             "command_timeout_sec": row["command_timeout_sec"],
             "model": row["model"],
             "expected_flags": row["expected_flags"] if "expected_flags" in row.keys() else 1,
+            "human_collab_enabled": bool(row["human_collab_enabled"]) if "human_collab_enabled" in row.keys() else False,
             "error_message": row["error_message"],
             "stop_requested": bool(row["stop_requested"]),
             "created_at": row["created_at"],
@@ -1055,4 +1186,25 @@ class MissionStore:
             "metadata": _json_loads(row["metadata_json"], {}),
             "started_at": row["started_at"],
             "ended_at": row["ended_at"],
+        }
+
+    def _max_round_no_locked(self, mission_id: str) -> int:
+        event_row = self._conn.execute(
+            "SELECT COALESCE(MAX(round_no), 0) AS n FROM events WHERE mission_id = ?",
+            (mission_id,),
+        ).fetchone()
+        round_row = self._conn.execute(
+            "SELECT COALESCE(MAX(round_no), 0) AS n FROM rounds WHERE mission_id = ?",
+            (mission_id,),
+        ).fetchone()
+        return max(int(event_row["n"] or 0), int(round_row["n"] or 0))
+
+    def _guidance_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "mission_id": row["mission_id"],
+            "content": row["content"],
+            "status": row["status"],
+            "created_at": row["created_at"],
+            "consumed_at": row["consumed_at"],
         }

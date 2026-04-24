@@ -151,13 +151,90 @@ def create_app(runtime: AppRuntime | None = None) -> Flask:
             "memory": rt().store.get_memory(mission_id),
             "rounds": rt().store.get_rounds(mission_id),
             "events": rt().store.get_events(mission_id),
+            "human_guidance": rt().store.get_human_guidance(mission_id),
             "thread_alive": rt().orchestrator.thread_alive(mission_id),
         })
+
+    @app.route("/api/missions/<mission_id>/collaboration", methods=["POST"])
+    def api_mission_collaboration(mission_id: str):
+        mission = rt().store.get_mission(mission_id)
+        if not mission:
+            return _json_error("mission not found", 404)
+        payload = request.get_json(silent=True) or {}
+        enabled = bool(payload.get("enabled"))
+        rt().store.set_human_collab_enabled(mission_id, enabled)
+        rt().store.add_event(
+            mission_id=mission_id,
+            round_no=0,
+            event_type="human_guidance",
+            title="Human collaboration enabled" if enabled else "Human collaboration disabled",
+            content="operator guidance channel is enabled" if enabled else "operator guidance channel is disabled",
+        )
+        return jsonify({"ok": True, "enabled": enabled})
+
+    @app.route("/api/missions/<mission_id>/guidance", methods=["POST"])
+    def api_mission_guidance(mission_id: str):
+        mission = rt().store.get_mission(mission_id)
+        if not mission:
+            return _json_error("mission not found", 404)
+        if not mission.get("human_collab_enabled"):
+            return _json_error("human collaboration is disabled for this mission", 409)
+        if mission["status"] not in {"queued", "running"} and not rt().orchestrator.thread_alive(mission_id):
+            return _json_error("mission is not running", 409)
+        payload = request.get_json(silent=True) or {}
+        content = str(payload.get("content") or "").strip()
+        if not content:
+            return _json_error("guidance content is required", 400)
+        if len(content) > 4000:
+            return _json_error("guidance content is too long (max 4000 chars)", 400)
+        guidance = rt().store.add_human_guidance(mission_id, content)
+        rt().store.add_event(
+            mission_id=mission_id,
+            round_no=0,
+            event_type="human_guidance",
+            title="Human guidance submitted",
+            content=content,
+        )
+        return jsonify({"ok": True, "guidance": guidance}), 201
 
     @app.route("/api/missions/<mission_id>/stop", methods=["POST"])
     def api_mission_stop(mission_id: str):
         rt().orchestrator.stop_mission(mission_id)
         return jsonify({"ok": True})
+
+    @app.route("/api/missions/<mission_id>/resume", methods=["POST"])
+    def api_mission_resume(mission_id: str):
+        mission = rt().store.get_mission(mission_id)
+        if not mission:
+            return _json_error("mission not found", 404)
+        if mission["status"] in {"queued", "running"} or rt().orchestrator.thread_alive(mission_id):
+            return _json_error("mission is already running", 409)
+
+        payload = request.get_json(silent=True) or {}
+        s = rt().settings
+        extra_rounds = _clamp_int(
+            payload.get("extra_rounds"),
+            s.initial_rounds,
+            minimum=1,
+            maximum=s.max_rounds,
+        )
+        try:
+            resumed = rt().orchestrator.resume_mission(
+                mission_id,
+                extra_rounds=extra_rounds,
+            )
+        except RuntimeError as exc:
+            return _json_error(str(exc), 409)
+        if not resumed:
+            return _json_error("mission not found", 404)
+        rt().store.add_event(
+            mission_id=mission_id,
+            round_no=rt().store.get_max_round_no(mission_id),
+            event_type="system",
+            title="Mission resumed",
+            content=f"Continuing from previous memory and event history. Added up to {extra_rounds} more rounds; max_rounds={resumed['max_rounds']}.",
+        )
+        return jsonify({"ok": True, "mission": resumed})
 
     @app.route("/api/missions/<mission_id>", methods=["DELETE"])
     def api_mission_delete(mission_id: str):
