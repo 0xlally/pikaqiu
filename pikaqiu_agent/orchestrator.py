@@ -80,11 +80,9 @@ class OrchestratorManager:
         self._threads: dict[str, threading.Thread] = {}
         self._lock = threading.Lock()
         self._mission_meta: dict[str, dict] = {}  # mission_id -> extra params (e.g. mission_timeout_sec)
-        # Per-mission sandbox allocation
-        self._sandbox_alloc: dict[str, SandboxExecutor] = {}  # mission_id -> executor
-        containers = settings.sandbox_containers or [settings.sandbox_container]
-        self._container_pool: list[str] = list(containers)
-        self._container_usage: dict[str, str] = {c: "" for c in containers}  # container -> mission_id
+        self._sandbox_alloc: dict[str, SandboxExecutor] = {}
+        self._container_pool: list[str] = [settings.sandbox_container]
+        self._container_usage: dict[str, str] = {settings.sandbox_container: ""}
 
     def _allocate_sandbox(self, mission_id: str) -> SandboxExecutor:
         """Allocate a dedicated sandbox container for a mission."""

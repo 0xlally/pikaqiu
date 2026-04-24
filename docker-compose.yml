@@ -19,21 +19,5 @@ services:
       - sandbox-ws-1:/tmp/pikaqiu-agent-workspace
       - ./scripts/sandbox-tools:/opt/pikaqiu-tools:ro
 
-  sandbox-2:
-    <<: *sandbox-base
-    container_name: pikaqiu-sandbox-2
-    volumes:
-      - sandbox-ws-2:/tmp/pikaqiu-agent-workspace
-      - ./scripts/sandbox-tools:/opt/pikaqiu-tools:ro
-
-  sandbox-3:
-    <<: *sandbox-base
-    container_name: pikaqiu-sandbox-3
-    volumes:
-      - sandbox-ws-3:/tmp/pikaqiu-agent-workspace
-      - ./scripts/sandbox-tools:/opt/pikaqiu-tools:ro
-
 volumes:
   sandbox-ws-1:
-  sandbox-ws-2:
-  sandbox-ws-3:

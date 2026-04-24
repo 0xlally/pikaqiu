@@ -108,7 +108,6 @@ class AgentSettings:
     db_path: Path
     sandbox_container: str
     sandbox_workdir: str
-    sandbox_containers: list[str] | None = None  # multi-sandbox pool; if set, overrides sandbox_container
     sandbox_public_ip: str = ""  # Public IP for reverse shell listeners
     # Main LLM (used by main agent + memory agent)
     llm_base_url: str = DEFAULT_LLM_BASE_URL
@@ -388,10 +387,14 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
         sections["compression"],
     )
 
-    # Multi-sandbox pool: prefer "containers" list, fallback to single "container"
-    _sb_containers_raw = sb.get("containers", [])
-    _sb_default = sb.get("container", "pikaqiu-sandbox-1")
-    _sb_containers = _sb_containers_raw if _sb_containers_raw else None
+    _sb_default = sb.get("container")
+    if not _sb_default:
+        legacy_containers = sb.get("containers", [])
+        if isinstance(legacy_containers, list) and legacy_containers:
+            _sb_default = legacy_containers[0]
+            logger.warning("sandbox.containers is deprecated; using the first entry: %s", _sb_default)
+        else:
+            _sb_default = "pikaqiu-sandbox-1"
 
     raw_difficulty_params = ag.get("difficulty_params", {})
     difficulty_params: dict[str, DifficultyParams] = {}
@@ -408,9 +411,8 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
     settings = AgentSettings(
         workspace_root=root.resolve(),
         db_path=(root / ".pikaqiu_agent" / "state.sqlite3").resolve(),
-        sandbox_container=_sb_containers[0] if _sb_containers else _sb_default,
+        sandbox_container=_sb_default,
         sandbox_workdir=sb.get("workdir", "/tmp/pikaqiu-agent-workspace"),
-        sandbox_containers=_sb_containers,
         sandbox_public_ip=sb.get("public_ip", ""),
         llm_base_url=llm_base_url,
         llm_api_key=llm_api_key,

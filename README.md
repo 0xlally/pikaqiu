@@ -69,11 +69,11 @@ PIKAQIU_LLM_API_KEY=replace-with-your-api-key
 # Build Kali sandbox image (~15-30 min first time)
 docker build -f Dockerfile.sandbox -t pikaqiu-kali-sandbox .
 
-# Start sandbox containers
+# Start sandbox container
 docker compose up -d
 ```
 
-The default active sandbox is `pikaqiu-sandbox-1`, with workdir `/tmp/pikaqiu-agent-workspace`.
+The agent uses a single sandbox container, `pikaqiu-sandbox-1`, with workdir `/tmp/pikaqiu-agent-workspace`.
 
 ### 4. Run Web UI
 
