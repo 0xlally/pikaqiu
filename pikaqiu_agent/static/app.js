@@ -106,11 +106,9 @@ function looksLikeTransportEnvelope(value) {
 
 function displayMemorySummary(value) {
   const text = String(value ?? "").trim();
-  if (!text) return { display: "尚未沉淀全局摘要", full: "", truncated: false };
-  if (looksLikeTransportEnvelope(text)) return { display: "memory agent 本轮返回了运行回执而不是摘要，已判定为输出格式异常。", full: "", truncated: false };
-  const limit = 220;
-  if (text.length <= limit) return { display: text, full: text, truncated: false };
-  return { display: text.slice(0, limit) + "…", full: text, truncated: true };
+  if (!text) return { display: "No summary yet", full: "", truncated: false };
+  if (looksLikeTransportEnvelope(text)) return { display: "memory agent returned a transport envelope instead of a summary.", full: "", truncated: false };
+  return { display: text, full: text, truncated: false };
 }
 
 // ─── Time helpers ───
@@ -185,6 +183,36 @@ function renderChipRail(items, emptyText) {
   const list = (items || []).map((i) => String(i || "").trim()).filter(Boolean);
   if (!list.length) return `<div class="chip-rail"><span class="soft-chip">${escapeHtml(emptyText)}</span></div>`;
   return `<div class="chip-rail">${list.slice(0, 20).map((i) => softChip(i)).join("")}</div>`;
+}
+
+function asMemoryList(value) {
+  if (Array.isArray(value)) return value.map((i) => String(i || "").trim()).filter(Boolean);
+  const text = String(value || "").trim();
+  return text ? [text] : [];
+}
+
+function memoryNextFocus(memory) {
+  const canonical = asMemoryList(memory?.next_focus);
+  return canonical.length ? canonical : asMemoryList(memory?.nex_focus);
+}
+
+function renderMemoryColumn(label, items, emptyText, extraClass = "") {
+  return `
+    <div class="memory-column ${escapeHtml(extraClass)}">
+      <div class="kv-title">${escapeHtml(label)}</div>
+      ${renderMemoryList(asMemoryList(items), emptyText)}
+    </div>
+  `;
+}
+
+function renderMemoryList(items, emptyText) {
+  const list = asMemoryList(items);
+  if (!list.length) return `<div class="memory-empty">${escapeHtml(emptyText)}</div>`;
+  return `
+    <ul class="memory-list">
+      ${list.map((item) => `<li class="memory-item">${escapeHtml(item)}</li>`).join("")}
+    </ul>
+  `;
 }
 
 // ─── Detail open/close state ───
@@ -484,6 +512,7 @@ function renderMissionDetail(data) {
   state.flowGroupCount = flowGroups.length;
   const latestMain = rounds.filter((r) => r.worker_role === "main").at(-1);
   const memorySummary = displayMemorySummary(memory.summary);
+  const nextFocus = memoryNextFocus(memory);
   const rawMission = JSON.stringify({ target: mission.target, goal: mission.goal, memory, error_message: mission.error_message, thread_alive: data.thread_alive }, null, 2);
 
   missionDetailEl.className = "mission-detail";
@@ -519,29 +548,18 @@ function renderMissionDetail(data) {
     <section class="memory-dossier">
       <div class="memory-summary-row">
         <div class="memory-summary-content">
-          <p class="section-kicker">全局记忆</p>
+          <p class="section-kicker">summary</p>
           <h4>${escapeHtml(memorySummary.display)}</h4>
           ${memorySummary.truncated ? `<button class="expand-btn memory-expand-btn" onclick="this.previousElementSibling.textContent=this.dataset.full;this.remove()" data-full="${escapeHtml(memorySummary.full)}">展开全部 (${(memory.summary || "").length} chars)</button>` : ""}
         </div>
         <div class="memory-update">${escapeHtml(formatMissionTime(memory.updated_at || mission.updated_at))}</div>
       </div>
       <div class="memory-grid">
-        <div class="memory-column">
-          <div class="kv-title">已确认发现</div>
-          ${renderChipRail(memory.findings, "暂无确认发现")}
-        </div>
-        <div class="memory-column">
-          <div class="kv-title">待验证线索</div>
-          ${renderChipRail(memory.leads, "暂无待验证线索")}
-        </div>
-        <div class="memory-column">
-          <div class="kv-title">凭据</div>
-          ${renderChipRail(memory.credentials, "暂无凭据")}
-        </div>
-      </div>
-      <div class="memory-column full-width">
-        <div class="kv-title">死胡同 / 下步方向</div>
-        ${renderChipRail([...(memory.dead_ends || []), ...(memory.next_focus || [])], "暂无阻塞项")}
+        ${renderMemoryColumn("findings", memory.findings, "No findings yet")}
+        ${renderMemoryColumn("leads", memory.leads, "No leads yet")}
+        ${renderMemoryColumn("credentials", memory.credentials, "No credentials yet")}
+        ${renderMemoryColumn("dead_ends", memory.dead_ends, "No dead ends yet", "full-width")}
+        ${renderMemoryColumn("next_focus", nextFocus, "No next focus yet", "full-width")}
       </div>
 
       <details class="trace-card raw-json-card" data-detail-key="mission:raw-json">

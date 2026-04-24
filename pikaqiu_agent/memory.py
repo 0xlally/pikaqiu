@@ -259,7 +259,12 @@ def normalize_memory_enhanced(
             _as_str_list(payload.get("credentials", fallback.get("credentials", [])))
         ),
         "next_focus": _dedupe(
-            _as_str_list(payload.get("next_focus", fallback.get("next_focus", [])))
+            _as_str_list(
+                payload.get(
+                    "next_focus",
+                    payload.get("nex_focus", fallback.get("next_focus", [])),
+                )
+            )
         ),
     }
     

@@ -429,14 +429,22 @@ button.danger {
   font-family: var(--font-display);
 }
 
-.memory-dossier h4 { margin: 6px 0 0; font-size: 14px; font-weight: 600; line-height: 1.6; color: var(--text-bright); }
+.memory-dossier h4 {
+  margin: 6px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.7;
+  color: var(--text-bright);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .memory-summary-content { flex: 1; min-width: 0; }
 .memory-expand-btn { margin-top: 6px; }
 .memory-update { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
 
 .memory-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 10px;
 }
 
@@ -448,6 +456,36 @@ button.danger {
   background: var(--surface-2);
 }
 .full-width { grid-column: 1 / -1; }
+
+.memory-list {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.memory-item,
+.memory-empty {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface-3);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.memory-empty {
+  margin-top: 8px;
+  color: var(--text-muted);
+}
 
 .chip-rail { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 
