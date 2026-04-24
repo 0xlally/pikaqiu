@@ -13,3 +13,5 @@ build/
 *.swp
 *.swo
 venv/
+rag/faiss_db/
+rag/models/

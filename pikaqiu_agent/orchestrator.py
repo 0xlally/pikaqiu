@@ -674,6 +674,7 @@ class OrchestratorManager:
                 sandbox=sbx,
                 workdir=mission_workdir,
                 store=self.store,
+                knowledge=self.knowledge,
                 llm_client=self.llm,
                 mission=mission,
                 memory=memory,

@@ -267,7 +267,7 @@ except Exception as exc:
     return web_fetch
 
 
-def create_knowledge_tool(store, top_k: int = 3) -> BaseTool:
+def create_knowledge_tool(knowledge, top_k: int = 3) -> BaseTool:
     @tool("knowledge_search", args_schema=KnowledgeSearchInput)
     def knowledge_search(query: str, limit: int = top_k) -> str:
         """Search the offline cybersecurity knowledge base.
@@ -276,7 +276,7 @@ def create_knowledge_tool(store, top_k: int = 3) -> BaseTool:
         Returns full document content for each match.
         """
         try:
-            results = store.search_knowledge(query, limit=limit)
+            results = knowledge.search(query, limit=limit)
             if not results:
                 return f"[knowledge_search] No results for: {query}"
             formatted = []
@@ -486,6 +486,7 @@ def create_all_tools(
     sandbox,
     workdir: str,
     store=None,
+    knowledge=None,
     llm_client=None,
     mission: dict | None = None,
     memory: dict | None = None,
@@ -504,8 +505,9 @@ def create_all_tools(
         create_web_search_tool(sandbox, workdir, stop_fn=stop_fn, on_chunk=on_chunk, max_timeout=command_timeout_sec),
         create_web_fetch_tool(sandbox, workdir, stop_fn=stop_fn, on_chunk=on_chunk, max_timeout=command_timeout_sec),
     ]
+    if knowledge:
+        tools.append(create_knowledge_tool(knowledge, top_k=knowledge_top_k))
     if store:
-        tools.append(create_knowledge_tool(store, top_k=knowledge_top_k))
         tools.append(create_cve_search_tool(store))
     if llm_client and mission:
         tools.append(create_adviser_tool(llm_client, mission, memory=memory, current_messages=current_messages))

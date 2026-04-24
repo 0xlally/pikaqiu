@@ -826,6 +826,19 @@ class MissionStore:
             "updated_at": row["updated_at"],
         }
 
+    def find_knowledge_doc_id(self, *, source: str, path: str) -> int | None:
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT id
+                FROM knowledge_docs
+                WHERE source = ? AND path = ?
+                LIMIT 1
+                """,
+                (source, path),
+            ).fetchone()
+        return int(row["id"]) if row else None
+
     # ── CVE POC Index Methods ────────────────────────────────────────────
 
     def replace_cve_index(self, entries: Iterable[dict[str, Any]]) -> int:

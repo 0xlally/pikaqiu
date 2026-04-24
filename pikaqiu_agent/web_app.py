@@ -83,7 +83,7 @@ def create_app(runtime: AppRuntime | None = None) -> Flask:
             "model": s.llm_model,
             "sandbox_container": s.sandbox_container,
             "sandbox_workdir": s.sandbox_workdir,
-            "knowledge": rt().store.get_knowledge_stats(),
+            "knowledge": rt().knowledge.get_stats(),
             "defaults": {
                 "max_rounds": s.initial_rounds,
                 "max_commands": s.initial_commands,
@@ -179,7 +179,7 @@ def create_app(runtime: AppRuntime | None = None) -> Flask:
         domains = request.args.getlist("domain")
         limit = _clamp_int(request.args.get("limit", "8"), 8, minimum=1, maximum=50)
         return jsonify({
-            "items": rt().store.search_knowledge(q, domains=domains or None, limit=limit)
+            "items": rt().knowledge.search(q, domains=domains or None, limit=limit)
         })
 
     @app.route("/api/knowledge/cve-search")
