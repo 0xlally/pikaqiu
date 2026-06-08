@@ -1,0 +1,99 @@
+﻿# 鈺斺晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晽
+# 鈺?     PikaQiu Agent 鈥?Configuration (config.yml)             鈺?# 鈺氣晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨暆
+
+# 鈹€鈹€鈹€ Model Pool 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# Configure one or more LLMs for the agent to use.
+# id: unique identifier for referencing
+# priority: lower number = higher priority (auto-assigned to missions)
+model_pool:
+  - id: main
+    base_url: "https://www.heilovehei.com"
+    api_key: ""
+    model: "gpt-5.4"
+    thinking: false
+    priority: 1
+    max_concurrent: 5
+
+  # Example: add more models as fallbacks
+  # - id: deepseek
+  #   base_url: "https://api.deepseek.com"
+  #   api_key: "sk-your-deepseek-key"
+  #   model: "deepseek-chat"
+  #   thinking: false
+  #   priority: 2
+  #   max_concurrent: 3
+
+# 鈹€鈹€鈹€ Advisor Model 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# A separate model for the "ask_adviser" tool (optional).
+# Falls back to the primary model if left empty.
+advisor:
+  base_url: ""
+  api_key: ""
+  model: ""
+  thinking: false
+
+# 鈹€鈹€鈹€ Compression Model 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# A cheap/fast model for mid-round context compression (optional).
+# Falls back to rule-based truncation if left empty.
+compression:
+  base_url: ""
+  api_key: ""
+  model: ""
+  timeout_sec: 60
+
+# 鈹€鈹€鈹€ Agent Defaults 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+agent_defaults:
+  initial_rounds: 4
+  initial_commands: 64
+  command_timeout_sec: 300        # per-command sandbox timeout (seconds)
+  llm_timeout_sec: 240            # LLM single response timeout (seconds)
+  llm_max_retries: 10             # LLM timeout/error auto-retry count
+  stdout_limit: 8000              # output truncation (chars); keeps head+tail, drops middle
+  context_compress_threshold: 80000  # mid-round compression trigger (chars)
+  round_timeout_sec: 300          # per-round timeout (seconds)
+  knowledge_top_k: 5              # number of knowledge docs to retrieve
+  knowledge_dir: "./knowledge"    # directory for knowledge zips/folders (drop .zip or dirs here)
+  skills_dir: "./skills"          # directory containing */SKILL.md skill folders
+  skills_auto_use: true           # allow the AI to search and activate skills during a mission
+  skill_catalog_limit: 50         # max skill metadata entries injected into the system prompt
+  skill_prompt_max_chars: 12000   # max SKILL.md body chars returned by activate_skill
+  skill_reference_max_chars: 20000 # max chars returned by skill_read_reference
+  max_rounds_ceiling: 16          # max rounds for retries
+  max_commands_ceiling: 400       # max commands for retries
+  max_retries: 2                  # number of retry attempts for failed missions
+  mission_timeout_sec: 0          # total mission timeout (0 = no limit)
+  disable_memory_cleaning: false  # keep all confirmed findings on stall
+
+  # Per-difficulty overrides (optional)
+  difficulty_params:
+    easy:
+      initial_rounds: 3
+      initial_commands: 48
+      max_rounds: 6
+      max_commands: 128
+    medium:
+      initial_rounds: 4
+      initial_commands: 64
+      max_rounds: 8
+      max_commands: 256
+    hard:
+      initial_rounds: 6
+      initial_commands: 96
+      max_rounds: 16
+      max_commands: 400
+
+  # Multi-flag scaling 鈥?extra resources per additional flag beyond the first
+  multi_flag_scaling:
+    extra_rounds_per_flag: 3
+    extra_commands_per_flag: 12
+
+# 鈹€鈹€鈹€ Sandbox 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+sandbox:
+  container: "pikaqiu-sandbox-1"         # Docker container name
+  workdir: "/tmp/pikaqiu-agent-workspace"
+  public_ip: ""                      # Public IP for reverse shell listeners (optional)
+
+# 鈹€鈹€鈹€ Web UI 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+web:
+  host: "127.0.0.1"
+  port: 8001

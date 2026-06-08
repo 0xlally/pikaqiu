@@ -1,0 +1,21 @@
+# Node modules
+node_modules/
+
+# PyCharm and Python workspace
+.idea/
+
+# VitePress build output
+docs/.vitepress/dist/
+docs/.vitepress/.temp/
+
+# VitePress cache
+docs/.vitepress/cache/
+.vitepress/cache/deps/
+
+
+# virtualenv
+.venv
+venv/
+ENV/
+
+.DS_Store

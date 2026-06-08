@@ -1,0 +1,431 @@
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Any
+
+from flask import Flask, jsonify, request, send_from_directory
+
+from pikaqiu_agent.config import AgentSettings, load_settings
+from pikaqiu_agent.knowledge import KnowledgeIndexer
+from pikaqiu_agent.llm_client import LLMClient
+from pikaqiu_agent.orchestrator import OrchestratorManager
+from pikaqiu_agent.sandbox import SandboxExecutor
+from pikaqiu_agent.skill_loader import SkillLoader
+from pikaqiu_agent.storage import MissionStore
+
+logger = logging.getLogger(__name__)
+
+
+def _json_error(message: str, status: int):
+    return jsonify({"error": message}), status
+
+
+def _clamp_int(value: Any, default: int, *, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(parsed, maximum))
+
+
+def _string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        raw_items = [item.strip() for item in value.replace(",", " ").split()]
+    elif isinstance(value, list):
+        raw_items = [str(item).strip() for item in value]
+    else:
+        return []
+
+    items: list[str] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        if item and item not in seen:
+            items.append(item)
+            seen.add(item)
+    return items
+
+
+def _clamp_text(value: Any, max_chars: int) -> str:
+    text = str(value or "").strip()
+    return text[:max_chars]
+
+
+def _experiment_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
+    total = len(records)
+    success_count = sum(1 for item in records if item.get("outcome") == "success")
+    failed_count = sum(1 for item in records if item.get("outcome") in {"failed", "timeout", "blocked"})
+    unknown_count = max(0, total - success_count - failed_count)
+    concluded_count = success_count + failed_count
+    durations = [
+        int(item["duration_sec"])
+        for item in records
+        if isinstance(item.get("duration_sec"), int) and int(item["duration_sec"]) >= 0
+    ]
+    return {
+        "total": total,
+        "success_count": success_count,
+        "failed_count": failed_count,
+        "unknown_count": unknown_count,
+        "success_rate": (success_count / concluded_count) if concluded_count else 0,
+        "avg_duration_sec": round(sum(durations) / len(durations)) if durations else None,
+    }
+
+
+class AppRuntime:
+    def __init__(self, settings: AgentSettings) -> None:
+        self.settings = settings
+        self.store = MissionStore(settings.db_path)
+        self.store.reset_stale_missions()
+        self.knowledge = KnowledgeIndexer(settings.workspace_root, self.store, settings.knowledge_dir)
+        self.skills = SkillLoader(settings.workspace_root, settings.skills_dir)
+        self.skills.refresh()
+        self.sandbox = SandboxExecutor(settings)
+        self.llm = LLMClient(settings)
+        self.orchestrator = OrchestratorManager(
+            settings,
+            self.store,
+            self.knowledge,
+            self.sandbox,
+            self.llm,
+            self.skills,
+        )
+        self.static_root = Path(__file__).resolve().parent / "static"
+
+
+def create_app(runtime: AppRuntime | None = None) -> Flask:
+    """Create and configure the Flask application."""
+    if runtime is None:
+        settings = load_settings()
+        runtime = AppRuntime(settings)
+        runtime.knowledge.ensure_ready()
+
+    app = Flask(
+        __name__,
+        static_folder=str(runtime.static_root),
+        static_url_path="",
+    )
+    app.config["rt"] = runtime
+
+    def rt() -> AppRuntime:
+        return app.config["rt"]
+
+    # ── Static / SPA ──────────────────────────────────────────
+
+    @app.route("/")
+    def index():
+        return send_from_directory(str(runtime.static_root), "index.html")
+
+    @app.route("/settings.html")
+    def settings_page():
+        return send_from_directory(str(runtime.static_root), "settings.html")
+
+    # ── Bootstrap ─────────────────────────────────────────────
+
+    @app.route("/api/bootstrap")
+    def api_bootstrap():
+        s = rt().settings
+        return jsonify({
+            "llm_mode": "mock" if s.use_mock_llm else "direct-api",
+            "model": s.llm_model,
+            "sandbox_container": s.sandbox_container,
+            "sandbox_workdir": s.sandbox_workdir,
+            "knowledge": rt().knowledge.get_stats(),
+            "skills": rt().skills.stats(),
+            "defaults": {
+                "max_rounds": s.initial_rounds,
+                "max_commands": s.initial_commands,
+                "command_timeout_sec": s.command_timeout_sec,
+            },
+        })
+
+    # ── Config ────────────────────────────────────────────────
+
+    @app.route("/api/config", methods=["GET"])
+    def api_config_get():
+        return jsonify({"config": rt().settings.to_dict(mask_secrets=True)})
+
+    @app.route("/api/config", methods=["POST"])
+    def api_config_post():
+        changes = request.get_json(silent=True) or {}
+        changes = changes.get("config", changes)
+        if not isinstance(changes, dict) or not changes:
+            return _json_error("provide 'config' dict with fields to update", 400)
+        errors = rt().settings.update(changes)
+        # Rebuild LLM client if relevant fields changed
+        llm_fields = {"llm_base_url", "llm_api_key", "llm_model", "llm_timeout_sec",
+                      "advisor_base_url", "advisor_api_key", "advisor_model"}
+        if llm_fields & set(changes.keys()):
+            rt().llm = LLMClient(rt().settings)
+            rt().orchestrator.llm = rt().llm
+            rt().orchestrator.observer_runtime.llm = rt().llm
+        if "skills_dir" in changes:
+            rt().skills = SkillLoader(rt().settings.workspace_root, rt().settings.skills_dir)
+            rt().skills.refresh()
+            rt().orchestrator.skills = rt().skills
+            rt().orchestrator.observer_runtime.skills = rt().skills
+        resp: dict[str, Any] = {"ok": True, "config": rt().settings.to_dict(mask_secrets=True)}
+        if errors:
+            resp["errors"] = errors
+        return jsonify(resp)
+
+    @app.route("/api/skills")
+    def api_skills_list():
+        stats = rt().skills.refresh()
+        include_prompt = request.args.get("include_prompt", "").lower() in {"1", "true", "yes"}
+        return jsonify({
+            "skills": rt().skills.list_skills(include_prompt=include_prompt),
+            "stats": stats,
+        })
+
+    @app.route("/api/experiments")
+    def api_experiments_list():
+        records = rt().store.list_experiment_records()
+        return jsonify({
+            "records": records,
+            "summary": _experiment_summary(records),
+        })
+
+    # ── Missions ──────────────────────────────────────────────
+
+    @app.route("/api/missions", methods=["GET"])
+    def api_missions_list():
+        return jsonify({"missions": rt().store.list_missions()})
+
+    @app.route("/api/missions", methods=["POST"])
+    def api_missions_create():
+        payload = request.get_json(silent=True) or {}
+        s = rt().settings
+        max_rounds = _clamp_int(payload.get("max_rounds"), s.initial_rounds, minimum=1, maximum=s.max_rounds)
+        max_commands = _clamp_int(payload.get("max_commands"), s.initial_commands, minimum=1, maximum=s.max_commands)
+        command_timeout = _clamp_int(payload.get("command_timeout_sec"), s.command_timeout_sec, minimum=5, maximum=600)
+        expected_flags = _clamp_int(payload.get("expected_flags"), 1, minimum=1, maximum=50)
+        skill_ids = _string_list(payload.get("skills"))
+        if skill_ids:
+            rt().skills.refresh()
+            _, missing_skills = rt().skills.resolve(skill_ids)
+            if missing_skills:
+                return _json_error(f"unknown or disabled skills: {', '.join(missing_skills)}", 400)
+        mission_id = rt().orchestrator.start_mission(
+            name=str(payload.get("name") or "未命名任务"),
+            target=str(payload.get("target") or "").strip(),
+            goal=str(payload.get("goal") or "").strip(),
+            scope=str(payload.get("target") or "").strip(),
+            domains=[str(item) for item in payload.get("domains", ["web"]) if str(item)],
+            max_rounds=max_rounds,
+            max_commands=max_commands,
+            command_timeout_sec=command_timeout,
+            expected_flags=expected_flags,
+            skills=skill_ids,
+        )
+        return jsonify({"mission_id": mission_id}), 201
+
+    @app.route("/api/missions/<mission_id>")
+    def api_mission_detail(mission_id: str):
+        mission = rt().store.get_mission(mission_id)
+        if not mission:
+            return _json_error("mission not found", 404)
+        return jsonify({
+            "mission": mission,
+            "memory": rt().store.get_memory(mission_id),
+            "rounds": rt().store.get_rounds(mission_id),
+            "events": rt().store.get_events(mission_id),
+            "observer": rt().store.get_observer_summary(mission_id),
+            "experiment": rt().store.get_experiment_record(mission_id),
+            "human_guidance": rt().store.get_human_guidance(mission_id),
+            "thread_alive": rt().orchestrator.thread_alive(mission_id),
+        })
+
+    @app.route("/api/missions/<mission_id>/experiment", methods=["PUT"])
+    def api_mission_experiment_update(mission_id: str):
+        payload = request.get_json(silent=True) or {}
+        if not isinstance(payload, dict):
+            return _json_error("provide experiment fields as JSON object", 400)
+        outcome = _clamp_text(payload.get("outcome"), 32)
+        if outcome not in {"", "unknown", "success", "failed", "timeout", "blocked"}:
+            return _json_error("invalid outcome", 400)
+        record_payload = {
+            "challenge_code": _clamp_text(payload.get("challenge_code"), 160),
+            "difficulty": _clamp_text(payload.get("difficulty"), 32),
+            "outcome": outcome or "unknown",
+            "failure_reason": _clamp_text(payload.get("failure_reason"), 160),
+            "key_parameters": _clamp_text(payload.get("key_parameters"), 4000),
+            "notes": _clamp_text(payload.get("notes"), 8000),
+        }
+        if "started_at" in payload:
+            record_payload["started_at"] = _clamp_text(payload.get("started_at"), 80)
+        if "ended_at" in payload:
+            record_payload["ended_at"] = _clamp_text(payload.get("ended_at"), 80)
+        record = rt().store.upsert_experiment_record(
+            mission_id,
+            record_payload,
+        )
+        if not record:
+            return _json_error("mission not found", 404)
+        return jsonify({"ok": True, "experiment": record})
+
+    @app.route("/api/missions/<mission_id>/collaboration", methods=["POST"])
+    def api_mission_collaboration(mission_id: str):
+        mission = rt().store.get_mission(mission_id)
+        if not mission:
+            return _json_error("mission not found", 404)
+        payload = request.get_json(silent=True) or {}
+        enabled = bool(payload.get("enabled"))
+        rt().store.set_human_collab_enabled(mission_id, enabled)
+        rt().store.add_event(
+            mission_id=mission_id,
+            round_no=0,
+            event_type="human_guidance",
+            title="Human collaboration enabled" if enabled else "Human collaboration disabled",
+            content="operator guidance channel is enabled" if enabled else "operator guidance channel is disabled",
+        )
+        return jsonify({"ok": True, "enabled": enabled})
+
+    @app.route("/api/missions/<mission_id>/guidance", methods=["POST"])
+    def api_mission_guidance(mission_id: str):
+        mission = rt().store.get_mission(mission_id)
+        if not mission:
+            return _json_error("mission not found", 404)
+        if not mission.get("human_collab_enabled"):
+            return _json_error("human collaboration is disabled for this mission", 409)
+        if mission["status"] not in {"queued", "running"} and not rt().orchestrator.thread_alive(mission_id):
+            return _json_error("mission is not running", 409)
+        payload = request.get_json(silent=True) or {}
+        content = str(payload.get("content") or "").strip()
+        if not content:
+            return _json_error("guidance content is required", 400)
+        if len(content) > 4000:
+            return _json_error("guidance content is too long (max 4000 chars)", 400)
+        guidance = rt().store.add_human_guidance(mission_id, content)
+        rt().store.add_event(
+            mission_id=mission_id,
+            round_no=0,
+            event_type="human_guidance",
+            title="Human guidance submitted",
+            content=content,
+        )
+        return jsonify({"ok": True, "guidance": guidance}), 201
+
+    @app.route("/api/missions/<mission_id>/stop", methods=["POST"])
+    def api_mission_stop(mission_id: str):
+        rt().orchestrator.stop_mission(mission_id)
+        return jsonify({"ok": True})
+
+    @app.route("/api/missions/<mission_id>/resume", methods=["POST"])
+    def api_mission_resume(mission_id: str):
+        mission = rt().store.get_mission(mission_id)
+        if not mission:
+            return _json_error("mission not found", 404)
+        if mission["status"] in {"queued", "running"} or rt().orchestrator.thread_alive(mission_id):
+            return _json_error("mission is already running", 409)
+
+        payload = request.get_json(silent=True) or {}
+        s = rt().settings
+        extra_rounds = _clamp_int(
+            payload.get("extra_rounds"),
+            s.initial_rounds,
+            minimum=1,
+            maximum=s.max_rounds,
+        )
+        try:
+            resumed = rt().orchestrator.resume_mission(
+                mission_id,
+                extra_rounds=extra_rounds,
+            )
+        except RuntimeError as exc:
+            return _json_error(str(exc), 409)
+        if not resumed:
+            return _json_error("mission not found", 404)
+        rt().store.add_event(
+            mission_id=mission_id,
+            round_no=rt().store.get_max_round_no(mission_id),
+            event_type="system",
+            title="Mission resumed",
+            content=f"Continuing from previous memory and event history. Added up to {extra_rounds} more rounds; max_rounds={resumed['max_rounds']}.",
+        )
+        return jsonify({"ok": True, "mission": resumed})
+
+    @app.route("/api/missions/<mission_id>", methods=["DELETE"])
+    def api_mission_delete(mission_id: str):
+        mission = rt().store.get_mission(mission_id)
+        if not mission:
+            return _json_error("mission not found", 404)
+        if mission["status"] in {"queued", "running"} or rt().orchestrator.thread_alive(mission_id):
+            return _json_error("任务仍在执行中，请先停止任务再删除记录", 409)
+        deleted = rt().store.delete_mission(mission_id)
+        if not deleted:
+            return _json_error("mission not found", 404)
+        return jsonify({"ok": True, "deleted_id": mission_id})
+
+    # ── Knowledge ─────────────────────────────────────────────
+
+    @app.route("/api/knowledge/search")
+    def api_knowledge_search():
+        q = request.args.get("q", "")
+        domains = request.args.getlist("domain")
+        limit = _clamp_int(request.args.get("limit", "8"), 8, minimum=1, maximum=50)
+        return jsonify({
+            "items": rt().knowledge.search(q, domains=domains or None, limit=limit)
+        })
+
+    @app.route("/api/knowledge/cve-search")
+    def api_cve_search():
+        product = request.args.get("product", "")
+        version = request.args.get("version", "")
+        cve_id = request.args.get("cve_id", "")
+        vuln_type = request.args.get("vuln_type", "")
+        keyword = request.args.get("keyword", "")
+        limit = _clamp_int(request.args.get("limit", "10"), 10, minimum=1, maximum=100)
+        return jsonify({
+            "items": rt().store.search_cve_poc(
+                product=product, version=version, cve_id=cve_id,
+                vuln_type=vuln_type, keyword=keyword, limit=limit,
+            ),
+            "stats": rt().store.get_cve_index_stats(),
+        })
+
+    @app.route("/api/knowledge/doc")
+    def api_knowledge_doc():
+        raw_id = request.args.get("id", "").strip()
+        if not raw_id.isdigit():
+            return _json_error("invalid knowledge doc id", 400)
+        doc = rt().store.get_knowledge_doc(int(raw_id))
+        if not doc:
+            return _json_error("knowledge doc not found", 404)
+        full_body = rt().knowledge.read_doc_content(
+            str(doc["source"]), str(doc["path"]), fallback=str(doc["body"]),
+        )
+        return jsonify({
+            "item": {**doc, "body": full_body, "is_markdown": str(doc["path"]).lower().endswith(".md")}
+        })
+
+    @app.route("/api/knowledge/reindex", methods=["POST"])
+    def api_knowledge_reindex():
+        stats = rt().knowledge.ensure_ready()
+        return jsonify({"ok": True, "knowledge": stats})
+
+    return app
+
+
+def run_server() -> None:
+    settings = load_settings()
+    runtime = AppRuntime(settings)
+    runtime.knowledge.ensure_ready()
+    app = create_app(runtime)
+    print(
+        f"PikaQiu Agent UI: http://{settings.host}:{settings.port} "
+        f"mode={'mock' if settings.use_mock_llm else 'direct-api'} "
+        f"sandbox={settings.sandbox_container}"
+    )
+    try:
+        app.run(
+            host=settings.host,
+            port=settings.port,
+            debug=False,
+            threaded=True,
+            use_reloader=False,
+        )
+    except KeyboardInterrupt:
+        print("\n[server] Shutting down...")

@@ -1,0 +1,305 @@
+ARG KALI_BASE_IMAGE=kalilinux/kali-rolling:latest
+FROM ${KALI_BASE_IMAGE}
+
+# Avoid interactive prompts during apt/dpkg installs.
+ENV DEBIAN_FRONTEND=noninteractive
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# Optional build-time proxy. Use host.docker.internal for a proxy running on
+# the Windows host, for example: http://host.docker.internal:7897
+ARG PROXY_URL=
+ENV http_proxy=${PROXY_URL} \
+    https_proxy=${PROXY_URL} \
+    HTTP_PROXY=${PROXY_URL} \
+    HTTPS_PROXY=${PROXY_URL}
+
+# Use a configurable Kali mirror that is reachable during Docker builds.
+ARG KALI_APT_MIRROR=http://http.kali.org/kali
+ARG KALI_APT_SUITE=kali-rolling
+RUN rm -f /etc/apt/sources.list.d/* \
+    && printf 'deb %s %s main contrib non-free non-free-firmware\n' "$KALI_APT_MIRROR" "$KALI_APT_SUITE" > /etc/apt/sources.list
+
+# Base runtimes, build tooling, and Kali-packaged security tools.
+# Note: Wireshark GUI is installed for completeness; tshark is usually the
+# container-friendly packet analysis entrypoint.
+RUN printf 'wireshark-common wireshark-common/install-setuid boolean true\n' | debconf-set-selections \
+    && apt-get update -q \
+    && apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
+    apt-transport-https \
+    ca-certificates \
+    curl \
+    wget \
+    git \
+    tar \
+    gzip \
+    unzip \
+    zip \
+    xz-utils \
+    procps \
+    psmisc \
+    build-essential \
+    gcc \
+    g++ \
+    make \
+    rustc \
+    cargo \
+    pkg-config \
+    libssl-dev \
+    golang-go \
+    python3 \
+    python3-pip \
+    python3-venv \
+    python2.7 \
+    nodejs \
+    npm \
+    maven \
+    perl \
+    php-cli \
+    php-curl \
+    php-mbstring \
+    jq \
+    file \
+    vim-common \
+    openssh-client \
+    dnsutils \
+    ldap-utils \
+    krb5-user \
+    netcat-openbsd \
+    socat \
+    whois \
+    iproute2 \
+    iputils-ping \
+    net-tools \
+    smbclient \
+    nmap \
+    sqlmap \
+    arjun \
+    nuclei \
+    ffuf \
+    hashcat \
+    hydra \
+    wireshark \
+    tshark \
+    metasploit-framework \
+    netexec \
+    smbmap \
+    python3-impacket \
+    impacket-scripts \
+    python3-ldapdomaindump \
+    mitm6 \
+    coercer \
+    bloodhound \
+    exploitdb \
+    trivy \
+    wordlists \
+    openjdk-21-jdk-headless \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Java 8 (Temurin/Adoptium LTS): needed for ysoserial and legacy deserialization payloads.
+RUN mkdir -p /opt/java/8 \
+    && curl -fSL --retry 5 --retry-delay 10 --retry-connrefused \
+       "https://api.adoptium.net/v3/binary/latest/8/ga/linux/x64/jdk/hotspot/normal/eclipse" \
+       -o /tmp/jdk8.tar.gz \
+    && tar -xzf /tmp/jdk8.tar.gz -C /opt/java/8 --strip-components=1 \
+    && rm /tmp/jdk8.tar.gz \
+    && ln -sf /opt/java/8/bin/java /usr/local/bin/java8 \
+    && ln -sf /opt/java/8/bin/javac /usr/local/bin/javac8
+
+# Java 17 (Temurin LTS): default JDK.
+RUN mkdir -p /opt/java/17 \
+    && curl -fSL --retry 5 --retry-delay 10 --retry-connrefused \
+       "https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jdk/hotspot/normal/eclipse" \
+       -o /tmp/jdk17.tar.gz \
+    && tar -xzf /tmp/jdk17.tar.gz -C /opt/java/17 --strip-components=1 \
+    && rm /tmp/jdk17.tar.gz \
+    && ln -sf /opt/java/17/bin/java /usr/local/bin/java17 \
+    && ln -sf /opt/java/17/bin/javac /usr/local/bin/javac17
+
+# Java 21 convenience alias from Kali packages.
+RUN ln -sf /usr/lib/jvm/java-21-openjdk-amd64/bin/java /usr/local/bin/java21 \
+    && ln -sf /usr/lib/jvm/java-21-openjdk-amd64/bin/javac /usr/local/bin/javac21
+
+# Set Java 17 as the system default via update-alternatives.
+RUN update-alternatives --install /usr/bin/java java /opt/java/8/bin/java 80 \
+    && update-alternatives --install /usr/bin/java java /opt/java/17/bin/java 2200 \
+    && update-alternatives --install /usr/bin/javac javac /opt/java/8/bin/javac 80 \
+    && update-alternatives --install /usr/bin/javac javac /opt/java/17/bin/javac 2200 \
+    && update-alternatives --set java /opt/java/17/bin/java \
+    && update-alternatives --set javac /opt/java/17/bin/javac
+
+ENV JAVA_HOME=/opt/java/17
+
+# Node.js: additional LTS versions via n.
+RUN npm install -g n jsfuck \
+    && N_PREFIX=/usr/local n 18 \
+    && N_PREFIX=/usr/local n 20 \
+    && N_PREFIX=/usr/local n 22
+
+ENV NODE_PATH=/usr/lib/node_modules
+
+# Python CLI packages and libraries. Kali apt provides many of these tools, but
+# pip fills in tools that are not reliably available as distro packages.
+RUN pip3 install --break-system-packages --no-cache-dir \
+    pycryptodome \
+    flask-unsign \
+    pyjwt \
+    PyYAML \
+    paramiko \
+    beautifulsoup4 \
+    lxml \
+    httpx \
+    aiohttp \
+    python-jose \
+    itsdangerous \
+    Jinja2 \
+    mako \
+    pymysql \
+    psycopg2-binary \
+    redis \
+    pymongo \
+    pycryptodomex \
+    bloodhound \
+    certipy-ad \
+    bloodyAD \
+    impacket \
+    ldapdomaindump \
+    mitm6 \
+    coercer \
+    dnspython \
+    netaddr \
+    aioquic \
+    fastapi \
+    fastmcp \
+    jupyter-client \
+    nbformat \
+    prowler \
+    kube-hunter \
+    jwt-tool \
+    playwright
+
+# Rust-based tools not consistently available through apt.
+RUN cargo install --git https://github.com/hahwul/dalfox --root /usr/local \
+    && rm -rf /root/.cargo/git /root/.cargo/registry
+
+# Go-based tools not consistently available through apt.
+RUN GOBIN=/usr/local/bin go install github.com/ropnop/kerbrute@latest \
+    && git clone --depth 1 https://github.com/shadow1ng/fscan.git /opt/fscan \
+    && cd /opt/fscan \
+    && go build -trimpath -ldflags="-s -w" -o /usr/local/bin/fscan main.go
+
+# Exploit helper binaries and scripts.
+RUN mkdir -p /opt/exploit-tools /opt/windows-tools/mimikatz \
+    && curl -fSL --retry 5 --retry-delay 10 --retry-connrefused \
+       "https://github.com/frohoff/ysoserial/releases/latest/download/ysoserial-all.jar" \
+       -o /opt/exploit-tools/ysoserial-all.jar \
+    && ln -sf /opt/exploit-tools/ysoserial-all.jar /opt/exploit-tools/ysoserial.jar \
+    && printf '#!/bin/bash\nexec java8 -jar /opt/exploit-tools/ysoserial-all.jar "$@"\n' > /usr/local/bin/ysoserial \
+    && chmod +x /usr/local/bin/ysoserial \
+    && curl -fSL --retry 5 --retry-delay 10 --retry-connrefused \
+       "https://github.com/peass-ng/PEASS-ng/releases/latest/download/linpeas.sh" \
+       -o /usr/local/bin/linpeas \
+    && chmod +x /usr/local/bin/linpeas \
+    && curl -fSL --retry 5 --retry-delay 10 --retry-connrefused \
+       "https://github.com/gentilkiwi/mimikatz/releases/latest/download/mimikatz_trunk.zip" \
+       -o /tmp/mimikatz.zip \
+    && unzip -q -o /tmp/mimikatz.zip -d /opt/windows-tools/mimikatz \
+    && rm -f /tmp/mimikatz.zip
+
+# Optional AdFind download for the likely "dFind" Windows AD query use case.
+# Joeware sometimes password-protects the binary inside the ZIP; password.txt
+# is intentionally extracted first when present.
+RUN mkdir -p /opt/windows-tools/adfind \
+    && if curl -fSL --retry 5 --retry-delay 10 --retry-connrefused \
+       "https://www.joeware.net/downloads/files/AdFind.zip" \
+       -o /tmp/AdFind.zip; then \
+         unzip -q -o /tmp/AdFind.zip password.txt -d /tmp/adfind-password >/dev/null 2>&1 || true; \
+         if [ -f /tmp/adfind-password/password.txt ]; then \
+           ADFIND_PW="$(tr -d '\r\n' < /tmp/adfind-password/password.txt)"; \
+           unzip -q -o -P "$ADFIND_PW" /tmp/AdFind.zip -d /opt/windows-tools/adfind || true; \
+         else \
+           unzip -q -o /tmp/AdFind.zip -d /opt/windows-tools/adfind || true; \
+         fi; \
+       else \
+         printf 'AdFind download skipped; fetch it from Joeware when needed.\n' > /opt/windows-tools/adfind/README.txt; \
+       fi \
+    && rm -rf /tmp/AdFind.zip /tmp/adfind-password
+
+# AD and domain exploitation source trees. Windows-native projects are kept
+# under /opt/windows-tools for transfer/build on a Windows host.
+RUN mkdir -p /opt/ad-tools /opt/windows-tools \
+    && git clone --depth 1 https://github.com/wjlab/Darksteel.git /opt/ad-tools/Darksteel \
+    && git clone --depth 1 https://github.com/aniqfakhrul/powerview.py.git /opt/ad-tools/powerview.py \
+    && git clone --depth 1 https://github.com/ShutdownRepo/smartbrute.git /opt/ad-tools/smartbrute \
+    && git clone --depth 1 https://github.com/dirkjanm/krbrelayx.git /opt/ad-tools/krbrelayx \
+    && git clone --depth 1 https://github.com/topotam/PetitPotam.git /opt/ad-tools/PetitPotam \
+    && git clone --depth 1 https://github.com/Wh04m1001/DFSCoerce.git /opt/ad-tools/DFSCoerce \
+    && git clone --depth 1 https://github.com/ShutdownRepo/ShadowCoerce.git /opt/ad-tools/ShadowCoerce \
+    && git clone --depth 1 https://github.com/dirkjanm/PrivExchange.git /opt/ad-tools/PrivExchange \
+    && git clone --depth 1 https://github.com/ticarpi/jwt_tool.git /opt/ad-tools/jwt_tool \
+    && git clone --depth 1 https://github.com/jellever/StreamDivert.git /opt/windows-tools/StreamDivert \
+    && git clone --depth 1 https://github.com/GhostPack/Rubeus.git /opt/windows-tools/Rubeus \
+    && git clone --depth 1 https://github.com/GhostPack/SharpDPAPI.git /opt/windows-tools/SharpDPAPI \
+    && git clone --depth 1 https://github.com/BloodHoundAD/SharpHound.git /opt/windows-tools/SharpHound \
+    && git clone --depth 1 https://github.com/GhostPack/Certify.git /opt/windows-tools/Certify
+
+# Install requirements for cloned Python tools when a requirements file exists.
+RUN set -eux; \
+    for dir in /opt/ad-tools/*; do \
+      if [ -f "$dir/requirements.txt" ]; then \
+        pip3 install --break-system-packages --no-cache-dir -r "$dir/requirements.txt"; \
+      fi; \
+    done; \
+    find /opt/ad-tools -type f -name '*.py' -exec chmod +x {} +
+
+# Convenience wrappers and aliases for script-style tools.
+RUN printf '#!/bin/bash\nif command -v impacket-GetNPUsers >/dev/null 2>&1; then exec impacket-GetNPUsers "$@"; fi\nexec GetNPUsers.py "$@"\n' > /usr/local/bin/asreproast \
+    && printf '#!/bin/bash\ncd /opt/ad-tools/powerview.py\nexec python3 powerview.py "$@"\n' > /usr/local/bin/powerview \
+    && printf '#!/bin/bash\ncd /opt/ad-tools/jwt_tool\nexec python3 jwt_tool.py "$@"\n' > /usr/local/bin/jwt_tool \
+    && printf '#!/bin/bash\ncd /opt/ad-tools/krbrelayx\nexec python3 krbrelayx.py "$@"\n' > /usr/local/bin/krbrelayx \
+    && printf '#!/bin/bash\ncd /opt/ad-tools/krbrelayx\nexec python3 printerbug.py "$@"\n' > /usr/local/bin/printerbug \
+    && printf '#!/bin/bash\ncd /opt/ad-tools/PrivExchange\nexec python3 privexchange.py "$@"\n' > /usr/local/bin/privexchange \
+    && printf '#!/bin/bash\ncd /opt/ad-tools/PetitPotam\nexec python3 PetitPotam.py "$@"\n' > /usr/local/bin/petitpotam \
+    && chmod +x /usr/local/bin/asreproast \
+       /usr/local/bin/powerview \
+       /usr/local/bin/jwt_tool \
+       /usr/local/bin/krbrelayx \
+       /usr/local/bin/printerbug \
+       /usr/local/bin/privexchange \
+       /usr/local/bin/petitpotam
+
+# Windows built-in or RSAT-provided commands cannot be installed inside a Kali
+# container. Keep this note beside the Windows tools so the gap is explicit.
+RUN printf '%s\n' \
+    'Windows/RSAT commands to run on a Windows host or domain-joined workstation:' \
+    '  nltest' \
+    '  dsquery / dsget' \
+    '  setspn' \
+    '  gpresult' \
+    '' \
+    'nslookup is provided in this container by dnsutils.' \
+    '' \
+    'dFind appears to refer to a Windows AD ACL enumeration utility. If you meant AdFind, the build attempts to place it in /opt/windows-tools/adfind.' \
+    'dwp-shellifie has no canonical source configured here; add the upstream URL when available.' \
+    > /opt/windows-tools/README.txt
+
+# Tool initialization (offline-ready where practical).
+RUN nuclei -update-templates 2>/dev/null; exit 0
+RUN gunzip -k /usr/share/wordlists/rockyou.txt.gz 2>/dev/null || true
+RUN playwright install --with-deps chromium
+RUN netexec --help >/dev/null 2>&1; crackmapexec --help >/dev/null 2>&1; exit 0
+
+# Sandbox helper scripts. docker-compose also bind-mounts this directory for
+# live updates, but COPY keeps the image usable when started without compose.
+COPY scripts/sandbox-tools/ /opt/pikaqiu-tools/
+RUN chmod +x /opt/pikaqiu-tools/env-info \
+    && find /opt/pikaqiu-tools -type f -exec sed -i 's/\r//' {} + \
+    && ln -sf /opt/pikaqiu-tools/env-info /usr/local/bin/env-info
+
+# Workspace.
+RUN mkdir -p /tmp/pikaqiu-agent-workspace
+
+WORKDIR /tmp/pikaqiu-agent-workspace
+
+# Keep container alive.
+CMD ["sleep", "infinity"]

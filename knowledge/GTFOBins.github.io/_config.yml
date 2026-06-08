@@ -1,0 +1,26 @@
+title: GTFOBins
+
+url: https://gtfobins.org
+
+exclude:
+  - /CNAME
+  - /Dockerfile
+  - /Gemfile*
+  - /LICENSE
+  - /Makefile
+  - /README.md
+  - /_private/
+  - /linter/
+  - /vendor/ # XXX this needs to be explicitly added
+
+permalink: pretty
+
+collections:
+  gtfobins:
+    output: true
+
+defaults:
+  - scope:
+      path: _gtfobins
+    values:
+      layout: gtfobin

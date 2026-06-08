@@ -1,0 +1,23 @@
+x-sandbox-base: &sandbox-base
+  image: pikaqiu-kali-sandbox:latest
+  restart: unless-stopped
+  network_mode: host
+  cap_add:
+    - NET_RAW
+    - NET_ADMIN
+  deploy:
+    resources:
+      limits:
+        memory: 2G
+        cpus: "2.0"
+
+services:
+  sandbox-1:
+    <<: *sandbox-base
+    container_name: pikaqiu-sandbox-1
+    volumes:
+      - sandbox-ws-1:/tmp/pikaqiu-agent-workspace
+      - ./scripts/sandbox-tools:/opt/pikaqiu-tools:ro
+
+volumes:
+  sandbox-ws-1:

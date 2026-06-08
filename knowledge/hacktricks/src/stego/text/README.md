@@ -1,0 +1,59 @@
+# Text Steganography
+
+{{#include ../../banners/hacktricks-training.md}}
+
+Look for:
+
+- Unicode homoglyphs
+- Zero-width characters
+- Whitespace patterns (spaces vs tabs)
+
+## Practical path
+
+If plain text behaves unexpectedly, inspect codepoints and normalize carefully (do not destroy evidence).
+
+### Technique
+
+Text stego frequently relies on characters that render identically (or invisibly):
+
+- Homoglyphs: different Unicode codepoints that look the same (Latin `a` vs Cyrillic `а`)
+- Zero-width characters: joiners, non-joiners, zero-width spaces
+- Whitespace encodings: spaces vs tabs, trailing spaces, line-length patterns
+
+Additional high-signal cases:
+
+- Bidirectional override/control characters (can visually reorder text)
+- Variation selectors and combining characters used as a covert channel
+
+### Decode helpers
+
+- Unicode homoglyph/zero-width playground: https://www.irongeek.com/i.php?page=security/unicode-steganography-homoglyph-encoder
+
+### Inspect codepoints
+
+```bash
+python3 - <<'PY'
+import sys
+s=sys.stdin.read()
+for i,ch in enumerate(s):
+  if ord(ch) > 127 or ch.isspace():
+    print(i, hex(ord(ch)), repr(ch))
+PY
+```
+
+## CSS `unicode-range` channels
+
+`@font-face` rules can encode bytes in `unicode-range: U+..` entries. Extract the codepoints, concatenate the hex, and decode:
+
+```bash
+grep -o "U+[0-9A-Fa-f]\+" styles.css | tr -d 'U+\n' | xxd -r -p
+```
+
+If ranges contain multiple bytes per declaration, split on commas first and normalize (`tr ',+' '\n'`). Python makes it easy to parse and emit bytes if formatting is inconsistent.
+
+## References
+
+- [Flagvent 2025 (Medium) — pink, Santa’s Wishlist, Christmas Metadata, Captured Noise](https://0xdf.gitlab.io/flagvent2025/medium)
+
+{{#include ../../banners/hacktricks-training.md}}
+

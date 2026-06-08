@@ -1,0 +1,537 @@
+---
+---
+
+:root[data-theme=dark] {
+    --foreground: #e6e6e6;
+    --background: #0f0f0f;
+    --faint: #666666;
+    --lighter: #2a1212;
+    --marked: #5a1a1a;
+    --hover: #ff4d4d;
+}
+
+:root[data-theme=light] {
+    --foreground: #000000;
+    --background: #ffffff;
+    --faint: #999999;
+    --lighter: #fff4f4;
+    --marked: #ffcccc;
+    --hover: #ff0000;
+}
+
+:root[data-theme=dark] {
+    .light-theme {
+        display: none;
+    }
+}
+
+:root[data-theme=light] {
+    .dark-theme {
+        display: none;
+    }
+}
+
+$accent: #bf0707;
+$logo-backdrop: #ffffff;
+
+$foreground: var(--foreground);
+$background: var(--background);
+$faint: var(--faint);
+$lighter: var(--lighter);
+$marked: var(--marked);
+$hover: var(--hover);
+
+$default-font-size: 16px;
+$code-font-size: 13px;
+$small-font-size: 14px;
+
+// layout
+
+$column-width: 800px;
+$grace-space: 200px;
+$layout-break: "(min-width: #{$column-width + $grace-space})";
+
+@media #{$layout-break} {
+    body {
+        width: $column-width;
+        margin-left: auto;
+        margin-right: auto;
+        margin-top: 40px;
+    }
+
+    p {
+        text-align: justify;
+    }
+}
+
+@media not all and #{$layout-break} {
+    .github-corner {
+        display: none;
+    }
+}
+
+// common tags
+
+body {
+    font-family: system-ui, sans-serif;
+    font-size: $default-font-size;
+    color: $foreground;
+    background: $background;
+}
+
+code {
+    font-size: $code-font-size;
+    padding: 0.15em 0.25em;
+    border-radius: 0.25em;
+    color: $accent;
+    background: $lighter;
+}
+
+pre {
+    background: $lighter;
+    font-size: $code-font-size;
+    margin: 1rem 0; // to be coherent with the regular-sized text
+    position: relative;
+    overflow: hidden;
+
+    code {
+        display: block;
+        border-radius: 0;
+        padding: 1em;
+        width: 100%;
+        box-sizing: border-box;
+        overflow-x: auto;
+    }
+
+    button {
+        display: none;
+        position: absolute;
+        top: 0;
+        right: 0;
+        cursor: pointer;
+        outline: none;
+        padding: 0.25em 0.5em;
+        border: 5px solid $background;
+        border-top: none;
+        border-right: none;
+        color: $accent;
+        background-color: $lighter;
+
+        &:hover {
+            color: $hover;
+        }
+
+        &:active {
+            color: $lighter; // just to give some click feedback
+        }
+    }
+
+    &:hover button {
+        display: block;
+    }
+}
+
+dt {
+    font-weight: bold;
+}
+
+blockquote {
+    margin: 1em 0;
+
+    p {
+        padding: 1em;
+        margin: 0;
+        background: $lighter;
+    }
+}
+
+hr {
+    border: none;
+    height: 1px;
+    background: $foreground;
+}
+
+a {
+    &:link, &:visited {
+        color: $accent;
+    }
+
+    &:hover {
+        color: $hover;
+
+        & > *:not(svg) { // XXX not for the GitHub corner
+            color: $hover;
+        }
+    }
+}
+
+p {
+    line-height: 1.25;
+}
+
+fieldset {
+    border: 1px solid $faint;
+    position: relative;
+    margin: 1em 0;
+    padding: 0 1em;
+    min-width: 0; // XXX needed to avoid outgrow with code blocks
+
+    legend {
+        color: $accent;
+        font-size: $small-font-size;
+        padding: 0 0.5em;
+        position: absolute;
+        background-color: $background;
+        top: -0.5lh;
+    }
+}
+
+::selection {
+    background-color: $foreground;
+    color: $background;
+}
+
+// page title
+
+h1 {
+    display: flex;
+    column-gap: 0.5rem;
+    row-gap: 0.5rem;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+
+    .buttons {
+        display: flex;
+        column-gap: 0.5rem;
+        row-gap: 0.5rem;
+        flex-wrap: wrap;
+
+        a.github-button {
+            visibility: hidden; // XXX avoid displaying the link text during loading
+        }
+
+        span {
+            display: flex; // XXX get rid of sapce around
+        }
+
+        #theme-switcher {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            user-select: none;
+
+            &:hover {
+                color: $hover;
+            }
+        }
+    }
+}
+
+// permalink on headings
+
+h2, h3, h4, h5, h5 {
+    .permalink {
+        margin-left: 5px;
+        text-decoration: none;
+        visibility: hidden;
+
+        &::before {
+            content: "#";
+        }
+    }
+
+    &:target {
+        border-left: 5px solid $accent;
+        padding-left: 5px;
+    }
+
+    &:hover {
+        .permalink {
+            visibility: visible;
+        }
+    }
+}
+
+// list and search
+
+#search-toolbox {
+    padding-top: 1px; // XXX needed for scrollIntoView
+    margin-top: 80px;
+    margin-bottom: 20px;
+    position: relative; // XXX needed for tooltip sizing
+
+    fieldset {
+        padding: 1em;
+        border-color: $accent;
+
+        legend {
+            color: $foreground;
+            font-size: initial;
+            font-weight: bold;
+        }
+    }
+
+    .search-filters {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+
+        a {
+            background: $lighter;
+            font-size: initial;
+            border-radius: 0.25em;
+
+            &:hover:before {
+                content: attr(data-title);
+                font-size: $small-font-size;
+                text-align: center;
+                display: block;
+                position: absolute;
+                left: 10%;
+                right: 10%;
+                margin-top: 1.75rem; // XXX below the button
+                padding: 1em;
+                color: $background;
+                background: $foreground;
+                border-radius: 0.25em;
+                pointer-events: none;
+                z-index: 1;
+            }
+        }
+    }
+
+    input {
+        // enlarge the click area
+        margin: -1rem;
+        padding: 1rem;
+        background: transparent;
+
+        // adjust the width due to negative padding
+        width: calc(100% + 2rem);
+
+        color: $foreground;
+        font-size: 1rem;
+        box-sizing: border-box;
+        outline: none;
+        border: none;
+    }
+}
+
+#gtfobin-table-wrapper {
+    min-height: 100vh;
+
+    #gtfobin-table {
+        width: 100%;
+        border-spacing: 0;
+
+        &, th, td {
+            border: none;
+        }
+
+        thead {
+            th {
+                padding: 1em;
+                text-align: left;
+
+                &:last-child {
+                    width: 100%;
+                }
+            }
+        }
+
+        tbody {
+            th {
+                padding: 0 1em;
+                font-family: monospace;
+                white-space: nowrap;
+                font-weight: normal;
+                text-align: left;
+
+                a {
+                    text-decoration: none;
+                }
+            }
+
+            td {
+                padding: 0.5em 1em;
+            }
+
+            tr:hover {
+                background: $lighter;
+            }
+        }
+
+        tfoot {
+            text-align: center;
+            padding: 1em;
+        }
+    }
+}
+
+// function and contexts buttons used in both the table and single pages
+
+.tag-list {
+    display: flex;
+    flex-wrap: wrap;
+    font-size: $small-font-size;
+    list-style: none;
+    column-gap: 0.25em;
+    row-gap: 0.25em;
+    padding: 0;
+    margin: 0;
+
+    li {
+        a {
+            display: inline-block;
+            padding: 0.25em 0.5em;
+            border: 1px solid $accent;
+        }
+
+        a:link, a:visited {
+            color: $accent;
+            text-decoration: none;
+        }
+
+        a:hover {
+            color: $hover;
+            border-color: $hover;
+        }
+
+        &.match a {
+            background: $marked;
+
+            &[data-matching-contexts]::after {
+                content: " (" attr(data-matching-contexts) ")";
+            }
+        }
+
+        &.inherit a {
+            border-style: dashed;
+        }
+    }
+}
+
+// function examples
+
+.examples {
+    display: table;
+    width: 100%;
+    table-layout: fixed;
+    counter-reset: item;
+    margin: 0;
+    padding: 0;
+
+    & > li {
+        display: table-row;
+
+        &:before {
+            display: table-cell;
+            font-size: $small-font-size;
+            font-weight: bold;
+            width: 3em;
+            text-align: center;
+            counter-increment: item;
+            content: "(" counter(item, lower-alpha) ")";
+        }
+    }
+}
+
+// context tabs
+
+.contexts {
+    display: flex;
+    flex-wrap: wrap;
+    margin: 1em 0;
+
+    input[type=radio] {
+        display: none;
+
+        &:checked + label {
+            color: $accent;
+            background: $background;
+            cursor: auto;
+        }
+
+        &:checked + label + div {
+            display: block;
+        }
+    }
+
+    & > label {
+        font-size: $small-font-size;
+        margin-left: 0.5em;
+        padding: 0.25em 0.5em;
+        border: 1px solid $faint;
+        border-bottom: none;
+        cursor: pointer;
+        position: relative;
+        top: 1px;
+
+        &:hover {
+            color: $hover;
+        }
+    }
+
+    & > div {
+        display: none;
+        flex-basis: 100%;
+        width: 0px; // XXX avoid growing
+        order: 999;
+        padding: 0 1em;
+        border: 1px solid $faint;
+    }
+}
+
+// description table
+
+.description-table {
+    border-collapse: collapse;
+
+    tbody {
+        th {
+            white-space: nowrap;
+            text-align: right;
+        }
+
+        th, td {
+            border: 1px solid $foreground;
+            padding: 0 0.5em;
+        }
+    }
+}
+
+// other classes
+
+.accent {
+    color: $accent;
+}
+
+.hidden {
+    display: none;
+}
+
+.logo {
+    $margin: 20px;
+    float: right;
+    width: 100px;
+    height: 100px;
+    margin-left: $margin;
+    margin-bottom: $margin;
+    pointer-events: none;
+    background-color: $logo-backdrop;
+    border: 1px solid $logo-backdrop;
+}
+
+.small {
+    font-size: $small-font-size;
+}
+
+.centered {
+    text-align: center;
+}
+
+svg.github-corner {
+    fill: $foreground;
+    color: $background;
+}

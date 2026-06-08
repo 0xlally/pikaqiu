@@ -1,0 +1,32 @@
+[Unit]
+Description=PikaQiu Agent — 自动化渗透测试智能体
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=root
+# 安装路径可由 install-service.sh 动态覆写
+WorkingDirectory=/opt/pikaqiu-agent
+ExecStart=/opt/pikaqiu-agent/venv/bin/python -m pikaqiu_agent
+ExecStop=/bin/kill -SIGTERM $MAINPID
+Restart=on-failure
+RestartSec=5
+StartLimitBurst=3
+StartLimitIntervalSec=60
+
+# 环境
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/opt/pikaqiu-agent/.env
+
+# 日志
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pikaqiu-agent
+
+# 安全加固
+NoNewPrivileges=no
+ProtectSystem=false
+
+[Install]
+WantedBy=multi-user.target

