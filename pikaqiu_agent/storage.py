@@ -389,6 +389,11 @@ class MissionStore:
                     self._conn.execute(f"ALTER TABLE memories ADD COLUMN {col} TEXT NOT NULL DEFAULT '{default_val}'")
                 except sqlite3.OperationalError:
                     pass  # Column already exists
+            for col in ("highest_value_lead", "blocked_reason", "next_one_command"):
+                try:
+                    self._conn.execute(f"ALTER TABLE memories ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
+                except sqlite3.OperationalError:
+                    pass  # Column already exists
 
     def set_meta(self, key: str, value: str) -> None:
         with self._lock, self._conn:
@@ -1098,6 +1103,9 @@ class MissionStore:
                     next_focus_json = ?,
                     nodes_json = ?,
                     topology_json = ?,
+                    highest_value_lead = ?,
+                    blocked_reason = ?,
+                    next_one_command = ?,
                     updated_at = ?
                 WHERE mission_id = ?
                 """,
@@ -1110,6 +1118,9 @@ class MissionStore:
                     _json_dumps(memory.get("next_focus", memory.get("nex_focus", []))),
                     _json_dumps(memory.get("nodes", {})),
                     _json_dumps(memory.get("topology", [])),
+                    str(memory.get("highest_value_lead", "")),
+                    str(memory.get("blocked_reason", "")),
+                    str(memory.get("next_one_command", "")),
                     _now(),
                     mission_id,
                 ),
@@ -1122,6 +1133,7 @@ class MissionStore:
                 SELECT summary, findings_json, leads_json,
                        dead_ends_json, credentials_json, next_focus_json,
                        nodes_json, topology_json,
+                       highest_value_lead, blocked_reason, next_one_command,
                        updated_at
                 FROM memories
                 WHERE mission_id = ?
@@ -1139,6 +1151,9 @@ class MissionStore:
                 "nex_focus": [],
                 "nodes": {},
                 "topology": [],
+                "highest_value_lead": "",
+                "blocked_reason": "",
+                "next_one_command": "",
                 "updated_at": "",
             }
         next_focus = _json_loads(row["next_focus_json"], [])
@@ -1152,6 +1167,9 @@ class MissionStore:
             "nex_focus": next_focus,
             "nodes": _json_loads(row["nodes_json"], {}),
             "topology": _json_loads(row["topology_json"], []),
+            "highest_value_lead": row["highest_value_lead"],
+            "blocked_reason": row["blocked_reason"],
+            "next_one_command": row["next_one_command"],
             "updated_at": row["updated_at"],
         }
 

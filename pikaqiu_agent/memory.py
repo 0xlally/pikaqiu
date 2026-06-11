@@ -266,6 +266,21 @@ def normalize_memory_enhanced(
                 )
             )
         ),
+        "highest_value_lead": str(
+            payload.get("highest_value_lead")
+            or updates.get("highest_value_lead")
+            or fallback.get("highest_value_lead", "")
+        ).strip(),
+        "blocked_reason": str(
+            payload.get("blocked_reason")
+            or updates.get("blocked_reason")
+            or fallback.get("blocked_reason", "")
+        ).strip(),
+        "next_one_command": str(
+            payload.get("next_one_command")
+            or updates.get("next_one_command")
+            or fallback.get("next_one_command", "")
+        ).strip(),
     }
     
     # Smart trimming with importance scoring

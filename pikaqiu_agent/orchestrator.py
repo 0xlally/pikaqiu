@@ -11,6 +11,7 @@ from typing import Any
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from pikaqiu_agent.config import AgentSettings
+from pikaqiu_agent import flag_capture as _flag_capture
 from pikaqiu_agent.knowledge import KnowledgeIndexer
 from pikaqiu_agent.llm_client import LLMClient, format_llm_error
 from pikaqiu_agent.memory import normalize_memory_enhanced, detect_stall, score_importance, retrieve_forgotten_context
@@ -25,6 +26,7 @@ from pikaqiu_agent.prompts import (
 from pikaqiu_agent.sandbox import SandboxExecutor
 from pikaqiu_agent.skill_loader import SkillLoader
 from pikaqiu_agent.storage import MissionStore
+from pikaqiu_agent import success_guards as _success_guards
 from pikaqiu_agent.tools import create_all_tools
 
 logger = logging.getLogger(__name__)
@@ -51,6 +53,26 @@ def _truncate_middle(text: str, limit: int) -> str:
     tail_size = limit - head_size - 80  # reserve space for marker
     marker = f"\n\n... [输出过长，中间省略 {len(text) - head_size - tail_size} 字符] ...\n\n"
     return text[:head_size] + marker + text[-tail_size:]
+
+
+# Keep older private imports pointed at the dependency-light implementation.
+_truncate_middle = _flag_capture.truncate_middle
+_is_placeholder_flag = _flag_capture.is_placeholder_flag
+_extract_flag_candidates = _flag_capture.extract_flag_candidates
+_trusted_tool_flag_candidates = _flag_capture.trusted_tool_flag_candidates
+_append_flag_candidate_summary = _flag_capture.append_flag_candidate_summary
+_auto_capture_trusted_flags = _flag_capture.auto_capture_trusted_flags
+_is_scan_like_tool_call = _success_guards.is_scan_like_tool_call
+_is_broad_scan_tool_call = _success_guards.is_broad_scan_tool_call
+_highest_value_lead = _success_guards.highest_value_lead
+_summarize_advice_result = _success_guards.summarize_advice_result
+_round_time_guidance = _success_guards.round_time_guidance
+_route_guard_guidance = _success_guards.route_guard_guidance
+_post_partial_flag_guidance = _success_guards.post_partial_flag_guidance
+
+
+def _tool_result_timed_out(row: dict[str, Any]) -> bool:
+    return "[TIMEOUT" in str(row.get("result_full") or row.get("result_summary") or "")
 
 
 def _observer_result_view(text: str, limit: int = 20000) -> str:
@@ -828,6 +850,7 @@ class OrchestratorManager:
         flag_captured = threading.Event()
         captured_flags: list[str] = []
         pending_observer_guidance: list[str] = []
+        mission_scan_timeout_count = 0
 
         start_round = max(1, self.store.get_max_round_no(mission_id) + 1)
         if start_round > max_rounds:
@@ -931,32 +954,33 @@ class OrchestratorManager:
             tool_call_log: list[dict[str, Any]] = []
 
             def on_flag(flag: str) -> str:
-                if flag in captured_flags:
-                    return f"[FLAG_DUPLICATE] {flag} 已提交过"
+                for existing in captured_flags:
+                    if flag.lower() == existing.lower():
+                        return f"[FLAG_DUPLICATE] {flag} already submitted"
                 captured_flags.append(flag)
                 remaining = max(0, expected_flags - len(captured_flags))
                 self.store.add_event(
                     mission_id=mission_id,
                     round_no=round_no,
                     event_type="flag",
-                    title="Flag 捕获",
+                    title="Flag captured",
                     content=f"{flag} ({len(captured_flags)}/{expected_flags})",
                 )
                 if remaining == 0:
                     flag_captured.set()
-                    return f"[FLAG_CAPTURED] {flag} — 已找到全部 {expected_flags} 个flag！任务完成。"
-                return f"[FLAG_CAPTURED] {flag} — 还需要找到 {remaining} 个flag，继续渗透！"
+                    return f"[FLAG_CAPTURED] {flag} - all {expected_flags} flag(s) found; mission complete."
+                return f"[FLAG_CAPTURED] {flag} - {remaining} flag(s) still needed; continue from this exact lead."
 
             def on_give_up(reason: str) -> str:
                 self.store.add_event(
                     mission_id=mission_id,
                     round_no=round_no,
                     event_type="system",
-                    title="🏳️ AI 主动放弃",
-                    content=f"原因: {reason}",
+                    title="AI gave up",
+                    content=f"Reason: {reason}",
                 )
                 self.store.request_stop(mission_id)
-                return "[GIVE_UP] 已标记放弃，任务将停止。"
+                return "[GIVE_UP] Mission marked to stop."
 
             # Streaming state: event_id updated per tool call so on_chunk knows where to write
             _streaming: dict[str, Any] = {"event_id": None, "display_cmd": ""}
@@ -1030,6 +1054,9 @@ class OrchestratorManager:
                         logger.warning("[orchestrator] memory cleaning failed: %s", clean_err)
 
             user_msg = self._build_round_user_message(round_no, _stall_rounds, mission["target"])
+            route_guard = _route_guard_guidance(memory)
+            if route_guard:
+                user_msg = f"{user_msg}\n\n{route_guard}"
 
             # Define messages first so tools can capture it by reference
             # messages[0] = SystemMessage (STABLE, never changes within mission → cache-friendly)
@@ -1083,6 +1110,8 @@ class OrchestratorManager:
             observer_seen_signatures: set[str] = set()
             round_start_time = time.monotonic()
             round_timeout_sec = mission.get("round_timeout_sec", self.settings.round_timeout_sec)
+            round_broad_scan_count = 0
+            last_time_guidance_tag = ""
 
             self.store.add_event(
                 mission_id=mission_id,
@@ -1110,6 +1139,14 @@ class OrchestratorManager:
                     )
                     logger.warning("[orchestrator] round %d timed out after %ds", round_no, int(elapsed))
                     break
+                remaining_round_time = round_timeout_sec - elapsed
+                time_guidance = _round_time_guidance(remaining_round_time)
+                time_guidance_tag = ""
+                if time_guidance:
+                    time_guidance_tag = "[ROUND_TIME_CRITICAL]" if "[ROUND_TIME_CRITICAL]" in time_guidance else "[ROUND_TIME_LIMITED]"
+                if time_guidance and time_guidance_tag != last_time_guidance_tag:
+                    messages.append(HumanMessage(content=time_guidance))
+                    last_time_guidance_tag = time_guidance_tag
 
                 if self._inject_human_guidance(
                     mission_id=mission_id,
@@ -1184,8 +1221,18 @@ class OrchestratorManager:
                         or tool_args.get("flag")
                         or _compact_json(tool_args)
                     )
+                    is_broad_scan = _is_broad_scan_tool_call(tool_name, str(display_cmd))
 
-                    if tool_name in tool_map:
+                    if is_broad_scan and round_broad_scan_count >= 1:
+                        running_event_id = None
+                        tool_result = (
+                            "[BROAD_SCAN_BLOCKED]\n"
+                            "This round already used one broad enumeration/scanning command. "
+                            "Do not start another broad scan in the same round. Use a targeted verification tied to "
+                            f"memory instead: {_highest_value_lead(memory) or 'the current strongest lead'}.\n"
+                            "[EXIT_CODE: 0]"
+                        )
+                    elif tool_name in tool_map:
                         try:
                             # Show "running" indicator immediately so user sees the command
                             running_event_id = self.store.add_event(
@@ -1212,7 +1259,34 @@ class OrchestratorManager:
                         tool_result = f"[unknown tool: {tool_name}]"
 
                     result_str = str(tool_result)
-                    truncated_result = _truncate_middle(result_str, stdout_limit)
+                    flag_candidates = _flag_capture.trusted_tool_flag_candidates(tool_name, result_str)
+                    auto_flag_events = _flag_capture.auto_capture_trusted_flag_events(
+                        tool_name=tool_name,
+                        result_str=result_str,
+                        captured_flags=captured_flags,
+                        on_flag=on_flag,
+                        is_complete=flag_captured.is_set,
+                    )
+                    auto_flag_results = [message for _, message in auto_flag_events]
+                    truncated_result = _summarize_advice_result(tool_name, result_str, stdout_limit)
+                    truncated_result = _flag_capture.append_flag_candidate_summary(truncated_result, flag_candidates)
+                    if auto_flag_results:
+                        truncated_result += "\n\n[AUTO_FLAG_CAPTURE]\n" + "\n".join(auto_flag_results)
+                        for flag, _message in auto_flag_events:
+                            self.store.add_event(
+                                mission_id=mission_id,
+                                round_no=round_no,
+                                event_type="auto_flag_capture",
+                                title=f"Auto flag capture from {tool_name}",
+                                content=_flag_capture.flag_context(result_str, flag) or flag,
+                                command=str(display_cmd)[:1000],
+                                metadata={
+                                    "tool": tool_name,
+                                    "flag": flag,
+                                    "tool_call_id": tool_id,
+                                    "complete": flag_captured.is_set(),
+                                },
+                            )
                     self._record_command_event(
                         mission_id=mission_id,
                         round_no=round_no,
@@ -1225,6 +1299,18 @@ class OrchestratorManager:
 
                     messages.append(ToolMessage(content=truncated_result, tool_call_id=tool_id))
 
+                    if is_broad_scan:
+                        round_broad_scan_count += 1
+                        if round_broad_scan_count > 1:
+                            lead = _highest_value_lead(memory)
+                            deferred_guidance.append(
+                                "[BROAD_SCAN_LIMIT]\n"
+                                "This round already used a broad enumeration/scanning command. Stop starting more broad scans. "
+                                "Next action must be a targeted verification tied to a concrete endpoint, parameter, response "
+                                f"difference, or this lead: {lead or 'the strongest current memory lead'}.\n"
+                                "[/BROAD_SCAN_LIMIT]"
+                            )
+
                     # Defer timeout guidance — cannot insert HumanMessage between ToolMessages
                     if "[TIMEOUT" in result_str:
                         deferred_guidance.append(
@@ -1232,6 +1318,38 @@ class OrchestratorManager:
                             "考虑：缩小扫描范围、使用更快的工具、"
                             "或后台运行（nohup ... &）后用 tail 检查结果。"
                         )
+
+                    if "[TIMEOUT" in result_str:
+                        recent_scan_timeouts = sum(
+                            1 for row in round_tool_call_log[-3:]
+                            if _tool_result_timed_out(row)
+                            and _is_scan_like_tool_call(
+                                str(row.get("tool") or ""),
+                                str(row.get("args_full") or ""),
+                            )
+                        )
+                        if _is_scan_like_tool_call(tool_name, str(display_cmd)):
+                            recent_scan_timeouts += 1
+                        if recent_scan_timeouts >= 2:
+                            deferred_guidance.append(
+                                "连续扫描/爆破类工具超时。停止扩大扫描，回到当前 memory 中最高价值的已验证线索，"
+                                "下一步只做一个小范围、可解释、能产出原始证据的验证。"
+                            )
+
+                    if "[TIMEOUT" in result_str:
+                        deferred_guidance.append(
+                            f"Command `{str(display_cmd)[:100]}` timed out. Shrink the scope, use a faster targeted probe, "
+                            "or run a background job only when it preserves a concrete result to inspect."
+                        )
+                        if _is_scan_like_tool_call(tool_name, str(display_cmd)):
+                            mission_scan_timeout_count += 1
+                            if mission_scan_timeout_count >= 2:
+                                deferred_guidance.append(
+                                    "[MISSION_SCAN_TIMEOUT_GUARD]\n"
+                                    "This mission has already had at least two scan-like timeouts. Lower priority for ffuf/arjun/nuclei/sqlmap "
+                                    f"and prefer exact verification from memory: {_highest_value_lead(memory) or 'current highest-value lead'}.\n"
+                                    "[/MISSION_SCAN_TIMEOUT_GUARD]"
+                                )
 
                     tool_call_entry = {
                         "tool": tool_name,
@@ -1246,6 +1364,12 @@ class OrchestratorManager:
                     tool_call_log.append(tool_call_entry)
                     round_tool_call_log.append(tool_call_entry)
                     tool_exec_count += 1
+
+                    if auto_flag_results and not flag_captured.is_set():
+                        deferred_guidance.append(_post_partial_flag_guidance(captured_flags, expected_flags))
+
+                    if auto_flag_results and flag_captured.is_set():
+                        break
 
                     rule_decision = self.observer.observe_tool_call(
                         mission=mission,

@@ -195,6 +195,26 @@ class ObserverRuntime:
     ) -> ObserverDecision:
         self.ensure_session(mission_id)
         rule_decision = rule_decision.normalised()
+        if (
+            rule_decision.severity == "critical"
+            and any("possible flag" in problem.lower() for problem in rule_decision.problems)
+        ):
+            self._record_decision(
+                mission_id=mission_id,
+                round_no=round_no,
+                phase=phase,
+                decision=rule_decision,
+                step=0,
+                used_experience=[],
+                used_skills=[],
+            )
+            self._set_status(
+                mission_id,
+                "waiting_next_round",
+                phase=phase,
+                last_decision=rule_decision.to_dict(),
+            )
+            return rule_decision
         transcript: list[dict[str, Any]] = []
         used_experience: list[str] = []
         used_skills: list[str] = []
@@ -322,6 +342,10 @@ class ObserverRuntime:
             "Default to not blindly trusting the main agent's execution claims. Accept only observable "
             "evidence from tool output, memory, transcript, and loaded experience. Keep the tone practical "
             "and collaborative; your goal is to help the main agent reach the objective, not to compete with it.\n\n"
+            "Sandbox note: tool banners such as 'Kali sandbox local execution result' describe where the "
+            "command ran, not whether HTTP/TCP output is target evidence. Judge the actual URL, status code, "
+            "headers, response body, cookies, and command stdout/stderr instead of rejecting the output solely "
+            "because the command executed from the sandbox.\n\n"
             "You are a supervisory LLM agent, not a general multi-agent framework. "
             "The term sub-agent here means only you, Observer. Do not create agents, spawn agents, "
             "run commands, submit flags, pause the main agent, or modify mission activated skills.\n\n"
@@ -740,6 +764,9 @@ class ObserverRuntime:
             "dead_ends": memory.get("dead_ends", [])[-8:],
             "next_focus": memory.get("next_focus", [])[-8:],
             "credentials": memory.get("credentials", [])[-4:],
+            "highest_value_lead": memory.get("highest_value_lead", ""),
+            "blocked_reason": memory.get("blocked_reason", ""),
+            "next_one_command": memory.get("next_one_command", ""),
         }
 
     def _tool_call_views(

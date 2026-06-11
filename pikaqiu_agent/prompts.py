@@ -36,6 +36,12 @@ def _build_memory_section(memory: dict[str, Any]) -> str:
         parts.append(f"**态势摘要**: {memory['summary']}")
     if memory.get("credentials"):
         parts.append("**已获凭据**: " + " | ".join(str(c) for c in memory["credentials"]))
+    if memory.get("highest_value_lead"):
+        parts.append(f"**Highest-value lead**: {memory['highest_value_lead']}")
+    if memory.get("blocked_reason"):
+        parts.append(f"**Current blocker**: {memory['blocked_reason']}")
+    if memory.get("next_one_command"):
+        parts.append(f"**Next one command**: {memory['next_one_command']}")
     if memory.get("findings"):
         findings_str = "\n".join(f"- {f}" for f in memory["findings"][:10])
         parts.append(f"**关键发现**:\n{findings_str}")
@@ -378,6 +384,9 @@ def build_tool_memory_prompt(
   "dead_ends": ["..."],
   "credentials": ["..."],
   "next_focus": ["..."],
+  "highest_value_lead": "the single most valuable verified lead to close next",
+  "blocked_reason": "what currently prevents flag capture, if known",
+  "next_one_command": "one concrete next verification command or empty string",
   "nodes": {{
     "IP/主机名": {{
       "role": "角色 (Web Server/DB/etc.)",
