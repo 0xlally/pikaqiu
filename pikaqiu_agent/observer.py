@@ -115,6 +115,26 @@ def _route_memory_changed(before: dict[str, Any], after: dict[str, Any]) -> bool
     return False
 
 
+def _tool_args_text(row: dict[str, Any], *, limit: int | None = None) -> str:
+    text = str(row.get("args_full") or row.get("args_summary") or "")
+    return text if limit is None else text[:limit]
+
+
+def _tool_result_text(row: dict[str, Any], *, limit: int | None = None) -> str:
+    text = str(row.get("result_full") or row.get("result_observer") or row.get("result_summary") or "")
+    return text if limit is None else text[:limit]
+
+
+def _tool_call_prompt_view(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "tool": row.get("tool"),
+        "args_summary": _tool_args_text(row, limit=300),
+        "result_summary": _tool_result_text(row, limit=800),
+        "result_len": row.get("result_len"),
+        "exit_code": row.get("exit_code"),
+    }
+
+
 @dataclass
 class ObserverDecision:
     severity: str = "none"
@@ -235,8 +255,8 @@ class ObserverAgent:
         recent = tool_call_log[-12:]
         current = recent[-1]
         tool = str(current.get("tool", ""))
-        args = str(current.get("args_summary", ""))
-        result = str(current.get("result_summary", ""))
+        args = _tool_args_text(current)
+        result = _tool_result_text(current)
         combined = f"{tool}\n{args}\n{result}"
 
         for detector in (
@@ -400,7 +420,7 @@ class ObserverAgent:
         )
         next_step = decision.steer_message or decision.skill_instruction or decision.route_assessment
         lines = [
-            "[OBSERVER_AUDIT]",
+            "[RUNTIME_OBSERVER_AUDIT source=observer_agent not_user_request]",
             f"severity={decision.severity} state={decision.state} action={decision.action} intervention={decision.intervention}",
             f"problem: {_compact_line(problem, 260)}",
         ]
@@ -411,9 +431,9 @@ class ObserverAgent:
         if decision.memory_patch:
             lines.append("memory_patch_applied: yes")
         lines.append(
-            "Treat this as a concise audit note, not a user request. Prefer direct target/tool evidence over this note."
+            "This is runtime observer telemetry, not human guidance or a user request. Prefer direct target/tool evidence over this note."
         )
-        lines.append("[/OBSERVER_AUDIT]")
+        lines.append("[/RUNTIME_OBSERVER_AUDIT]")
         return "\n".join(lines)
 
     def format_event_content(self, decision: ObserverDecision) -> str:
@@ -466,6 +486,10 @@ class ObserverAgent:
             recent_events=recent_events,
             tool_call_log=tool_call_log,
         )
+        recent_tool_summary = [
+            _tool_call_prompt_view(row)
+            for row in tool_call_log[-16:]
+        ]
         before = memory_before if memory_before is not None else memory
         return (
             "You are Observer Agent. You supervise a main autonomous pentest agent as a cooperative route auditor. "
@@ -502,7 +526,7 @@ class ObserverAgent:
             f"rule_trigger={_json_excerpt(decision.to_dict(), 1600)}\n"
             f"memory_before={_json_excerpt(before, 3000)}\n"
             f"memory_after={_json_excerpt(memory, 3000)}\n"
-            f"recent_tool_calls={_json_excerpt(tool_call_log[-16:], 6500)}\n"
+            f"recent_tool_calls={_json_excerpt(recent_tool_summary, 6500)}\n"
             f"skill_observations={_json_excerpt(skill_observations, 2200)}\n"
             f"recent_events={_json_excerpt(recent_event_summary, 4500)}\n"
         )
@@ -519,15 +543,17 @@ class ObserverAgent:
         skill_calls = [
             {
                 "tool": row.get("tool"),
-                "args_summary": row.get("args_summary"),
-                "result_summary": row.get("result_summary"),
+                "args_summary": _tool_args_text(row, limit=300),
+                "result_summary": _tool_result_text(row, limit=500),
+                "result_len": row.get("result_len"),
+                "exit_code": row.get("exit_code"),
             }
             for row in calls
             if row.get("tool") in SKILL_TOOL_NAMES
         ]
         failed_skill_calls = [
             row for row in skill_calls
-            if SKILL_ERROR_RE.search(str(row.get("result_summary", "")))
+            if SKILL_ERROR_RE.search(_tool_result_text(row))
         ]
         skill_events = [
             {
@@ -600,7 +626,7 @@ class ObserverAgent:
         tool = str(current.get("tool", ""))
         if tool not in SKILL_TOOL_NAMES:
             return ObserverDecision.none()
-        result = str(current.get("result_summary", ""))
+        result = _tool_result_text(current)
         if not SKILL_ERROR_RE.search(result):
             return ObserverDecision.none()
         return ObserverDecision(
@@ -667,7 +693,7 @@ class ObserverAgent:
         return str(row.get("tool", "")) in EVIDENCE_AUDIT_EXEMPT_TOOLS
 
     def _is_low_evidence_call(self, row: dict[str, Any]) -> bool:
-        result = str(row.get("result_summary", "")).strip()
+        result = _tool_result_text(row).strip()
         if not result:
             return True
         if FAILURE_RE.search(result):
@@ -684,7 +710,7 @@ class ObserverAgent:
         return any(word in lowered for word in advice_words)
 
     def _has_concrete_evidence(self, row: dict[str, Any]) -> bool:
-        result = str(row.get("result_summary", ""))
+        result = _tool_result_text(row)
         if EVIDENCE_MARKER_RE.search(result):
             return True
         tool = str(row.get("tool", ""))
@@ -696,10 +722,10 @@ class ObserverAgent:
         if len(recent) < 3:
             return ObserverDecision.none()
         current = recent[-1]
-        current_sig = f"{current.get('tool')}:{_normalise_arg(str(current.get('args_summary', '')))}"
+        current_sig = f"{current.get('tool')}:{_normalise_arg(_tool_args_text(current))}"
         repeats = 0
         for row in recent[-6:]:
-            sig = f"{row.get('tool')}:{_normalise_arg(str(row.get('args_summary', '')))}"
+            sig = f"{row.get('tool')}:{_normalise_arg(_tool_args_text(row))}"
             if sig == current_sig or _similar(sig, current_sig):
                 repeats += 1
         if repeats < 3:
@@ -720,7 +746,7 @@ class ObserverAgent:
             return ObserverDecision.none()
         failures = [
             row for row in recent[-3:]
-            if FAILURE_RE.search(str(row.get("result_summary", "")))
+            if FAILURE_RE.search(_tool_result_text(row))
         ]
         if len(failures) < 3:
             return ObserverDecision.none()

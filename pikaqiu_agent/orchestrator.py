@@ -53,6 +53,35 @@ def _truncate_middle(text: str, limit: int) -> str:
     return text[:head_size] + marker + text[-tail_size:]
 
 
+def _observer_result_view(text: str, limit: int = 20000) -> str:
+    """Return a head+tail view for Observer route audit.
+
+    The tail often contains exit codes, stderr, final status, and flags, so a
+    prefix-only summary is too lossy for supervision.
+    """
+    text = str(text or "")
+    if len(text) <= limit:
+        return text
+    marker = f"\n\n... [observer view truncated {len(text) - limit} chars] ...\n\n"
+    head_size = max(1000, int(limit * 0.35))
+    tail_size = max(1000, limit - head_size - len(marker))
+    return text[:head_size] + marker + text[-tail_size:]
+
+
+def _tool_call_memory_view(tool_call_log: list[dict[str, Any]], *, limit: int = 30) -> list[dict[str, Any]]:
+    rows = tool_call_log[-limit:]
+    return [
+        {
+            "tool": row.get("tool"),
+            "args_summary": row.get("args_summary"),
+            "result_summary": row.get("result_summary"),
+            "result_len": row.get("result_len"),
+            "exit_code": row.get("exit_code"),
+        }
+        for row in rows
+    ]
+
+
 def _is_benign_sigpipe(display_cmd: str, result_str: str, exit_code: int) -> bool:
     """Treat common help-output truncation as success.
 
@@ -334,7 +363,7 @@ class OrchestratorManager:
                 mission=mission,
                 previous_memory=memory,
                 round_no=round_no,
-                tool_call_log=tool_call_log,
+                tool_call_log=_tool_call_memory_view(tool_call_log),
             )
             pool = ThreadPoolExecutor(max_workers=1)
             try:
@@ -1207,7 +1236,12 @@ class OrchestratorManager:
                     tool_call_entry = {
                         "tool": tool_name,
                         "args_summary": str(display_cmd)[:300],
+                        "args_full": str(display_cmd),
                         "result_summary": result_str[:500],
+                        "result_observer": _observer_result_view(result_str),
+                        "result_full": result_str,
+                        "result_len": len(result_str),
+                        "exit_code": _infer_tool_exit_code(result_str, str(display_cmd)),
                     }
                     tool_call_log.append(tool_call_entry)
                     round_tool_call_log.append(tool_call_entry)
@@ -1382,7 +1416,7 @@ class OrchestratorManager:
                 mission=mission,
                 previous_memory=memory,
                 round_no=round_no,
-                tool_call_log=round_tool_call_log,
+                tool_call_log=_tool_call_memory_view(round_tool_call_log),
             )
             try:
                 pool = ThreadPoolExecutor(max_workers=1)

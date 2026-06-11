@@ -119,14 +119,15 @@ class ObserverRuntime:
         round_tool_call_log: list[dict[str, Any]],
         rule_decision: ObserverDecision,
     ) -> ObserverDecision:
+        latest = (tool_call_log or [{}])[-1]
         observation = {
             "phase": "tool_result",
             "mission": self._mission_view(mission),
             "memory": self._memory_view(memory),
             "captured_flags": captured_flags,
-            "latest_tool_call": (tool_call_log or [{}])[-1],
-            "recent_tool_calls": (tool_call_log or [])[-12:],
-            "round_tool_calls": (round_tool_call_log or [])[-12:],
+            "latest_tool_call": self._tool_call_view(latest, include_observer_result=True),
+            "recent_tool_calls": self._tool_call_views((tool_call_log or [])[-12:]),
+            "round_tool_calls": self._tool_call_views((round_tool_call_log or [])[-12:]),
             "rule_observation": rule_decision.to_dict(),
         }
         return self._run_observer_loop(
@@ -169,8 +170,8 @@ class ObserverRuntime:
             "captured_flags": captured_flags,
             "llm_call_count": llm_call_count,
             "stall_rounds": stall_rounds,
-            "recent_tool_calls": (tool_call_log or [])[-16:],
-            "round_tool_calls": (round_tool_call_log or [])[-16:],
+            "recent_tool_calls": self._tool_call_views((tool_call_log or [])[-16:]),
+            "round_tool_calls": self._tool_call_views((round_tool_call_log or [])[-16:], include_observer_result=True),
             "rule_observation": rule_decision.to_dict(),
         }
         return self._run_observer_loop(
@@ -227,6 +228,7 @@ class ObserverRuntime:
                         args,
                         fallback=rule_decision,
                         used_experience=used_experience,
+                        used_skills=used_skills,
                     )
                     decision = self.observer.combine_decisions(rule_decision, decision)
                     self._record_decision(
@@ -352,7 +354,8 @@ class ObserverRuntime:
             "When judging whether the main agent route is correct, combine the current evidence with /experience "
             "best practices. You may search or load experience as needed. If you think the main agent should use "
             "a skill, search/load skills only for your own judgement, then output action=skill_signal and a concise "
-            "skill_signal; do not activate it yourself."
+            "skill_signal; do not activate it yourself. If you loaded a skill, name the exact skill id and put the "
+            "main agent handoff in skill_instruction as an activate_skill(skill_id=\"...\", reason=\"...\") call."
         )
 
     def _build_prompt(
@@ -539,13 +542,27 @@ class ObserverRuntime:
         *,
         fallback: ObserverDecision,
         used_experience: list[str],
+        used_skills: list[str] | None = None,
     ) -> ObserverDecision:
         if not isinstance(payload, dict):
             payload = {}
+        used_skills = used_skills or []
         refs = _as_list(payload.get("experience_refs"))
         for ref in used_experience:
             if ref not in refs:
                 refs.append(ref)
+        skill_signal = str(payload.get("skill_signal") or fallback.skill_signal)
+        skill_instruction = str(payload.get("skill_instruction") or "")
+        if used_skills and not skill_signal:
+            skill_signal = (
+                f"activate_skill: {used_skills[-1]} because Observer loaded it as relevant to the current evidence"
+            )
+        if used_skills and "activate_skill" not in skill_instruction:
+            skill_instruction = (
+                f"Call activate_skill(skill_id=\"{used_skills[-1]}\", reason=\"Observer identified this skill "
+                "as relevant to the current evidence\"), then follow the returned SKILL.md guidance. "
+                + skill_instruction
+            ).strip()
         action = str(payload.get("action") or "")
         intervention = str(payload.get("intervention") or "")
         if not intervention:
@@ -564,9 +581,9 @@ class ObserverRuntime:
             problems=_as_list(payload.get("problems") or fallback.problems),
             steer_message=str(payload.get("steer_message") or fallback.steer_message),
             memory_patch=payload.get("memory_patch") if isinstance(payload.get("memory_patch"), dict) else fallback.memory_patch,
-            skill_card=str(payload.get("skill_signal") or payload.get("skill_card") or fallback.skill_card),
-            skill_instruction=str(payload.get("skill_instruction") or ""),
-            skill_signal=str(payload.get("skill_signal") or fallback.skill_signal),
+            skill_card=str(skill_signal or payload.get("skill_card") or fallback.skill_card),
+            skill_instruction=skill_instruction,
+            skill_signal=skill_signal,
             experience_refs=refs,
             visible_summary=str(payload.get("visible_summary") or payload.get("summary") or ""),
         ).normalised()
@@ -724,3 +741,33 @@ class ObserverRuntime:
             "next_focus": memory.get("next_focus", [])[-8:],
             "credentials": memory.get("credentials", [])[-4:],
         }
+
+    def _tool_call_views(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        include_observer_result: bool = False,
+    ) -> list[dict[str, Any]]:
+        return [
+            self._tool_call_view(row, include_observer_result=include_observer_result)
+            for row in rows
+        ]
+
+    def _tool_call_view(
+        self,
+        row: dict[str, Any],
+        *,
+        include_observer_result: bool = False,
+    ) -> dict[str, Any]:
+        result = str(row.get("result_observer") or row.get("result_summary") or "")
+        data = {
+            "tool": row.get("tool"),
+            "args_summary": row.get("args_summary"),
+            "result_summary": row.get("result_summary"),
+            "result_len": row.get("result_len"),
+            "exit_code": row.get("exit_code"),
+        }
+        if include_observer_result:
+            data["args_full"] = str(row.get("args_full") or row.get("args_summary") or "")[:1200]
+            data["result_observer"] = result
+        return data

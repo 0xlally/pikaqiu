@@ -491,7 +491,13 @@ def create_activate_skill_tool(
     return activate_skill
 
 
-def create_skill_reference_tool(skills, default_max_chars: int = 20000) -> BaseTool:
+def create_skill_reference_tool(
+    skills,
+    *,
+    store=None,
+    mission: dict[str, Any] | None = None,
+    default_max_chars: int = 20000,
+) -> BaseTool:
     @tool("skill_read_reference", args_schema=SkillReferenceInput)
     def skill_read_reference(skill_id: str, path: str, max_chars: int = 20000) -> str:
         """Read an optional reference file bundled inside an activated skill.
@@ -502,6 +508,26 @@ def create_skill_reference_tool(skills, default_max_chars: int = 20000) -> BaseT
         try:
             configured_max = max(1000, int(default_max_chars or 20000))
             max_chars = max(1000, min(int(max_chars or configured_max), configured_max))
+            current_mission = mission or {}
+            mission_id = str(current_mission.get("id") or "").strip()
+            if store and mission_id:
+                current_mission = store.get_mission(mission_id) or current_mission
+            active_ids = {
+                str(item).strip()
+                for item in (
+                    list(current_mission.get("skills", []))
+                    + list(current_mission.get("activated_skills", []))
+                )
+                if str(item).strip()
+            }
+            if str(skill_id).strip() not in active_ids:
+                return json.dumps({
+                    "ok": False,
+                    "skill_id": skill_id,
+                    "path": path,
+                    "error": "skill reference can only be read after the skill is selected or activated for this mission",
+                    "hint": "Call skill_search with the current evidence, then activate_skill with a valid returned skill id before reading references.",
+                }, ensure_ascii=False, indent=2)
             return skills.read_reference(skill_id, path, max_chars=max_chars)
         except Exception as exc:
             logger.exception("[skill_read_reference] failed")
@@ -717,7 +743,12 @@ def create_all_tools(
                 mission=mission,
                 prompt_max_chars=skill_prompt_max_chars,
             ),
-            create_skill_reference_tool(skills, default_max_chars=skill_reference_max_chars),
+            create_skill_reference_tool(
+                skills,
+                store=store,
+                mission=mission,
+                default_max_chars=skill_reference_max_chars,
+            ),
         ])
     if llm_client and mission:
         tools.append(create_adviser_tool(llm_client, mission, memory=memory, current_messages=current_messages))
