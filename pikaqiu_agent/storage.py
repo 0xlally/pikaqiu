@@ -465,16 +465,58 @@ class MissionStore:
     def list_missions(self) -> list[dict[str, Any]]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT * FROM missions ORDER BY created_at DESC, rowid DESC"
+                """
+                SELECT m.*, flags.captured_flags_blob AS captured_flags_blob
+                FROM missions m
+                LEFT JOIN (
+                  SELECT mission_id, GROUP_CONCAT(content, char(31)) AS captured_flags_blob
+                  FROM (
+                    SELECT mission_id, content
+                    FROM events
+                    WHERE type = 'flag'
+                    ORDER BY id ASC
+                  )
+                  GROUP BY mission_id
+                ) flags ON flags.mission_id = m.id
+                ORDER BY m.created_at DESC, m.rowid DESC
+                """
             ).fetchall()
         return [self._mission_row(row) for row in rows]
 
     def get_mission(self, mission_id: str) -> dict[str, Any] | None:
         with self._lock:
             row = self._conn.execute(
-                "SELECT * FROM missions WHERE id = ?", (mission_id,)
+                """
+                SELECT m.*, flags.captured_flags_blob AS captured_flags_blob
+                FROM missions m
+                LEFT JOIN (
+                  SELECT mission_id, GROUP_CONCAT(content, char(31)) AS captured_flags_blob
+                  FROM (
+                    SELECT mission_id, content
+                    FROM events
+                    WHERE type = 'flag'
+                    ORDER BY id ASC
+                  )
+                  GROUP BY mission_id
+                ) flags ON flags.mission_id = m.id
+                WHERE m.id = ?
+                """,
+                (mission_id,),
             ).fetchone()
         return self._mission_row(row) if row else None
+
+    def get_captured_flags(self, mission_id: str) -> list[str]:
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT content
+                FROM events
+                WHERE mission_id = ? AND type = 'flag'
+                ORDER BY id ASC
+                """,
+                (mission_id,),
+            ).fetchall()
+        return self._captured_flags_from_contents(row["content"] for row in rows)
 
     def list_experiment_records(self) -> list[dict[str, Any]]:
         with self._lock:
@@ -1553,6 +1595,7 @@ class MissionStore:
               COALESCE(ev.command_count, 0) AS command_count,
               COALESCE(ev.error_count, 0) AS error_count,
               COALESCE(ev.flag_count, 0) AS flag_count,
+              flags.captured_flags_blob AS captured_flags_blob,
               ev.first_started_at AS first_started_at,
               ev.last_ended_at AS last_ended_at
             FROM missions m
@@ -1569,6 +1612,16 @@ class MissionStore:
               FROM events
               GROUP BY mission_id
             ) ev ON ev.mission_id = m.id
+            LEFT JOIN (
+              SELECT mission_id, GROUP_CONCAT(content, char(31)) AS captured_flags_blob
+              FROM (
+                SELECT mission_id, content
+                FROM events
+                WHERE type = 'flag'
+                ORDER BY id ASC
+              )
+              GROUP BY mission_id
+            ) flags ON flags.mission_id = m.id
             {where_sql}
             ORDER BY COALESCE(er.updated_at, m.updated_at) DESC, m.created_at DESC
         """
@@ -1587,6 +1640,9 @@ class MissionStore:
     def _experiment_row(self, row: sqlite3.Row) -> dict[str, Any]:
         mission_status = row["mission_status"]
         flag_count = int(row["flag_count"] or 0)
+        captured_flags = self._captured_flags_from_blob(row["captured_flags_blob"])
+        if captured_flags:
+            flag_count = len(captured_flags)
         outcome = str(row["outcome"] or "").strip()
         if not outcome:
             outcome = "success" if flag_count > 0 else self._default_experiment_outcome(mission_status)
@@ -1618,10 +1674,16 @@ class MissionStore:
             "command_count": int(row["command_count"] or 0),
             "error_count": int(row["error_count"] or 0),
             "flag_count": flag_count,
+            "captured_flags": captured_flags,
+            "captured_flag_count": flag_count,
             "updated_at": row["record_updated_at"] or row["mission_updated_at"],
         }
 
     def _mission_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        if "captured_flags_blob" in row.keys():
+            captured_flags = self._captured_flags_from_blob(row["captured_flags_blob"])
+        else:
+            captured_flags = self.get_captured_flags(row["id"])
         return {
             "id": row["id"],
             "name": row["name"],
@@ -1640,6 +1702,8 @@ class MissionStore:
             "human_collab_enabled": bool(row["human_collab_enabled"]) if "human_collab_enabled" in row.keys() else False,
             "error_message": row["error_message"],
             "stop_requested": bool(row["stop_requested"]),
+            "captured_flags": captured_flags,
+            "captured_flag_count": len(captured_flags),
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
@@ -1657,6 +1721,31 @@ class MissionStore:
             "started_at": row["started_at"],
             "ended_at": row["ended_at"],
         }
+
+    def _flag_from_event_content(self, content: str) -> str:
+        text = str(content or "").strip()
+        if not text:
+            return ""
+        return text.splitlines()[0].rsplit(" (", 1)[0].strip()
+
+    def _captured_flags_from_blob(self, blob: Any) -> list[str]:
+        if not blob:
+            return []
+        return self._captured_flags_from_contents(str(blob).split("\x1f"))
+
+    def _captured_flags_from_contents(self, contents: Iterable[Any]) -> list[str]:
+        flags: list[str] = []
+        seen: set[str] = set()
+        for content in contents:
+            flag = self._flag_from_event_content(str(content or ""))
+            if not flag:
+                continue
+            key = flag.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            flags.append(flag)
+        return flags
 
     def _observer_agent_row(self, row: sqlite3.Row) -> dict[str, Any]:
         return {

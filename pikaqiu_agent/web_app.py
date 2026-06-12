@@ -227,6 +227,7 @@ def create_app(runtime: AppRuntime | None = None) -> Flask:
         mission = rt().store.get_mission(mission_id)
         if not mission:
             return _json_error("mission not found", 404)
+        captured_flags = rt().store.get_captured_flags(mission_id)
         return jsonify({
             "mission": mission,
             "memory": rt().store.get_memory(mission_id),
@@ -234,6 +235,8 @@ def create_app(runtime: AppRuntime | None = None) -> Flask:
             "events": rt().store.get_events(mission_id),
             "observer": rt().store.get_observer_summary(mission_id),
             "experiment": rt().store.get_experiment_record(mission_id),
+            "captured_flags": captured_flags,
+            "captured_flag_count": len(captured_flags),
             "human_guidance": rt().store.get_human_guidance(mission_id),
             "thread_alive": rt().orchestrator.thread_alive(mission_id),
         })

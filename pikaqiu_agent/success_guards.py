@@ -16,6 +16,24 @@ BROAD_SCAN_RE = re.compile(
     r"\b(directory-list|raft-|common\.txt|seclists|wordlist|FUZZ)\b",
     re.I,
 )
+WORDLIST_SCAN_RE = re.compile(
+    r"(\s|^)(-w|--wordlist)(\s|=)|\b(directory-list|raft-|common\.txt|seclists|wordlist|FUZZ)\b",
+    re.I,
+)
+COOLDOWN_SCAN_TOOL_RE = re.compile(r"\b(ffuf|arjun|nuclei|sqlmap)\b", re.I)
+TARGETED_PROBE_RE = re.compile(
+    r"\b(curl|httpx|python|python3|requests|openssl|nc|ncat)\b|"
+    r"https?://[^\s'\"]+(/[^\s'\"]+|\?[^\s'\"]+)",
+    re.I,
+)
+EXPLICIT_TARGET_RE = re.compile(
+    r"https?://[^\s'\"/?]+(?::\d+)?(?:/[^\s'\"]*)?\?[^\s'\"]+|"
+    r"https?://[^\s'\"/?]+(?::\d+)?/[^\s'\"\?]+|"
+    r"(\s|^)(--data|-d|--cookie|-H|--header|-p|--param|--path)(\s|=)",
+    re.I,
+)
+MEMORY_MISSING_TOOL_RE = re.compile(r"`?([A-Za-z0-9_.+-]+)`?\s+is unavailable\b", re.I)
+MISSING_TOOL_RE = re.compile(r"(?:^|\n)(?:bash:\s+line\s+\d+:\s+)?([A-Za-z0-9_.+-]+):\s+command not found\b")
 ADVICE_RESULT_TOOLS = {"ask_adviser", "knowledge_search"}
 
 
@@ -29,6 +47,19 @@ def is_broad_scan_tool_call(tool_name: str, display_cmd: str) -> bool:
     if tool_name not in {"bash_exec", "python_exec"}:
         return False
     return bool(BROAD_SCAN_RE.search(str(display_cmd or "")))
+
+
+def is_wordlist_scan_tool_call(tool_name: str, display_cmd: str) -> bool:
+    if tool_name not in {"bash_exec", "python_exec"}:
+        return False
+    return bool(WORDLIST_SCAN_RE.search(str(display_cmd or "")))
+
+
+def is_targeted_probe_tool_call(tool_name: str, display_cmd: str) -> bool:
+    if tool_name not in {"bash_exec", "python_exec"}:
+        return False
+    cmd = str(display_cmd or "")
+    return bool(TARGETED_PROBE_RE.search(cmd)) and not bool(WORDLIST_SCAN_RE.search(cmd))
 
 
 def last_memory_item(memory: dict[str, Any], *keys: str) -> str:
@@ -45,6 +76,65 @@ def last_memory_item(memory: dict[str, Any], *keys: str) -> str:
 
 def highest_value_lead(memory: dict[str, Any]) -> str:
     return last_memory_item(memory, "highest_value_lead", "next_focus", "leads", "findings")
+
+
+def next_verification_hint(memory: dict[str, Any]) -> str:
+    return last_memory_item(memory, "next_one_command", "highest_value_lead", "next_focus", "leads", "findings")
+
+
+def broad_scan_block_message(memory: dict[str, Any], *, reason: str = "round") -> str:
+    lead = next_verification_hint(memory) or "the current strongest lead"
+    return (
+        "[BROAD_SCAN_BLOCKED]\n"
+        f"Broad enumeration is blocked by the {reason} guard. "
+        "Run one targeted verification tied to memory, or explicitly explain why this lead is wrong before trying another scan.\n"
+        f"Next targeted lead: {lead}\n"
+        "[EXIT_CODE: 0]"
+    )
+
+
+def mission_scan_cooldown_blocks(tool_name: str, display_cmd: str, scan_timeout_count: int) -> bool:
+    if scan_timeout_count < 2:
+        return False
+    if tool_name not in {"bash_exec", "python_exec"}:
+        return False
+    cmd = str(display_cmd or "")
+    if not COOLDOWN_SCAN_TOOL_RE.search(cmd):
+        return False
+    if WORDLIST_SCAN_RE.search(cmd):
+        return True
+    return not bool(EXPLICIT_TARGET_RE.search(cmd))
+
+
+def missing_tool_name(result_str: str) -> str:
+    match = MISSING_TOOL_RE.search(str(result_str or ""))
+    return match.group(1) if match else ""
+
+
+def known_missing_tool_blocks(display_cmd: str, missing_tools: set[str]) -> str:
+    cmd = str(display_cmd or "").lower()
+    for tool in sorted(missing_tools):
+        if re.search(rf"(^|[\s;|&]){re.escape(tool.lower())}($|[\s;|&-])", cmd):
+            return tool
+    return ""
+
+
+def missing_tools_from_memory(memory: dict[str, Any]) -> set[str]:
+    tools: set[str] = set()
+    for item in memory.get("dead_ends", []) or []:
+        match = MEMORY_MISSING_TOOL_RE.search(str(item or ""))
+        if match:
+            tools.add(match.group(1).lower())
+    return tools
+
+
+def missing_tool_block_message(tool: str) -> str:
+    return (
+        "[MISSING_TOOL_BLOCKED]\n"
+        f"`{tool}` was already observed as unavailable in this sandbox. "
+        "Use curl with raw headers/body, page HTML, and small local parsing instead of retrying the missing tool.\n"
+        "[EXIT_CODE: 0]"
+    )
 
 
 def summarize_advice_result(tool_name: str, result_str: str, limit: int) -> str:
@@ -153,7 +243,16 @@ def post_partial_flag_guidance(captured_flags: list[str], expected_flags: int) -
 
 _is_scan_like_tool_call = is_scan_like_tool_call
 _is_broad_scan_tool_call = is_broad_scan_tool_call
+_is_wordlist_scan_tool_call = is_wordlist_scan_tool_call
+_is_targeted_probe_tool_call = is_targeted_probe_tool_call
 _highest_value_lead = highest_value_lead
+_next_verification_hint = next_verification_hint
+_broad_scan_block_message = broad_scan_block_message
+_mission_scan_cooldown_blocks = mission_scan_cooldown_blocks
+_missing_tool_name = missing_tool_name
+_known_missing_tool_blocks = known_missing_tool_blocks
+_missing_tools_from_memory = missing_tools_from_memory
+_missing_tool_block_message = missing_tool_block_message
 _summarize_advice_result = summarize_advice_result
 _round_time_guidance = round_time_guidance
 _route_guard_guidance = route_guard_guidance

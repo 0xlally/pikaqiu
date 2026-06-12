@@ -238,6 +238,22 @@ class ObserverDecision:
         return asdict(self.normalised())
 
 
+def should_inject_decision(decision: ObserverDecision, *, phase: str) -> bool:
+    """Decide whether an Observer decision should enter the main-agent context."""
+    decision = decision.normalised()
+    if not decision.actionable:
+        return False
+    if phase == "tool":
+        return decision.action == "steer" and decision.severity in {"warn", "critical"}
+    if decision.severity == "critical":
+        return True
+    if phase == "round" and decision.state in {"stalled", "repeated", "risky"}:
+        return True
+    if phase == "round" and decision.intervention in {"follow_up", "rollback_steer"}:
+        return True
+    return False
+
+
 class ObserverAgent:
     """Rule-triggered observer with LLM-owned progress, memory, and skill judgement."""
 
@@ -263,6 +279,7 @@ class ObserverAgent:
             lambda: self._detect_unsubmitted_flag(combined, captured_flags),
             lambda: self._detect_scope_risk(mission, tool, args),
             lambda: self._detect_skill_tool_issue(recent),
+            lambda: self._detect_local_script_error_loop(recent),
             lambda: self._detect_failure_loop(recent),
             lambda: self._detect_low_evidence_execution(recent),
             lambda: self._detect_repetition(recent),
@@ -758,5 +775,27 @@ class ObserverAgent:
             steer_message=(
                 "Stop stacking payloads on a failing path. Next step must print raw status, headers/body or stderr, "
                 "identify the failure cause, and run one smaller verification probe before continuing."
+            ),
+        )
+
+    def _detect_local_script_error_loop(self, recent: list[dict[str, Any]]) -> ObserverDecision:
+        if len(recent) < 2:
+            return ObserverDecision.none()
+        pattern = re.compile(r"SyntaxError|unterminated string|unexpected EOF|shell quoting|unexpected end of file", re.I)
+        failures = [
+            row for row in recent[-3:]
+            if str(row.get("tool", "")) in {"bash_exec", "python_exec"}
+            and pattern.search(_tool_result_text(row))
+        ]
+        if len(failures) < 2:
+            return ObserverDecision.none()
+        return ObserverDecision(
+            severity="warn",
+            state="stalled",
+            intervention="steer",
+            problems=["local script or shell quoting errors repeated before producing target evidence"],
+            steer_message=(
+                "Stop retrying malformed inline code. Use a minimal Python heredoc or save a short script, "
+                "then print raw status/stdout/stderr from one targeted verification."
             ),
         )

@@ -15,7 +15,7 @@ from pikaqiu_agent import flag_capture as _flag_capture
 from pikaqiu_agent.knowledge import KnowledgeIndexer
 from pikaqiu_agent.llm_client import LLMClient, format_llm_error
 from pikaqiu_agent.memory import normalize_memory_enhanced, detect_stall, score_importance, retrieve_forgotten_context
-from pikaqiu_agent.observer import ObserverAgent, ObserverDecision
+from pikaqiu_agent.observer import ObserverAgent, ObserverDecision, should_inject_decision
 from pikaqiu_agent.observer_runtime import ObserverRuntime
 from pikaqiu_agent.prompts import (
     build_tool_system_prompt,
@@ -65,10 +65,17 @@ _auto_capture_trusted_flags = _flag_capture.auto_capture_trusted_flags
 _is_scan_like_tool_call = _success_guards.is_scan_like_tool_call
 _is_broad_scan_tool_call = _success_guards.is_broad_scan_tool_call
 _highest_value_lead = _success_guards.highest_value_lead
+_next_verification_hint = _success_guards.next_verification_hint
 _summarize_advice_result = _success_guards.summarize_advice_result
 _round_time_guidance = _success_guards.round_time_guidance
 _route_guard_guidance = _success_guards.route_guard_guidance
 _post_partial_flag_guidance = _success_guards.post_partial_flag_guidance
+_broad_scan_block_message = _success_guards.broad_scan_block_message
+_mission_scan_cooldown_blocks = _success_guards.mission_scan_cooldown_blocks
+_missing_tool_name = _success_guards.missing_tool_name
+_known_missing_tool_blocks = _success_guards.known_missing_tool_blocks
+_missing_tools_from_memory = _success_guards.missing_tools_from_memory
+_missing_tool_block_message = _success_guards.missing_tool_block_message
 
 
 def _tool_result_timed_out(row: dict[str, Any]) -> bool:
@@ -184,16 +191,7 @@ def _estimate_messages_size(messages: list) -> int:
 def _observer_should_inject(decision: ObserverDecision, *, phase: str) -> bool:
     """Keep Observer low-noise: UI/event memory always records it, but main-agent
     injection is reserved for stop-the-line issues or clear stalls."""
-    decision = decision.normalised()
-    if not decision.actionable:
-        return False
-    if decision.severity == "critical":
-        return True
-    if phase == "round" and decision.state in {"stalled", "repeated", "risky"}:
-        return True
-    if phase == "round" and decision.intervention in {"follow_up", "rollback_steer"}:
-        return True
-    return False
+    return should_inject_decision(decision, phase=phase)
 
 
 class OrchestratorManager:
@@ -381,6 +379,42 @@ class OrchestratorManager:
     ) -> None:
         """Run a final memory compression so DA can analyze the mission outcome."""
         try:
+            flag_events = [
+                event for event in self.store.get_events(mission_id)
+                if event.get("type") == "flag"
+            ]
+            if flag_events:
+                flags = self.store.get_captured_flags(mission_id)
+                completion_finding = (
+                    "mission_complete=true; captured_flags="
+                    + ", ".join(flags)
+                    + "; source_event_ids="
+                    + ",".join(str(event.get("id")) for event in flag_events)
+                )
+                enriched_memory = dict(memory)
+                findings = list(enriched_memory.get("findings") or [])
+                if completion_finding not in findings:
+                    findings.append(completion_finding)
+                enriched_memory.update({
+                    "mission_complete": True,
+                    "captured_flags": flags,
+                    "captured_flag_event_ids": [event.get("id") for event in flag_events],
+                    "blocked_reason": "",
+                    "findings": findings,
+                })
+                memory = enriched_memory
+                self.store.add_event(
+                    mission_id=mission_id,
+                    round_no=round_no,
+                    event_type="memory_agent",
+                    title="Final completion context",
+                    content=completion_finding,
+                    metadata={
+                        "mission_complete": True,
+                        "captured_flags": flags,
+                        "captured_flag_event_ids": [event.get("id") for event in flag_events],
+                    },
+                )
             memory_prompt = build_tool_memory_prompt(
                 mission=mission,
                 previous_memory=memory,
@@ -394,6 +428,15 @@ class OrchestratorManager:
             finally:
                 pool.shutdown(wait=False)
             new_memory = normalize_memory_enhanced(memory_result.payload, memory)
+            if flag_events:
+                new_memory["mission_complete"] = True
+                new_memory["captured_flags"] = flags
+                new_memory["captured_flag_event_ids"] = [event.get("id") for event in flag_events]
+                new_memory["blocked_reason"] = ""
+                findings = list(new_memory.get("findings") or [])
+                if completion_finding not in findings:
+                    findings.append(completion_finding)
+                new_memory["findings"] = findings
             self.store.set_memory(mission_id, new_memory)
             self.store.add_event(
                 mission_id=mission_id,
@@ -783,6 +826,8 @@ class OrchestratorManager:
     def _inject_observer_steer(
         self,
         *,
+        mission_id: str | None = None,
+        round_no: int | None = None,
         messages: list[Any] | None,
         pending_guidance: list[str] | None,
         decision: ObserverDecision,
@@ -794,11 +839,28 @@ class OrchestratorManager:
         injection = self.observer.format_injection(decision)
         if messages is not None:
             messages.append(HumanMessage(content=injection))
-            return True
-        if pending_guidance is not None:
+            injected = True
+        elif pending_guidance is not None:
             pending_guidance.append(injection)
-            return True
-        return False
+            injected = True
+        else:
+            return False
+        if mission_id and round_no is not None:
+            self.store.add_event(
+                mission_id=mission_id,
+                round_no=round_no,
+                event_type="observer_agent",
+                title="Observer steer injected",
+                content=decision.steer_message or decision.skill_instruction or decision.route_assessment,
+                metadata={
+                    "observer": decision.to_dict(),
+                    "injected": True,
+                    "phase": phase,
+                    "injection_signature": decision.signature(),
+                    "next_step": decision.steer_message or decision.skill_instruction or decision.route_assessment,
+                },
+            )
+        return injected
 
     def _run_mission_tool_use(
         self,
@@ -851,6 +913,7 @@ class OrchestratorManager:
         captured_flags: list[str] = []
         pending_observer_guidance: list[str] = []
         mission_scan_timeout_count = 0
+        missing_tools_seen: set[str] = _missing_tools_from_memory(memory)
 
         start_round = max(1, self.store.get_max_round_no(mission_id) + 1)
         if start_round > max_rounds:
@@ -886,6 +949,7 @@ class OrchestratorManager:
 
             mission = self.store.get_mission(mission_id) or mission
             memory = self.store.get_memory(mission_id)
+            missing_tools_seen.update(_missing_tools_from_memory(memory))
 
             manual_skill_ids = [
                 str(item).strip()
@@ -1223,15 +1287,16 @@ class OrchestratorManager:
                     )
                     is_broad_scan = _is_broad_scan_tool_call(tool_name, str(display_cmd))
 
-                    if is_broad_scan and round_broad_scan_count >= 1:
+                    blocked_missing_tool = _known_missing_tool_blocks(str(display_cmd), missing_tools_seen)
+                    if blocked_missing_tool:
                         running_event_id = None
-                        tool_result = (
-                            "[BROAD_SCAN_BLOCKED]\n"
-                            "This round already used one broad enumeration/scanning command. "
-                            "Do not start another broad scan in the same round. Use a targeted verification tied to "
-                            f"memory instead: {_highest_value_lead(memory) or 'the current strongest lead'}.\n"
-                            "[EXIT_CODE: 0]"
-                        )
+                        tool_result = _missing_tool_block_message(blocked_missing_tool)
+                    elif is_broad_scan and round_broad_scan_count >= 1:
+                        running_event_id = None
+                        tool_result = _broad_scan_block_message(memory, reason="per-round broad scan")
+                    elif _mission_scan_cooldown_blocks(tool_name, str(display_cmd), mission_scan_timeout_count):
+                        running_event_id = None
+                        tool_result = _broad_scan_block_message(memory, reason="mission scan timeout cooldown")
                     elif tool_name in tool_map:
                         try:
                             # Show "running" indicator immediately so user sees the command
@@ -1299,8 +1364,30 @@ class OrchestratorManager:
 
                     messages.append(ToolMessage(content=truncated_result, tool_call_id=tool_id))
 
+                    missing_tool = _missing_tool_name(result_str)
+                    if missing_tool:
+                        missing_tools_seen.add(missing_tool)
+                        patch = {
+                            "dead_ends": [
+                                f"`{missing_tool}` is unavailable in the sandbox; use curl/raw headers/body/HTML parsing instead."
+                            ]
+                        }
+                        memory = self._apply_observer_memory_patch(
+                            mission_id=mission_id,
+                            round_no=round_no,
+                            memory=memory,
+                            decision=ObserverDecision(
+                                severity="info",
+                                state="progressing",
+                                intervention="memory_sync",
+                                action="memory_patch",
+                                memory_patch=patch,
+                            ),
+                        )
+
                     if is_broad_scan:
-                        round_broad_scan_count += 1
+                        if "[BROAD_SCAN_BLOCKED]" not in result_str:
+                            round_broad_scan_count += 1
                         if round_broad_scan_count > 1:
                             lead = _highest_value_lead(memory)
                             deferred_guidance.append(
@@ -1397,6 +1484,12 @@ class OrchestratorManager:
                                 decision=observer_decision,
                                 phase="steer",
                             )
+                            memory = self._apply_observer_memory_patch(
+                                mission_id=mission_id,
+                                round_no=round_no,
+                                memory=memory,
+                                decision=observer_decision,
+                            )
                             observer_batch_decisions.append(observer_decision)
 
                     if flag_captured.is_set():
@@ -1412,13 +1505,9 @@ class OrchestratorManager:
                         observer_batch_decisions,
                         key=lambda d: severity_rank.get(d.severity, 0),
                     )
-                    memory = self._apply_observer_memory_patch(
+                    self._inject_observer_steer(
                         mission_id=mission_id,
                         round_no=round_no,
-                        memory=memory,
-                        decision=observer_decision,
-                    )
-                    self._inject_observer_steer(
                         messages=messages,
                         pending_guidance=None,
                         decision=observer_decision,
@@ -1588,6 +1677,8 @@ class OrchestratorManager:
             )
             if round_observer_decision.actionable:
                 self._inject_observer_steer(
+                    mission_id=mission_id,
+                    round_no=round_no,
                     messages=None,
                     pending_guidance=pending_observer_guidance,
                     decision=round_observer_decision,
