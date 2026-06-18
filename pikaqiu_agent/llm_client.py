@@ -326,12 +326,29 @@ class LLMClient:
         result = self._invoke(self._main_model, prompt, role="memory")
         return self._ensure_memory_payload(result, previous_memory)
 
+    def invoke_experience_distill(self, prompt: str) -> str:
+        """Use the memory model to distill a successful mission into Markdown."""
+        if self.settings.use_mock_llm:
+            return (
+                "# Distilled Experience\n\n"
+                "source_mission_id: mock\n"
+                "confidence: low\n\n"
+                "## Vulnerability Type\nMock success path.\n\n"
+                "## Successful Payload / Command Chain\n- mock\n\n"
+                "## Evidence Chain\n- mock\n"
+            )
+        result = self._invoke(self._main_model, prompt, role="experience_distill")
+        return (result.raw_text or "").strip()
+
     def _ensure_memory_payload(
         self,
         result: LLMResult,
         previous_memory: dict[str, Any],
     ) -> LLMResult:
-        if any(key in result.payload for key in ("summary", "findings", "leads", "dead_ends", "next_focus")):
+        if any(
+            key in result.payload
+            for key in ("summary", "idea_board", "memory_board", "findings", "leads", "dead_ends", "next_focus")
+        ):
             return result
 
         summary = _extract_text(result.payload, result.raw_text)

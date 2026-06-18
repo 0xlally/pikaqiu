@@ -29,7 +29,13 @@ def _target_url(target: str) -> str:
 
 def _build_memory_section(memory: dict[str, Any]) -> str:
     """Build the memory section text from memory dict."""
-    if not (memory.get("summary") or memory.get("findings") or memory.get("credentials")):
+    if not (
+        memory.get("summary")
+        or memory.get("idea_board")
+        or memory.get("memory_board")
+        or memory.get("findings")
+        or memory.get("credentials")
+    ):
         return ""
     parts = []
     if memory.get("summary"):
@@ -69,6 +75,76 @@ def _build_memory_section(memory: dict[str, Any]) -> str:
     if memory.get("topology"):
         topo_str = " | ".join(memory["topology"][:10])
         parts.append(f"**🗺️ 网络拓扑**: {topo_str}")
+    return "\n\n".join(parts)
+
+
+def _build_memory_section_v2(memory: dict[str, Any]) -> str:
+    """Build the low-noise two-board memory section for the solver."""
+    if not isinstance(memory, dict):
+        return ""
+
+    parts: list[str] = []
+    idea = memory.get("idea_board") if isinstance(memory.get("idea_board"), dict) else {}
+    board = memory.get("memory_board") if isinstance(memory.get("memory_board"), dict) else {}
+
+    if memory.get("summary"):
+        parts.append(f"**Situation summary**: {memory['summary']}")
+
+    if idea:
+        lines = ["**Idea Board**:"]
+        for label, key in (
+            ("active_direction", "active_direction"),
+            ("primary_hypothesis", "primary_hypothesis"),
+            ("next_verification", "next_verification"),
+            ("risk_or_blocker", "risk_or_blocker"),
+            ("failure_boundary", "failure_boundary"),
+            ("blocked_prerequisite", "blocked_prerequisite"),
+            ("required_next_evidence", "required_next_evidence"),
+        ):
+            if idea.get(key):
+                lines.append(f"- {label}: {idea[key]}")
+        if idea.get("next_actions"):
+            lines.append("- next_actions: " + " | ".join(str(x) for x in idea["next_actions"][:6]))
+        if idea.get("candidate_directions"):
+            lines.append(
+                "- candidate_directions: "
+                + " | ".join(str(x) for x in idea["candidate_directions"][:6])
+            )
+        if idea.get("abandoned"):
+            lines.append("- abandoned: " + " | ".join(str(x) for x in idea["abandoned"][:6]))
+        parts.append("\n".join(lines))
+
+    if board:
+        lines = ["**Memory Board**:"]
+        if board.get("facts"):
+            lines.append("facts:\n" + "\n".join(f"- {x}" for x in board["facts"][:12]))
+        if board.get("evidence"):
+            lines.append("evidence:\n" + "\n".join(f"- {x}" for x in board["evidence"][:8]))
+        if board.get("constraints"):
+            lines.append("constraints: " + " | ".join(str(x) for x in board["constraints"][:8]))
+        if board.get("credentials"):
+            lines.append("credentials: " + " | ".join(str(x) for x in board["credentials"][:6]))
+        if board.get("failed_attempts"):
+            lines.append(
+                "failed_attempts: " + " | ".join(str(x) for x in board["failed_attempts"][:8])
+            )
+        parts.append("\n".join(lines))
+
+    if memory.get("nodes"):
+        node_lines = ["**Nodes**:"]
+        for ip, node in memory["nodes"].items():
+            role = node.get("role", "unknown")
+            access = node.get("access_level", "none")
+            flags = node.get("flags_found", [])
+            suffix = f" flags={', '.join(flags)}" if flags else ""
+            node_lines.append(f"- {ip} ({role}) access={access}{suffix}")
+        parts.append("\n".join(node_lines))
+
+    if memory.get("topology"):
+        parts.append("**Topology**: " + " | ".join(str(x) for x in memory["topology"][:10]))
+
+    if not parts:
+        return _build_memory_section(memory)
     return "\n\n".join(parts)
 
 
@@ -183,6 +259,37 @@ def build_volatile_context(
     return "\n\n".join(parts)
 
 
+def build_volatile_context(
+    *,
+    round_no: int,
+    memory: dict[str, Any],
+    captured_flags: list[str] | None = None,
+    expected_flags: int = 1,
+    experience_hints: str = "",
+) -> str:
+    """Build low-noise volatile context from Idea/Memory boards plus hints."""
+    parts = [f"## Current State\n- Round: {round_no}"]
+    flags = captured_flags or []
+    if expected_flags > 1:
+        if flags:
+            remaining = max(0, expected_flags - len(flags))
+            parts.append(
+                f"- Flags: {len(flags)}/{expected_flags} captured ({', '.join(flags)}); "
+                f"{remaining} remaining."
+            )
+        else:
+            parts.append(f"- Flags: 0/{expected_flags} captured; continue after the first flag.")
+
+    memory_section = _build_memory_section_v2(memory)
+    parts.append(
+        "## Shared Memory\n"
+        + (memory_section if memory_section else "(first round; no shared memory yet)")
+    )
+    if experience_hints.strip():
+        parts.append(experience_hints.strip())
+    return "\n\n".join(parts)
+
+
 def build_tool_system_prompt(
     *,
     mission: dict[str, Any],
@@ -226,7 +333,10 @@ def build_tool_system_prompt(
             "These blocks are generated by the orchestrator's Observer agent, not by the human user. Treat them as "
             "low-noise route-audit telemetry: consider the warning, but prefer direct target/tool evidence and the "
             "mission goal. If a block includes `skill_signal`, call `skill_search` or `activate_skill` yourself with "
-            "a valid returned skill id; the Observer does not activate skills for you."
+            "a valid returned skill id; the Observer does not activate skills for you. If Observer severity is "
+            "critical or includes `next_verification`, the next action must either run that verification, produce "
+            "new observable evidence that disproves it, or record a clear failure_boundary with required_next_evidence. "
+            "Do not rely on your own statement that a route is exhausted; Observer audits stop eligibility."
         ),
         "\n".join(mission_lines),
         _build_skill_catalog_section(skill_catalog),
@@ -268,7 +378,7 @@ def build_tool_system_prompt(
             "- **ask_observer**: 当你怀疑重复、空转、跑偏，或不确定 skill 是否该检索/激活/已出错时，询问观察纠偏 agent\n"
             "- **ask_adviser**: 专家顾问，详述已尝试的步骤和观察\n"
             "- **submit_flag**: 找到flag后立即提交\n"
-            "- **give_up**: 在多轮无进展且已充分尝试后放弃"
+            "- **give_up**: request Observer stop audit only; stopping is allowed only with failure_boundary, blocked_prerequisite, and required_next_evidence."
         ),
         (
             "## 工具选择速查\n"
@@ -387,6 +497,13 @@ def build_tool_memory_prompt(
   "highest_value_lead": "the single most valuable verified lead to close next",
   "blocked_reason": "what currently prevents flag capture, if known",
   "next_one_command": "one concrete next verification command or empty string",
+  "primary_hypothesis": "current evidence-backed hypothesis being tested, or empty string",
+  "next_verification": "the exact next evidence-producing verification, or empty string",
+  "failure_boundary": "missing_evidence | missing_tool | unanswered_hypothesis | hypothesis_disproved | stale_plan | execution_quality | external_limit | empty string",
+  "blocked_prerequisite": "what prerequisite blocks progress, if proven",
+  "required_next_evidence": "raw evidence needed before stopping or switching route",
+  "observer_enforcement_state": "pending | blocked | allow_stop | override | resolved | empty string",
+  "agent_override_reason": "why the main agent overrode Observer steer, if applicable",
   "nodes": {{
     "IP/主机名": {{
       "role": "角色 (Web Server/DB/etc.)",
@@ -401,6 +518,80 @@ def build_tool_memory_prompt(
 }}
 
 {node_note}
+"""
+
+
+def build_tool_memory_prompt(
+    *,
+    mission: dict[str, Any],
+    previous_memory: dict[str, Any],
+    round_no: int,
+    tool_call_log: list[dict[str, Any]],
+) -> str:
+    """Build the two-board MemoryAgent compression prompt."""
+    return f"""\
+You are the MemoryAgent. Compress this round into two shared state boards.
+
+Rules:
+- Idea Board is the decision board: current best direction, active hypothesis, next verification, blocker, failure boundary, and abandoned routes.
+- Memory Board is the durable fact board: verified facts, evidence, credentials, constraints, failed attempts, nodes, and topology.
+- Do not mix process logs into either board. Preserve only reusable signal.
+- Do not turn local sandbox actions into target facts.
+- Legacy fields are compatibility projections and must stay consistent with the boards:
+  findings = memory_board.facts
+  leads = idea_board.candidate_directions
+  dead_ends = memory_board.failed_attempts
+  credentials = memory_board.credentials
+  next_focus = idea_board.next_actions
+- Return strict JSON. The first character must be {{.
+
+Mission:
+{_json({"target": mission["target"], "goal": mission["goal"], "round_no": round_no})}
+
+Previous shared memory:
+{_json(previous_memory)}
+
+Recent tool calls:
+{_json(tool_call_log[-30:])}
+
+Return JSON:
+{{
+  "summary": "short situation summary",
+  "idea_board": {{
+    "active_direction": "single best direction to push now",
+    "primary_hypothesis": "current evidence-backed hypothesis",
+    "next_verification": "one exact next evidence-producing command or check",
+    "next_actions": ["small concrete follow-up checks"],
+    "candidate_directions": ["other plausible routes still worth keeping"],
+    "risk_or_blocker": "current blocker or risk",
+    "failure_boundary": "missing_evidence | missing_tool | unanswered_hypothesis | hypothesis_disproved | stale_plan | execution_quality | external_limit | empty string",
+    "blocked_prerequisite": "proven prerequisite blocking progress",
+    "required_next_evidence": "raw evidence needed before stopping or switching route",
+    "abandoned": ["routes not to repeat and why"]
+  }},
+  "memory_board": {{
+    "facts": ["verified reusable facts only"],
+    "evidence": ["compact source-backed evidence snippets"],
+    "constraints": ["scope/runtime/tool constraints"],
+    "credentials": ["confirmed credentials/tokens"],
+    "failed_attempts": ["failed paths and concrete reason"],
+    "nodes": {{}},
+    "topology": []
+  }},
+  "findings": ["same as memory_board.facts"],
+  "leads": ["same as idea_board.candidate_directions"],
+  "dead_ends": ["same as memory_board.failed_attempts"],
+  "credentials": ["same as memory_board.credentials"],
+  "next_focus": ["same as idea_board.next_actions"],
+  "highest_value_lead": "same as idea_board.active_direction",
+  "blocked_reason": "same as idea_board.risk_or_blocker",
+  "next_one_command": "same as idea_board.next_verification",
+  "primary_hypothesis": "same as idea_board.primary_hypothesis",
+  "next_verification": "same as idea_board.next_verification",
+  "failure_boundary": "same as idea_board.failure_boundary",
+  "blocked_prerequisite": "same as idea_board.blocked_prerequisite",
+  "required_next_evidence": "same as idea_board.required_next_evidence"
+}}
 """
 
 

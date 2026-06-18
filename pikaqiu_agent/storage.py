@@ -9,6 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
+from pikaqiu_agent.memory import normalize_shared_memory_state
+
 
 def _now() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
@@ -308,6 +310,8 @@ class MissionStore:
                   dead_ends_json TEXT NOT NULL,
                   credentials_json TEXT NOT NULL,
                   next_focus_json TEXT NOT NULL,
+                  idea_board_json TEXT NOT NULL DEFAULT '{}',
+                  memory_board_json TEXT NOT NULL DEFAULT '{}',
                   updated_at TEXT NOT NULL,
                   FOREIGN KEY(mission_id) REFERENCES missions(id)
                 );
@@ -389,7 +393,24 @@ class MissionStore:
                     self._conn.execute(f"ALTER TABLE memories ADD COLUMN {col} TEXT NOT NULL DEFAULT '{default_val}'")
                 except sqlite3.OperationalError:
                     pass  # Column already exists
-            for col in ("highest_value_lead", "blocked_reason", "next_one_command"):
+            # Migration: two-board shared memory model
+            for col in ("idea_board_json", "memory_board_json"):
+                try:
+                    self._conn.execute(f"ALTER TABLE memories ADD COLUMN {col} TEXT NOT NULL DEFAULT '{{}}'")
+                except sqlite3.OperationalError:
+                    pass  # Column already exists
+            for col in (
+                "highest_value_lead",
+                "blocked_reason",
+                "next_one_command",
+                "primary_hypothesis",
+                "next_verification",
+                "failure_boundary",
+                "blocked_prerequisite",
+                "required_next_evidence",
+                "observer_enforcement_state",
+                "agent_override_reason",
+            ):
                 try:
                     self._conn.execute(f"ALTER TABLE memories ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
                 except sqlite3.OperationalError:
@@ -1133,6 +1154,7 @@ class MissionStore:
         return list(reversed([self._event_row(row) for row in rows]))
 
     def set_memory(self, mission_id: str, memory: dict[str, Any]) -> None:
+        memory = normalize_shared_memory_state(memory)
         with self._lock, self._conn:
             self._conn.execute(
                 """
@@ -1143,11 +1165,20 @@ class MissionStore:
                     dead_ends_json = ?,
                     credentials_json = ?,
                     next_focus_json = ?,
+                    idea_board_json = ?,
+                    memory_board_json = ?,
                     nodes_json = ?,
                     topology_json = ?,
                     highest_value_lead = ?,
                     blocked_reason = ?,
                     next_one_command = ?,
+                    primary_hypothesis = ?,
+                    next_verification = ?,
+                    failure_boundary = ?,
+                    blocked_prerequisite = ?,
+                    required_next_evidence = ?,
+                    observer_enforcement_state = ?,
+                    agent_override_reason = ?,
                     updated_at = ?
                 WHERE mission_id = ?
                 """,
@@ -1158,11 +1189,20 @@ class MissionStore:
                     _json_dumps(memory.get("dead_ends", [])),
                     _json_dumps(memory.get("credentials", [])),
                     _json_dumps(memory.get("next_focus", memory.get("nex_focus", []))),
+                    _json_dumps(memory.get("idea_board", {})),
+                    _json_dumps(memory.get("memory_board", {})),
                     _json_dumps(memory.get("nodes", {})),
                     _json_dumps(memory.get("topology", [])),
                     str(memory.get("highest_value_lead", "")),
                     str(memory.get("blocked_reason", "")),
                     str(memory.get("next_one_command", "")),
+                    str(memory.get("primary_hypothesis", "")),
+                    str(memory.get("next_verification", "")),
+                    str(memory.get("failure_boundary", "")),
+                    str(memory.get("blocked_prerequisite", "")),
+                    str(memory.get("required_next_evidence", "")),
+                    str(memory.get("observer_enforcement_state", "")),
+                    str(memory.get("agent_override_reason", "")),
                     _now(),
                     mission_id,
                 ),
@@ -1174,8 +1214,12 @@ class MissionStore:
                 """
                 SELECT summary, findings_json, leads_json,
                        dead_ends_json, credentials_json, next_focus_json,
+                       idea_board_json, memory_board_json,
                        nodes_json, topology_json,
                        highest_value_lead, blocked_reason, next_one_command,
+                       primary_hypothesis, next_verification, failure_boundary,
+                       blocked_prerequisite, required_next_evidence,
+                       observer_enforcement_state, agent_override_reason,
                        updated_at
                 FROM memories
                 WHERE mission_id = ?
@@ -1193,13 +1237,22 @@ class MissionStore:
                 "nex_focus": [],
                 "nodes": {},
                 "topology": [],
+                "idea_board": {},
+                "memory_board": {},
                 "highest_value_lead": "",
                 "blocked_reason": "",
                 "next_one_command": "",
+                "primary_hypothesis": "",
+                "next_verification": "",
+                "failure_boundary": "",
+                "blocked_prerequisite": "",
+                "required_next_evidence": "",
+                "observer_enforcement_state": "",
+                "agent_override_reason": "",
                 "updated_at": "",
             }
         next_focus = _json_loads(row["next_focus_json"], [])
-        return {
+        memory = {
             "summary": row["summary"],
             "findings": _json_loads(row["findings_json"], []),
             "leads": _json_loads(row["leads_json"], []),
@@ -1207,13 +1260,23 @@ class MissionStore:
             "credentials": _json_loads(row["credentials_json"], []),
             "next_focus": next_focus,
             "nex_focus": next_focus,
+            "idea_board": _json_loads(row["idea_board_json"], {}),
+            "memory_board": _json_loads(row["memory_board_json"], {}),
             "nodes": _json_loads(row["nodes_json"], {}),
             "topology": _json_loads(row["topology_json"], []),
             "highest_value_lead": row["highest_value_lead"],
             "blocked_reason": row["blocked_reason"],
             "next_one_command": row["next_one_command"],
+            "primary_hypothesis": row["primary_hypothesis"],
+            "next_verification": row["next_verification"],
+            "failure_boundary": row["failure_boundary"],
+            "blocked_prerequisite": row["blocked_prerequisite"],
+            "required_next_evidence": row["required_next_evidence"],
+            "observer_enforcement_state": row["observer_enforcement_state"],
+            "agent_override_reason": row["agent_override_reason"],
             "updated_at": row["updated_at"],
         }
+        return normalize_shared_memory_state(memory)
 
 
     def replace_knowledge_docs(self, docs: Iterable[dict[str, str]]) -> int:

@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from pikaqiu_agent import experience as _experience
 from pikaqiu_agent.config import AgentSettings
 from pikaqiu_agent.llm_client import LLMClient
 from pikaqiu_agent.observer import (
@@ -371,10 +372,19 @@ class ObserverRuntime:
             "Decision schema for observer_finish args: severity none|info|warn|critical; "
             "state progressing|slow|stalled|repeated|off_track|risky; "
             "action no_action|steer|memory_patch|skill_signal; route_assessment string; "
-            "problems array; steer_message string; memory_patch object with only findings/leads/dead_ends/next_focus; "
-            "skill_signal string; experience_refs array; visible_summary string.\n\n"
+            "problems array; steer_message string; memory_patch object with only findings/leads/dead_ends/next_focus "
+            "and failure-boundary scalar fields; "
+            "skill_signal string; experience_refs array; visible_summary string; "
+            "primary_hypothesis string; next_verification string; failure_boundary one of "
+            "missing_evidence|missing_tool|unanswered_hypothesis|hypothesis_disproved|stale_plan|execution_quality|external_limit; "
+            "blocked_prerequisite string; required_next_evidence string; observer_enforcement_state string; "
+            "agent_override_reason string.\n\n"
             "Length limits: route_assessment <= 240 chars, steer_message <= 320 chars, visible_summary <= 180 chars, "
             "problems <= 3 short bullets. Do not address the main agent as 'you'; use imperative task notes.\n\n"
+            "Do not trust the main agent's self-assessment that a path is exhausted. Treat only observable "
+            "tool output, memory facts, events, and loaded experience as evidence. When progress is blocked, "
+            "name the current hypothesis, the exact next verification needed, and the failure boundary only if "
+            "the evidence truly supports it. Do not map framework/product names to fixed actions.\n\n"
             "When judging whether the main agent route is correct, combine the current evidence with /experience "
             "best practices. You may search or load experience as needed. If you think the main agent should use "
             "a skill, search/load skills only for your own judgement, then output action=skill_signal and a concise "
@@ -420,7 +430,9 @@ class ObserverRuntime:
             "7. If you steer, name the exact next verification action and the raw evidence the main agent must capture.\n\n"
             "Do not over-interrupt. If the checklist shows evidence-backed progress, call observer_finish with "
             "action=no_action. If evidence is insufficient but not blocking, do not steer; use a short visible_summary "
-            "or memory_patch. Use steer only when the next main-agent action should change immediately.\n\n"
+            "or memory_patch. Use steer only when the next main-agent action should change immediately. "
+            "Never output a route because a technology name was spotted; output only the evidence gap and the next "
+            "verification needed to close it.\n\n"
             "Choose exactly one tool now. If enough evidence exists, call observer_finish."
         )
 
@@ -480,53 +492,19 @@ class ObserverRuntime:
 
     def _experience_search(self, query: str, *, limit: int) -> dict[str, Any]:
         query = query.strip()
-        if not self.experience_root.is_dir():
-            return {"ok": False, "query": query, "error": "experience directory not found", "results": []}
-        tokens = self._query_tokens(query)
-        files = list(self.experience_root.rglob("*.md"))
-        scored: list[tuple[float, Path, str]] = []
-        for path in files:
-            rel = self._experience_rel(path)
-            if not rel:
-                continue
-            text = self._read_text(path)
-            haystack = f"{rel}\n{text[:12000]}".lower()
-            score = 0.0
-            for token in tokens:
-                if token in rel.lower():
-                    score += 4.0
-                if token in haystack:
-                    score += 1.0
-            if rel in PREFERRED_EXPERIENCE_REFS:
-                score += 0.25
-            if score > 0 or not tokens:
-                snippet = self._snippet(text, tokens)
-                scored.append((score, path, snippet))
-        scored.sort(key=lambda item: (item[0], -len(str(item[1]))), reverse=True)
-        results = [
-            {
-                "path": self._experience_rel(path),
-                "score": round(score, 3),
-                "snippet": snippet,
-            }
-            for score, path, snippet in scored[:limit]
-        ]
+        results = _experience.search_experience(
+            self.settings.workspace_root,
+            query,
+            limit=limit,
+        )
         return {"ok": True, "query": query, "results": results}
 
     def _load_experience(self, rel_path: str, *, max_chars: int) -> dict[str, Any]:
-        target = self._resolve_experience_path(rel_path)
-        if not target:
-            return {"ok": False, "path": rel_path, "error": "path must stay inside experience/ and point to a markdown file"}
-        text = self._read_text(target)
-        truncated = len(text) > max_chars
-        if truncated:
-            text = text[:max_chars] + "\n... [truncated]"
-        return {
-            "ok": True,
-            "path": self._experience_rel(target),
-            "truncated": truncated,
-            "content": text,
-        }
+        return _experience.load_experience(
+            self.settings.workspace_root,
+            rel_path,
+            max_chars=max_chars,
+        )
 
     def _skill_search(self, query: str, *, limit: int) -> dict[str, Any]:
         if not self.skills:
@@ -610,6 +588,15 @@ class ObserverRuntime:
             skill_signal=skill_signal,
             experience_refs=refs,
             visible_summary=str(payload.get("visible_summary") or payload.get("summary") or ""),
+            primary_hypothesis=str(payload.get("primary_hypothesis") or fallback.primary_hypothesis),
+            next_verification=str(payload.get("next_verification") or fallback.next_verification),
+            failure_boundary=str(payload.get("failure_boundary") or fallback.failure_boundary),
+            blocked_prerequisite=str(payload.get("blocked_prerequisite") or fallback.blocked_prerequisite),
+            required_next_evidence=str(payload.get("required_next_evidence") or fallback.required_next_evidence),
+            observer_enforcement_state=str(
+                payload.get("observer_enforcement_state") or fallback.observer_enforcement_state
+            ),
+            agent_override_reason=str(payload.get("agent_override_reason") or fallback.agent_override_reason),
         ).normalised()
         if decision.severity not in SEVERITIES:
             decision.severity = fallback.severity
@@ -757,8 +744,31 @@ class ObserverRuntime:
         }
 
     def _memory_view(self, memory: dict[str, Any]) -> dict[str, Any]:
+        idea_board = memory.get("idea_board") if isinstance(memory.get("idea_board"), dict) else {}
+        memory_board = memory.get("memory_board") if isinstance(memory.get("memory_board"), dict) else {}
         return {
             "summary": memory.get("summary", ""),
+            "idea_board": {
+                "active_direction": idea_board.get("active_direction", ""),
+                "primary_hypothesis": idea_board.get("primary_hypothesis", ""),
+                "next_verification": idea_board.get("next_verification", ""),
+                "next_actions": _as_list(idea_board.get("next_actions", []))[-6:],
+                "candidate_directions": _as_list(idea_board.get("candidate_directions", []))[-6:],
+                "risk_or_blocker": idea_board.get("risk_or_blocker", ""),
+                "failure_boundary": idea_board.get("failure_boundary", ""),
+                "blocked_prerequisite": idea_board.get("blocked_prerequisite", ""),
+                "required_next_evidence": idea_board.get("required_next_evidence", ""),
+                "abandoned": _as_list(idea_board.get("abandoned", []))[-6:],
+            },
+            "memory_board": {
+                "facts": _as_list(memory_board.get("facts", []))[-12:],
+                "evidence": _as_list(memory_board.get("evidence", []))[-8:],
+                "constraints": _as_list(memory_board.get("constraints", []))[-8:],
+                "credentials": _as_list(memory_board.get("credentials", []))[-4:],
+                "failed_attempts": _as_list(memory_board.get("failed_attempts", []))[-8:],
+                "nodes": memory_board.get("nodes", {}),
+                "topology": _as_list(memory_board.get("topology", []))[-10:],
+            },
             "findings": memory.get("findings", [])[-12:],
             "leads": memory.get("leads", [])[-12:],
             "dead_ends": memory.get("dead_ends", [])[-8:],
@@ -767,6 +777,13 @@ class ObserverRuntime:
             "highest_value_lead": memory.get("highest_value_lead", ""),
             "blocked_reason": memory.get("blocked_reason", ""),
             "next_one_command": memory.get("next_one_command", ""),
+            "primary_hypothesis": memory.get("primary_hypothesis", ""),
+            "next_verification": memory.get("next_verification", ""),
+            "failure_boundary": memory.get("failure_boundary", ""),
+            "blocked_prerequisite": memory.get("blocked_prerequisite", ""),
+            "required_next_evidence": memory.get("required_next_evidence", ""),
+            "observer_enforcement_state": memory.get("observer_enforcement_state", ""),
+            "agent_override_reason": memory.get("agent_override_reason", ""),
         }
 
     def _tool_call_views(

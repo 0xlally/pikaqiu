@@ -12,6 +12,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 
 from pikaqiu_agent.config import AgentSettings
 from pikaqiu_agent import flag_capture as _flag_capture
+from pikaqiu_agent import experience as _experience
 from pikaqiu_agent.knowledge import KnowledgeIndexer
 from pikaqiu_agent.llm_client import LLMClient, format_llm_error
 from pikaqiu_agent.memory import normalize_memory_enhanced, detect_stall, score_importance, retrieve_forgotten_context
@@ -76,6 +77,8 @@ _missing_tool_name = _success_guards.missing_tool_name
 _known_missing_tool_blocks = _success_guards.known_missing_tool_blocks
 _missing_tools_from_memory = _success_guards.missing_tools_from_memory
 _missing_tool_block_message = _success_guards.missing_tool_block_message
+_low_evidence_stop_block_message = _success_guards.low_evidence_stop_block_message
+_stale_observer_steer_block_message = _success_guards.stale_observer_steer_block_message
 
 
 def _tool_result_timed_out(row: dict[str, Any]) -> bool:
@@ -95,6 +98,33 @@ def _observer_result_view(text: str, limit: int = 20000) -> str:
     head_size = max(1000, int(limit * 0.35))
     tail_size = max(1000, limit - head_size - len(marker))
     return text[:head_size] + marker + text[-tail_size:]
+
+
+def _asset_access_capabilities(
+    *,
+    mission: dict[str, Any],
+    env_info: str,
+    mission_workdir: str,
+) -> dict[str, Any]:
+    capabilities = {
+        "blackbox_target_access": bool(str(mission.get("target") or "").strip()),
+        "challenge_workdir": mission_workdir,
+        "sandbox_env_info_available": bool(str(env_info or "").strip()),
+        "source_access": "unknown",
+        "container_access": "sandbox_executor",
+        "mounted_volume_access": "unknown",
+        "database_access": "unknown",
+        "environment_variable_access": "sandbox_env_info" if env_info else "unknown",
+        "startup_chain_access": "unknown",
+        "use_policy": (
+            "Start with black-box evidence. When blocked, use available asset views only to close "
+            "the missing evidence boundary; do not hard-code target traits or treat asset access as a direct flag shortcut."
+        ),
+    }
+    scope = str(mission.get("scope") or "")
+    if scope:
+        capabilities["declared_scope"] = scope
+    return capabilities
 
 
 def _tool_call_memory_view(tool_call_log: list[dict[str, Any]], *, limit: int = 30) -> list[dict[str, Any]]:
@@ -445,8 +475,101 @@ class OrchestratorManager:
                 title=f"最终记忆压缩 ({outcome})",
                 content=_compact_json(new_memory),
             )
+            if flag_events and outcome == "success":
+                self._distill_success_experience(
+                    mission_id=mission_id,
+                    mission=mission,
+                    memory=new_memory,
+                    round_no=round_no,
+                    tool_call_log=tool_call_log,
+                )
         except Exception as e:
             logger.warning("[orchestrator] final memory compression failed: %s", e)
+
+    def _build_experience_hints(
+        self,
+        mission: dict[str, Any],
+        memory: dict[str, Any],
+    ) -> str:
+        try:
+            query = _experience.build_experience_query(mission, memory)
+            results = _experience.search_experience(
+                self.settings.workspace_root,
+                query,
+                limit=5,
+            )
+            return _experience.format_experience_hints(results, limit=3)
+        except Exception as e:
+            logger.warning("[orchestrator] experience hint search failed: %s", e)
+            return ""
+
+    def _distill_success_experience(
+        self,
+        *,
+        mission_id: str,
+        mission: dict[str, Any],
+        memory: dict[str, Any],
+        round_no: int,
+        tool_call_log: list[dict[str, Any]],
+    ) -> None:
+        flag_events = [event for event in self.store.get_events(mission_id) if event.get("type") == "flag"]
+        if not flag_events:
+            return
+        mission_with_id = dict(mission)
+        mission_with_id["id"] = mission_id
+        flags = self.store.get_captured_flags(mission_id)
+        prompt = (
+            "Distill this successful authorized CTF/pentest mission into a reusable Markdown experience card.\n"
+            "Use only the provided evidence. Do not invent payloads, vulnerability types, or commands.\n"
+            "If a payload or command is not visible in evidence, write 'unknown from evidence'.\n\n"
+            "Required Markdown sections:\n"
+            "# Distilled Experience\n"
+            "source_mission_id: <mission id>\n"
+            "confidence: high|medium|low\n\n"
+            "## Vulnerability Type\n"
+            "## Applicable Scenario\n"
+            "## Key Entry Point\n"
+            "## Successful Payload / Command Chain\n"
+            "## Evidence Chain\n"
+            "## Failed Paths\n"
+            "## Reuse Rules\n\n"
+            f"Mission:\n{_compact_json(mission_with_id, max_len=4000)}\n\n"
+            f"Captured flags:\n{_compact_json(flags, max_len=2000)}\n\n"
+            f"Flag events:\n{_compact_json(flag_events, max_len=6000)}\n\n"
+            f"Final shared memory:\n{_compact_json(memory, max_len=10000)}\n\n"
+            f"Recent tool calls:\n{_compact_json(_tool_call_memory_view(tool_call_log, limit=20), max_len=12000)}\n"
+        )
+        try:
+            pool = ThreadPoolExecutor(max_workers=1)
+            try:
+                future = pool.submit(self.llm.invoke_experience_distill, prompt)
+                markdown = future.result(timeout=min(self.settings.llm_timeout_sec, 60))
+            finally:
+                pool.shutdown(wait=False, cancel_futures=True)
+            if "source_mission_id" not in markdown:
+                markdown = f"source_mission_id: {mission_id}\nconfidence: low\n\n{markdown}"
+            path = _experience.write_distilled_experience(
+                self.settings.workspace_root,
+                mission=mission_with_id,
+                markdown=markdown,
+            )
+            self.store.add_event(
+                mission_id=mission_id,
+                round_no=round_no,
+                event_type="knowledge",
+                title="Distilled experience written",
+                content=str(path.relative_to(self.settings.workspace_root)),
+                metadata={"distilled_experience_path": str(path)},
+            )
+        except Exception as e:
+            logger.warning("[orchestrator] success experience distillation failed: %s", e)
+            self.store.add_event(
+                mission_id=mission_id,
+                round_no=round_no,
+                event_type="warning",
+                title="Experience distillation failed",
+                content=str(e)[:2000],
+            )
 
     def _invoke_llm_with_retry(
         self,
@@ -812,6 +935,7 @@ class OrchestratorManager:
         patched, changed = self.observer.apply_memory_patch(memory, decision.memory_patch)
         if changed:
             self.store.set_memory(mission_id, patched)
+            patched = self.store.get_memory(mission_id)
             self.store.add_event(
                 mission_id=mission_id,
                 round_no=round_no,
@@ -862,6 +986,51 @@ class OrchestratorManager:
             )
         return injected
 
+    def _audit_give_up_request(
+        self,
+        *,
+        mission_id: str,
+        round_no: int,
+        mission: dict[str, Any],
+        memory: dict[str, Any],
+        tool_call_log: list[dict[str, Any]],
+        captured_flags: list[str],
+        reason: str,
+    ) -> tuple[bool, ObserverDecision, dict[str, Any]]:
+        decision = self.observer.audit_give_up(
+            reason=reason,
+            mission=mission,
+            memory=memory,
+            tool_call_log=tool_call_log,
+            captured_flags=captured_flags,
+        ).normalised()
+        self._record_observer_decision(
+            mission_id=mission_id,
+            round_no=round_no,
+            decision=decision,
+            phase="give_up",
+        )
+        patched = self._apply_observer_memory_patch(
+            mission_id=mission_id,
+            round_no=round_no,
+            memory=memory,
+            decision=decision,
+        )
+        return decision.observer_enforcement_state == "allow_stop", decision, patched
+
+    def _update_pending_observer_steer(
+        self,
+        current: ObserverDecision | None,
+        decision: ObserverDecision,
+    ) -> ObserverDecision | None:
+        decision = decision.normalised()
+        if decision.observer_enforcement_state == "resolved":
+            return None
+        if decision.action == "steer" and decision.severity in {"warn", "critical"}:
+            if decision.next_verification or decision.required_next_evidence or decision.steer_message:
+                return decision
+        return current
+
     def _run_mission_tool_use(
         self,
         mission_id: str,
@@ -879,6 +1048,19 @@ class OrchestratorManager:
         sbx.run(f"mkdir -p {mission_workdir}", workdir=self.settings.sandbox_workdir)
 
         memory: dict[str, Any] = self.store.get_memory(mission_id)
+        asset_capabilities = _asset_access_capabilities(
+            mission=mission,
+            env_info=env_info,
+            mission_workdir=mission_workdir,
+        )
+        self.store.add_event(
+            mission_id=mission_id,
+            round_no=0,
+            event_type="system",
+            title="Asset access capabilities bound",
+            content=_compact_json(asset_capabilities, max_len=2000),
+            metadata={"asset_access_capabilities": asset_capabilities},
+        )
 
         # Per-mission model override: if mission uses a model from the pool,
         # create a dedicated tool model instead of the global one
@@ -912,6 +1094,7 @@ class OrchestratorManager:
         flag_captured = threading.Event()
         captured_flags: list[str] = []
         pending_observer_guidance: list[str] = []
+        pending_observer_steer: ObserverDecision | None = None
         mission_scan_timeout_count = 0
         missing_tools_seen: set[str] = _missing_tools_from_memory(memory)
 
@@ -1009,11 +1192,13 @@ class OrchestratorManager:
                 skills=skill_prompt_data,
                 skill_catalog=skill_catalog,
             )
+            experience_hints = self._build_experience_hints(mission, memory)
             volatile_context = build_volatile_context(
                 round_no=round_no,
                 memory=memory,
                 captured_flags=captured_flags,
                 expected_flags=mission.get("expected_flags", 1),
+                experience_hints=experience_hints,
             )
             tool_call_log: list[dict[str, Any]] = []
 
@@ -1036,12 +1221,37 @@ class OrchestratorManager:
                 return f"[FLAG_CAPTURED] {flag} - {remaining} flag(s) still needed; continue from this exact lead."
 
             def on_give_up(reason: str) -> str:
+                nonlocal memory
+                allowed, decision, patched_memory = self._audit_give_up_request(
+                    mission_id=mission_id,
+                    round_no=round_no,
+                    mission=mission,
+                    memory=memory,
+                    tool_call_log=tool_call_log,
+                    captured_flags=captured_flags,
+                    reason=reason,
+                )
+                memory = patched_memory
+                if not allowed:
+                    self.store.add_event(
+                        mission_id=mission_id,
+                        round_no=round_no,
+                        event_type="warning",
+                        title="Give up rejected by Observer",
+                        content=decision.steer_message or _low_evidence_stop_block_message(memory),
+                        metadata={"observer": decision.to_dict()},
+                    )
+                    return (
+                        "[GIVE_UP_REJECTED]\n"
+                        + (decision.steer_message or _low_evidence_stop_block_message(memory))
+                    )
                 self.store.add_event(
                     mission_id=mission_id,
                     round_no=round_no,
                     event_type="system",
                     title="AI gave up",
-                    content=f"Reason: {reason}",
+                    content=f"Reason: {reason}\nObserver boundary: {decision.failure_boundary}",
+                    metadata={"observer": decision.to_dict()},
                 )
                 self.store.request_stop(mission_id)
                 return "[GIVE_UP] Mission marked to stop."
@@ -1113,6 +1323,7 @@ class OrchestratorManager:
                             memory=memory,
                             captured_flags=captured_flags,
                             expected_flags=mission.get("expected_flags", 1),
+                            experience_hints=self._build_experience_hints(mission, memory),
                         )
                     except Exception as clean_err:
                         logger.warning("[orchestrator] memory cleaning failed: %s", clean_err)
@@ -1176,6 +1387,7 @@ class OrchestratorManager:
             round_timeout_sec = mission.get("round_timeout_sec", self.settings.round_timeout_sec)
             round_broad_scan_count = 0
             last_time_guidance_tag = ""
+            round_memory_before_observer = memory
 
             self.store.add_event(
                 mission_id=mission_id,
@@ -1271,6 +1483,8 @@ class OrchestratorManager:
                 # inserting HumanMessage between them causes Claude 400 errors.
                 deferred_guidance: list[str] = []
                 observer_batch_decisions: list[ObserverDecision] = []
+                batch_memory_before = memory
+                pending_at_batch_start = pending_observer_steer
                 for tc in response.tool_calls:
                     tool_name = tc.get("name", "")
                     tool_args = tc.get("args", {})
@@ -1490,6 +1704,10 @@ class OrchestratorManager:
                                 memory=memory,
                                 decision=observer_decision,
                             )
+                            pending_observer_steer = self._update_pending_observer_steer(
+                                pending_observer_steer,
+                                observer_decision,
+                            )
                             observer_batch_decisions.append(observer_decision)
 
                     if flag_captured.is_set():
@@ -1513,6 +1731,46 @@ class OrchestratorManager:
                         decision=observer_decision,
                         phase="tool",
                     )
+
+                if pending_at_batch_start:
+                    override_decision = self.observer.audit_override(
+                        pending_decision=pending_at_batch_start,
+                        next_tool_calls=round_tool_call_log[-len(response.tool_calls):],
+                        memory_before=batch_memory_before,
+                        memory_after=memory,
+                        agent_override_reason=response_text[:500],
+                    ).normalised()
+                    if override_decision.actionable:
+                        self._record_observer_decision(
+                            mission_id=mission_id,
+                            round_no=round_no,
+                            decision=override_decision,
+                            phase="override",
+                        )
+                        memory = self._apply_observer_memory_patch(
+                            mission_id=mission_id,
+                            round_no=round_no,
+                            memory=memory,
+                            decision=override_decision,
+                        )
+                        pending_observer_steer = self._update_pending_observer_steer(
+                            pending_observer_steer,
+                            override_decision,
+                        )
+                        if override_decision.severity == "critical":
+                            messages.append(
+                                HumanMessage(
+                                    content=(
+                                        self.observer.format_injection(override_decision)
+                                        + "\n\n"
+                                        + _stale_observer_steer_block_message(
+                                            override_decision.next_verification
+                                        )
+                                    )
+                                )
+                            )
+                        elif override_decision.observer_enforcement_state == "resolved":
+                            pending_observer_steer = None
 
                 # Mid-round context monitoring: if messages are getting too large,
                 # use LLM compression (if available) or fallback to importance-based scoring
@@ -1684,6 +1942,10 @@ class OrchestratorManager:
                     decision=round_observer_decision,
                     phase="round",
                 )
+                pending_observer_steer = self._update_pending_observer_steer(
+                    pending_observer_steer,
+                    round_observer_decision,
+                )
 
             # Stall detection: semantic comparison instead of fragile hash
             if detect_stall(new_memory, memory):
@@ -1709,16 +1971,32 @@ class OrchestratorManager:
                     content="本轮没有任何工具调用，检查 LLM 响应或 API 连接。",
                 )
 
+        memory = self.store.get_memory(mission_id)
+        stop_allowed, stop_decision, memory = self._audit_give_up_request(
+            mission_id=mission_id,
+            round_no=max_rounds,
+            mission=mission,
+            memory=memory,
+            tool_call_log=tool_call_log,
+            captured_flags=captured_flags,
+            reason="max_rounds reached; Observer failure-boundary audit required before stopped status",
+        )
+        stop_message = (
+            "Reached max_rounds with Observer failure-boundary audit."
+            if stop_allowed
+            else "Reached max_rounds; Observer recorded missing failure-boundary evidence."
+        )
         self.store.update_mission_status(
             mission_id, "stopped",
-            error_message="达到最大轮次，任务未找到 flag。",
+            error_message=stop_message,
         )
         self.store.add_event(
             mission_id=mission_id,
             round_no=max_rounds,
             event_type="system",
-            title="达到最大轮次",
-            content="已跑满 max_rounds，任务停止。",
+            title="Max rounds reached",
+            content=stop_message,
+            metadata={"observer": stop_decision.to_dict()},
         )
         # Final memory compression for DA analysis
         self._do_final_memory_compression(
