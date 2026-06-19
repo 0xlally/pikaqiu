@@ -4,7 +4,10 @@ export type Bootstrap = {
   llm_mode: string;
   model: string;
   sandbox_container: string;
+  sandbox_containers: string[];
   sandbox_workdir: string;
+  agent_capacity: number;
+  agent_slots: AgentSlot[];
   knowledge: KnowledgeStats;
   skills: SkillStats;
   defaults: {
@@ -12,6 +15,21 @@ export type Bootstrap = {
     max_commands: number;
     command_timeout_sec: number;
   };
+};
+
+export type AgentSlot = {
+  slot: number;
+  agent_id: string;
+  container: string;
+  status: "idle" | "running" | string;
+  status_reason: "not_started" | "flag_captured" | "not_running" | "running" | string;
+  allocated: boolean;
+  mission_id: string;
+  mission_name: string;
+  target: string;
+  mission_status: string;
+  captured_flag_count: number;
+  thread_alive: boolean;
 };
 
 export type KnowledgeStats = {

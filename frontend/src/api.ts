@@ -1,5 +1,6 @@
 import type {
   Bootstrap,
+  AgentSlot,
   Config,
   ConfigResponse,
   ConfigSaveResponse,
@@ -59,7 +60,7 @@ export const api = {
   skills: () => requestJson<{ skills: Skill[]; stats: SkillStats }>("/api/skills"),
   experiments: () =>
     requestJson<{ records: ExperimentRecord[]; summary: Record<string, unknown> }>("/api/experiments"),
-  missions: () => requestJson<{ missions: Mission[] }>("/api/missions"),
+  missions: () => requestJson<{ missions: Mission[]; agent_slots?: AgentSlot[] }>("/api/missions"),
   createMission: (payload: Record<string, unknown>) =>
     requestJson<{ mission_id: string }>("/api/missions", {
       method: "POST",

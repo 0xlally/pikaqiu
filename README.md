@@ -37,11 +37,12 @@ Observer 默认复用主模型配置。它是被动审核器，不是主 Agent �
 
 ### 3. 启动沙箱容器
 
-如果已经有 `pikaqiu-kali-sandbox:latest` 镜像，可以直接启动：
+默认会启动 5 个独立沙箱容器（`pikaqiu-sandbox-1` 到 `pikaqiu-sandbox-5`），最多支持 5 个 Agent 并发执行；每个 Agent 会绑定自己的容器和独立 workspace volume。
 
 ```powershell
 docker compose up -d
-docker exec pikaqiu-sandbox-1 bash -lc "pwd && python3 --version"
+docker compose ps
+1..5 | % { docker exec "pikaqiu-sandbox-$_" bash -lc "pwd && python3 --version" }
 ```
 
 如果本地没有镜像，先构建：
@@ -333,4 +334,3 @@ curl http://127.0.0.1:8001/api/bootstrap
 curl http://127.0.0.1:8001/
 curl http://127.0.0.1:8001/settings.html
 ```
-

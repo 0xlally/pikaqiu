@@ -24,6 +24,7 @@ import {
 import { api, ApiError } from "./api";
 import type {
   AppTab,
+  AgentSlot,
   Bootstrap,
   Config,
   Event,
@@ -91,6 +92,7 @@ function App() {
 
 function MissionControl() {
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
+  const [agentSlots, setAgentSlots] = useState<AgentSlot[]>([]);
   const [missions, setMissions] = useState<Mission[]>([]);
   const [experiments, setExperiments] = useState<ExperimentRecord[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
@@ -115,6 +117,7 @@ function MissionControl() {
         ]);
         if (cancelled) return;
         setBootstrap(bootData);
+        setAgentSlots(missionData.agent_slots || bootData.agent_slots || []);
         setMissions(missionData.missions || []);
         setExperiments(experimentData.records || []);
         setSkills(skillData.skills || []);
@@ -139,6 +142,7 @@ function MissionControl() {
         if (disposed) return;
         startTransition(() => {
           setMissions(missionData.missions || []);
+          setAgentSlots(missionData.agent_slots || []);
           setExperiments(experimentData.records || []);
           setSelectedId((current) => current || missionData.missions?.[0]?.id || "");
         });
@@ -183,11 +187,13 @@ function MissionControl() {
     [missions, selectedId, detail]
   );
   const runningCount = missions.filter((mission) => isActiveMission(mission)).length;
+  const activeAgentCount = agentSlots.filter((slot) => slot.status === "running").length;
   const flagCount = missions.reduce((sum, mission) => sum + (mission.captured_flag_count || 0), 0);
 
   async function refreshAll() {
     const [missionData, experimentData] = await Promise.all([api.missions(), api.experiments()]);
     setMissions(missionData.missions || []);
+    setAgentSlots(missionData.agent_slots || []);
     setExperiments(experimentData.records || []);
     if (selectedId) setDetail(await api.missionDetail(selectedId));
   }
@@ -241,7 +247,7 @@ function MissionControl() {
         <DashboardStrip
           loading={loading || isPending}
           model={bootstrap?.model}
-          runningCount={runningCount}
+          runningCount={agentSlots.length ? activeAgentCount : runningCount}
           flagCount={flagCount}
           missionCount={missions.length}
           knowledgeDocs={bootstrap?.knowledge?.total_docs || bootstrap?.knowledge?.total_chunks || 0}
@@ -263,7 +269,7 @@ function MissionControl() {
           </aside>
 
           <section className="workbench">
-            <SystemBar bootstrap={bootstrap} skills={skills} experiments={experiments} />
+            <SystemBar bootstrap={bootstrap} skills={skills} experiments={experiments} agentSlots={agentSlots} />
 
             <MissionDetailHeader
               mission={selectedMission}
@@ -747,11 +753,13 @@ function FunctionMap({
 function SystemBar({
   bootstrap,
   skills,
-  experiments
+  experiments,
+  agentSlots
 }: {
   bootstrap: Bootstrap | null;
   skills: Skill[];
   experiments: ExperimentRecord[];
+  agentSlots: AgentSlot[];
 }) {
   const knowledgeStatus = bootstrap?.knowledge?.rag?.available
     ? `${bootstrap.knowledge.rag.total_chunks || 0} chunks`
@@ -760,14 +768,43 @@ function SystemBar({
   const enabledSkills = Math.max(Number(bootstrap?.skills?.enabled || 0), loadedEnabledSkills);
   const totalSkills = Math.max(Number(bootstrap?.skills?.total || 0), skills.length);
   const success = experiments.filter((item) => item.outcome === "success").length;
+  const slots = agentSlots.length ? agentSlots : bootstrap?.agent_slots || [];
   return (
     <section className="system-bar" aria-label="运行环境摘要">
-      <RuntimeLine label="沙箱" value={bootstrap?.sandbox_container || "sandbox pending"} />
+      <div className="agent-fleet">
+        {slots.map((slot) => (
+          <AgentSlotCard key={slot.agent_id || slot.slot} slot={slot} />
+        ))}
+      </div>
       <RuntimeLine label="工作目录" value={bootstrap?.sandbox_workdir || "未加载"} />
       <RuntimeLine label="知识库" value={knowledgeStatus} />
       <RuntimeLine label="Skills" value={`${enabledSkills}/${totalSkills} enabled`} />
       <RuntimeLine label="归档成功" value={`${success}/${experiments.length}`} />
     </section>
+  );
+}
+
+function AgentSlotCard({ slot }: { slot: AgentSlot }) {
+  const running = slot.status === "running";
+  const reason =
+    slot.status_reason === "flag_captured"
+      ? `空闲 · ${slot.captured_flag_count} flag`
+      : slot.status_reason === "not_started"
+        ? "空闲 · 未启动"
+        : running
+          ? "运行中"
+          : "空闲";
+  const title = slot.mission_name || slot.container;
+  const meta = slot.target || slot.container;
+  return (
+    <article className={running ? "agent-slot running" : "agent-slot idle"}>
+      <span className="agent-index">A{slot.slot}</span>
+      <div>
+        <strong>{reason}</strong>
+        <small title={title}>{title}</small>
+        <em title={meta}>{meta}</em>
+      </div>
+    </article>
   );
 }
 

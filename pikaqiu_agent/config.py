@@ -33,6 +33,8 @@ DEFAULT_LLM_BASE_URL = "https://www.inroi.shop"
 DEFAULT_LLM_API_KEY = ""
 DEFAULT_LLM_MODEL = "gpt-5.5"
 DEFAULT_LLM_REASONING_EFFORT = "xhigh"
+MAX_AGENT_SLOTS = 5
+DEFAULT_SANDBOX_CONTAINERS = tuple(f"pikaqiu-sandbox-{idx}" for idx in range(1, MAX_AGENT_SLOTS + 1))
 
 
 # ── Model Pool Entry ──────────────────────────────────────────────
@@ -115,6 +117,7 @@ class AgentSettings:
     db_path: Path
     sandbox_container: str
     sandbox_workdir: str
+    sandbox_containers: list[str] = field(default_factory=lambda: list(DEFAULT_SANDBOX_CONTAINERS))
     sandbox_public_ip: str = ""  # Public IP for reverse shell listeners
     # Main LLM (used by main agent + memory agent)
     llm_base_url: str = DEFAULT_LLM_BASE_URL
@@ -310,6 +313,36 @@ def _env(name: str, *fallback_names: str, default: Any = "", cast: Any = str) ->
     return default
 
 
+def _string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        raw_items = value.replace("\n", ",").replace(";", ",").split(",")
+    elif isinstance(value, (list, tuple, set)):
+        raw_items = list(value)
+    else:
+        return []
+    items: list[str] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        text = str(item or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        items.append(text)
+    return items
+
+
+def _sandbox_container_list(*, primary: Any = "", containers: Any = None) -> list[str]:
+    configured = _string_list(containers)
+    primary_text = str(primary or "").strip()
+    if not configured:
+        configured = list(DEFAULT_SANDBOX_CONTAINERS)
+    if primary_text and primary_text not in configured:
+        configured.insert(0, primary_text)
+    return configured[:MAX_AGENT_SLOTS]
+
+
 def load_settings(workspace_root: Path | None = None) -> AgentSettings:
     root = workspace_root or Path.cwd()
 
@@ -326,12 +359,17 @@ def _load_from_env(root: Path) -> AgentSettings:
     base_url = _env("PIKAQIU_LLM_BASE_URL", "PIKAQIU_ANTHROPIC_BASE_URL", default=DEFAULT_LLM_BASE_URL)
     if base_url.endswith("/anthropic"):
         base_url = base_url[:-len("/anthropic")]
+    sandbox_containers = _sandbox_container_list(
+        primary=_env("PIKAQIU_SANDBOX_CONTAINER", default=""),
+        containers=_env("PIKAQIU_SANDBOX_CONTAINERS", default=""),
+    )
 
     return AgentSettings(
         workspace_root=root.resolve(),
         db_path=(root / ".pikaqiu_agent" / "state.sqlite3").resolve(),
-        sandbox_container=_env("PIKAQIU_SANDBOX_CONTAINER", default="pikaqiu-sandbox-1"),
+        sandbox_container=sandbox_containers[0],
         sandbox_workdir=_env("PIKAQIU_SANDBOX_WORKDIR", default="/tmp/pikaqiu-agent-workspace"),
+        sandbox_containers=sandbox_containers,
         llm_base_url=base_url,
         llm_api_key=_env("PIKAQIU_LLM_API_KEY", "OPENAI_API_KEY", "PIKAQIU_ANTHROPIC_AUTH_TOKEN", default=DEFAULT_LLM_API_KEY),
         llm_model=_env("PIKAQIU_LLM_MODEL", "PIKAQIU_ANTHROPIC_MODEL", default=DEFAULT_LLM_MODEL),
@@ -473,14 +511,11 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
         cast=bool,
     )
 
-    _sb_default = sb.get("container")
-    if not _sb_default:
-        legacy_containers = sb.get("containers", [])
-        if isinstance(legacy_containers, list) and legacy_containers:
-            _sb_default = legacy_containers[0]
-            logger.warning("sandbox.containers is deprecated; using the first entry: %s", _sb_default)
-        else:
-            _sb_default = "pikaqiu-sandbox-1"
+    sandbox_containers = _sandbox_container_list(
+        primary=_env("PIKAQIU_SANDBOX_CONTAINER", default=sb.get("container", "")),
+        containers=_env("PIKAQIU_SANDBOX_CONTAINERS", default=sb.get("containers", [])),
+    )
+    _sb_default = sandbox_containers[0]
 
     raw_difficulty_params = ag.get("difficulty_params", {})
     difficulty_params: dict[str, DifficultyParams] = {}
@@ -499,6 +534,7 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
         db_path=(root / ".pikaqiu_agent" / "state.sqlite3").resolve(),
         sandbox_container=_sb_default,
         sandbox_workdir=sb.get("workdir", "/tmp/pikaqiu-agent-workspace"),
+        sandbox_containers=sandbox_containers,
         sandbox_public_ip=sb.get("public_ip", ""),
         llm_base_url=llm_base_url,
         llm_api_key=llm_api_key,

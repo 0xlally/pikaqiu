@@ -629,13 +629,76 @@ select:focus {
 
 .system-bar {
   display: grid;
-  grid-template-columns: 1.1fr 1.5fr 1.1fr 1fr 1fr;
+  grid-template-columns: minmax(520px, 2.2fr) 1.25fr 0.9fr 0.85fr 0.85fr;
   gap: 0;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: #ffffff;
   box-shadow: none;
+}
+
+.agent-fleet {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 0;
+  border-right: 1px solid var(--line);
+  padding: 8px;
+}
+
+.agent-slot {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  padding: 7px;
+}
+
+.agent-slot.running {
+  border-color: rgb(23 104 229 / 0.42);
+  background: var(--accent-soft);
+}
+
+.agent-index {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--accent-strong);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.agent-slot strong,
+.agent-slot small,
+.agent-slot em {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-slot strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.agent-slot small,
+.agent-slot em {
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-style: normal;
 }
 
 .system-bar .runtime-line {
@@ -1542,6 +1605,31 @@ select:focus {
     padding: 7px 10px;
   }
 
+  .mission-shell .agent-fleet {
+    gap: 5px;
+    padding: 6px;
+  }
+
+  .mission-shell .agent-slot {
+    gap: 5px;
+    padding: 5px;
+  }
+
+  .mission-shell .agent-index {
+    width: 24px;
+    height: 24px;
+    border-radius: 7px;
+    font-size: 10px;
+  }
+
+  .mission-shell .agent-slot strong {
+    font-size: 11px;
+  }
+
+  .mission-shell .agent-slot em {
+    display: none;
+  }
+
   .mission-shell .mission-card {
     gap: 4px;
     padding: 8px 9px;
@@ -2146,6 +2234,12 @@ select:focus {
 
   .system-bar {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .agent-fleet {
+    grid-column: 1 / -1;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
   }
 
   .system-bar .runtime-line {

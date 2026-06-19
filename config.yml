@@ -100,6 +100,12 @@ agent_defaults:
 # 鈹€鈹€鈹€ Sandbox 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 sandbox:
   container: "pikaqiu-sandbox-1"         # Docker container name
+  containers:
+    - "pikaqiu-sandbox-1"
+    - "pikaqiu-sandbox-2"
+    - "pikaqiu-sandbox-3"
+    - "pikaqiu-sandbox-4"
+    - "pikaqiu-sandbox-5"
   workdir: "/tmp/pikaqiu-agent-workspace"
   public_ip: ""                      # Public IP for reverse shell listeners (optional)
 

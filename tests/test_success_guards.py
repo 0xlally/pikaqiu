@@ -5,7 +5,7 @@ from pikaqiu_agent.success_guards import (
     _post_partial_flag_guidance,
     _round_time_guidance,
     _route_guard_guidance,
-    _summarize_advice_result,
+    _summarize_guidance_result,
 )
 
 
@@ -32,9 +32,9 @@ class SuccessGuardTests(unittest.TestCase):
         self.assertIn("Auth state", guidance)
         self.assertIn("Apache/cgi", guidance)
 
-    def test_advice_result_truncation_marks_guidance_only(self):
-        text = "advice\n" + ("A" * 5000)
-        summarized = _summarize_advice_result("ask_adviser", text, 1000)
+    def test_guidance_result_truncation_marks_guidance_only(self):
+        text = "guidance\n" + ("A" * 5000)
+        summarized = _summarize_guidance_result("knowledge_search", text, 1000)
         self.assertLess(len(summarized), len(text))
         self.assertIn("guidance only", summarized)
 

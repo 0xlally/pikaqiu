@@ -10,7 +10,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from pikaqiu_agent.config import AgentSettings
+from pikaqiu_agent.config import AgentSettings, MAX_AGENT_SLOTS
 from pikaqiu_agent import flag_capture as _flag_capture
 from pikaqiu_agent import experience as _experience
 from pikaqiu_agent.knowledge import KnowledgeIndexer
@@ -244,14 +244,18 @@ class OrchestratorManager:
         self._lock = threading.Lock()
         self._mission_meta: dict[str, dict] = {}  # mission_id -> extra params (e.g. mission_timeout_sec)
         self._sandbox_alloc: dict[str, SandboxExecutor] = {}
-        self._container_pool: list[str] = [settings.sandbox_container]
-        self._container_usage: dict[str, str] = {settings.sandbox_container: ""}
+        containers = list(dict.fromkeys(settings.sandbox_containers or [settings.sandbox_container]))
+        self._container_pool: list[str] = containers[:MAX_AGENT_SLOTS] or [settings.sandbox_container]
+        self._container_usage: dict[str, str] = {container: "" for container in self._container_pool}
         self.observer = ObserverAgent()
         self.observer_runtime = ObserverRuntime(settings, store, llm, self.observer, skills=skills)
 
     def _allocate_sandbox(self, mission_id: str) -> SandboxExecutor:
         """Allocate a dedicated sandbox container for a mission."""
         with self._lock:
+            existing = self._sandbox_alloc.get(mission_id)
+            if existing:
+                return existing
             for container, user in self._container_usage.items():
                 if not user:
                     self._container_usage[container] = mission_id
@@ -259,12 +263,7 @@ class OrchestratorManager:
                     self._sandbox_alloc[mission_id] = executor
                     logger.info("[sandbox-pool] allocated %s -> mission %s", container, mission_id[:8])
                     return executor
-            # All busy — fall back to first container (shared)
-            first = self._container_pool[0]
-            logger.warning("[sandbox-pool] all containers busy, sharing %s for mission %s", first, mission_id[:8])
-            executor = SandboxExecutor(self.settings, container_override=first)
-            self._sandbox_alloc[mission_id] = executor
-            return executor
+            raise RuntimeError("all agent slots are busy")
 
     def _release_sandbox(self, mission_id: str) -> None:
         """Release the sandbox allocated to a mission."""
@@ -275,6 +274,54 @@ class OrchestratorManager:
                     self._container_usage[container] = ""
                     logger.info("[sandbox-pool] released %s <- mission %s", container, mission_id[:8])
                     break
+
+    def has_available_agent_slot(self) -> bool:
+        with self._lock:
+            return any(not mission_id for mission_id in self._container_usage.values())
+
+    def agent_slots(self) -> list[dict[str, Any]]:
+        with self._lock:
+            usage = dict(self._container_usage)
+            thread_alive = {
+                mission_id: bool(self._threads.get(mission_id) and self._threads[mission_id].is_alive())
+                for mission_id in usage.values()
+                if mission_id
+            }
+
+        slots: list[dict[str, Any]] = []
+        for index, container in enumerate(self._container_pool, start=1):
+            mission_id = usage.get(container, "")
+            mission = self.store.get_mission(mission_id) if mission_id else None
+            captured_flags = mission.get("captured_flags", []) if mission else []
+            captured_count = len(captured_flags)
+            alive = bool(thread_alive.get(mission_id, False))
+            if not mission_id or not mission:
+                status = "idle"
+                reason = "not_started"
+            elif captured_count > 0:
+                status = "idle"
+                reason = "flag_captured"
+            elif not alive:
+                status = "idle"
+                reason = "not_running"
+            else:
+                status = "running"
+                reason = "running"
+            slots.append({
+                "slot": index,
+                "agent_id": f"agent-{index}",
+                "container": container,
+                "status": status,
+                "status_reason": reason,
+                "allocated": bool(mission_id and mission),
+                "mission_id": mission_id if mission else "",
+                "mission_name": mission.get("name", "") if mission else "",
+                "target": mission.get("target", "") if mission else "",
+                "mission_status": mission.get("status", "") if mission else "",
+                "captured_flag_count": captured_count,
+                "thread_alive": alive,
+            })
+        return slots
 
     def start_mission(
         self,
@@ -301,6 +348,8 @@ class OrchestratorManager:
                 model_name = self.settings.llm_model
         else:
             model_name = "mock" if self.settings.use_mock_llm else self.settings.llm_model
+        if not self.has_available_agent_slot():
+            raise RuntimeError("all agent slots are busy")
         mission_id = self.store.create_mission(
             name=name,
             target=target,
@@ -314,18 +363,27 @@ class OrchestratorManager:
             expected_flags=expected_flags,
             skills=skills or [],
         )
-        self._mission_meta[mission_id] = {
-            "mission_timeout_sec": mission_timeout_sec,
-        }
-        thread = threading.Thread(
-            target=self._run_mission,
-            args=(mission_id,),
-            name=f"mission-{mission_id[:8]}",
-            daemon=True,
-        )
-        with self._lock:
-            self._threads[mission_id] = thread
-        thread.start()
+        try:
+            self._allocate_sandbox(mission_id)
+            self._mission_meta[mission_id] = {
+                "mission_timeout_sec": mission_timeout_sec,
+            }
+            thread = threading.Thread(
+                target=self._run_mission,
+                args=(mission_id,),
+                name=f"mission-{mission_id[:8]}",
+                daemon=True,
+            )
+            with self._lock:
+                self._threads[mission_id] = thread
+            thread.start()
+        except Exception:
+            self._release_sandbox(mission_id)
+            self._mission_meta.pop(mission_id, None)
+            with self._lock:
+                self._threads.pop(mission_id, None)
+            self.store.delete_mission(mission_id)
+            raise
         return mission_id
 
     def resume_mission(
@@ -345,26 +403,37 @@ class OrchestratorManager:
             return None
         if mission["status"] in {"queued", "running"}:
             raise RuntimeError("mission is already queued or running")
+        if not self.has_available_agent_slot():
+            raise RuntimeError("all agent slots are busy")
 
-        resumed = self.store.prepare_mission_resume(mission_id, extra_rounds)
-        if not resumed:
-            return None
+        self._allocate_sandbox(mission_id)
+        try:
+            resumed = self.store.prepare_mission_resume(mission_id, extra_rounds)
+            if not resumed:
+                self._release_sandbox(mission_id)
+                return None
 
-        self._mission_meta[mission_id] = {
-            "mission_timeout_sec": mission_timeout_sec,
-        }
-        thread = threading.Thread(
-            target=self._run_mission,
-            args=(mission_id,),
-            name=f"mission-{mission_id[:8]}",
-            daemon=True,
-        )
-        with self._lock:
-            existing = self._threads.get(mission_id)
-            if existing and existing.is_alive():
-                raise RuntimeError("mission is already running")
-            self._threads[mission_id] = thread
-        thread.start()
+            self._mission_meta[mission_id] = {
+                "mission_timeout_sec": mission_timeout_sec,
+            }
+            thread = threading.Thread(
+                target=self._run_mission,
+                args=(mission_id,),
+                name=f"mission-{mission_id[:8]}",
+                daemon=True,
+            )
+            with self._lock:
+                existing = self._threads.get(mission_id)
+                if existing and existing.is_alive():
+                    raise RuntimeError("mission is already running")
+                self._threads[mission_id] = thread
+            thread.start()
+        except Exception:
+            self._release_sandbox(mission_id)
+            self._mission_meta.pop(mission_id, None)
+            with self._lock:
+                self._threads.pop(mission_id, None)
+            raise
         return resumed
 
     def stop_mission(self, mission_id: str) -> None:

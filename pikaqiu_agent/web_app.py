@@ -131,7 +131,10 @@ def create_app(runtime: AppRuntime | None = None) -> Flask:
             "llm_mode": "mock" if s.use_mock_llm else "direct-api",
             "model": s.llm_model,
             "sandbox_container": s.sandbox_container,
+            "sandbox_containers": s.sandbox_containers,
             "sandbox_workdir": s.sandbox_workdir,
+            "agent_capacity": len(rt().orchestrator.agent_slots()),
+            "agent_slots": rt().orchestrator.agent_slots(),
             "knowledge": rt().knowledge.get_stats(),
             "skills": rt().skills.stats(),
             "defaults": {
@@ -192,7 +195,10 @@ def create_app(runtime: AppRuntime | None = None) -> Flask:
 
     @app.route("/api/missions", methods=["GET"])
     def api_missions_list():
-        return jsonify({"missions": rt().store.list_missions()})
+        return jsonify({
+            "missions": rt().store.list_missions(),
+            "agent_slots": rt().orchestrator.agent_slots(),
+        })
 
     @app.route("/api/missions", methods=["POST"])
     def api_missions_create():
@@ -208,18 +214,21 @@ def create_app(runtime: AppRuntime | None = None) -> Flask:
             _, missing_skills = rt().skills.resolve(skill_ids)
             if missing_skills:
                 return _json_error(f"unknown or disabled skills: {', '.join(missing_skills)}", 400)
-        mission_id = rt().orchestrator.start_mission(
-            name=str(payload.get("name") or "未命名任务"),
-            target=str(payload.get("target") or "").strip(),
-            goal=str(payload.get("goal") or "").strip(),
-            scope=str(payload.get("target") or "").strip(),
-            domains=[str(item) for item in payload.get("domains", ["web"]) if str(item)],
-            max_rounds=max_rounds,
-            max_commands=max_commands,
-            command_timeout_sec=command_timeout,
-            expected_flags=expected_flags,
-            skills=skill_ids,
-        )
+        try:
+            mission_id = rt().orchestrator.start_mission(
+                name=str(payload.get("name") or "未命名任务"),
+                target=str(payload.get("target") or "").strip(),
+                goal=str(payload.get("goal") or "").strip(),
+                scope=str(payload.get("target") or "").strip(),
+                domains=[str(item) for item in payload.get("domains", ["web"]) if str(item)],
+                max_rounds=max_rounds,
+                max_commands=max_commands,
+                command_timeout_sec=command_timeout,
+                expected_flags=expected_flags,
+                skills=skill_ids,
+            )
+        except RuntimeError as exc:
+            return _json_error(str(exc), 409)
         return jsonify({"mission_id": mission_id}), 201
 
     @app.route("/api/missions/<mission_id>")
