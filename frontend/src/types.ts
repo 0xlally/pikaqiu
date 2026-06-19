@@ -223,6 +223,27 @@ export type KnowledgeItem = {
   body?: string;
 };
 
+export type ExperienceCraft = {
+  id: string;
+  path: string;
+  source: "craft" | string;
+  status: "pending_review" | "approved" | "rejected" | string;
+  source_mission_id: string;
+  mission_name: string;
+  target: string;
+  created_at: string;
+  reviewed_at: string;
+  reviewer: string;
+  distilled_path: string;
+  snippet: string;
+};
+
+export type ExperienceCraftDetail = ExperienceCraft & {
+  ok: boolean;
+  truncated: boolean;
+  content: string;
+};
+
 export type Config = Record<string, string | number | boolean | null>;
 
 export type ConfigResponse = {

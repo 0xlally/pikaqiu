@@ -21,6 +21,10 @@ def distilled_experience_root(workspace_root: Path) -> Path:
     return workspace_root / ".pikaqiu_agent" / "experience_distilled"
 
 
+def experience_craft_root(workspace_root: Path) -> Path:
+    return workspace_root / ".pikaqiu_agent" / "experience_crafts"
+
+
 def build_experience_query(mission: dict[str, Any], memory: dict[str, Any]) -> str:
     idea = memory.get("idea_board") if isinstance(memory.get("idea_board"), dict) else {}
     board = memory.get("memory_board") if isinstance(memory.get("memory_board"), dict) else {}
@@ -152,6 +156,174 @@ def write_distilled_experience(
     return path
 
 
+def write_experience_craft(
+    workspace_root: Path,
+    *,
+    mission: dict[str, Any],
+    markdown: str,
+) -> Path:
+    root = experience_craft_root(workspace_root)
+    root.mkdir(parents=True, exist_ok=True)
+    now = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
+    slug = _slug(mission.get("name") or mission.get("target") or "mission")
+    mission_id = str(mission.get("id") or "")[:8] or "unknown"
+    path = root / f"{now}-{slug}-{mission_id}.md"
+    text = _ensure_craft_metadata(
+        markdown,
+        {
+            "source_mission_id": str(mission.get("id") or ""),
+            "review_status": "pending_review",
+            "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "mission_name": _clean_text(mission.get("name"), 200),
+            "target": _clean_text(mission.get("target"), 300),
+        },
+    )
+    path.write_text(text.strip() + "\n", encoding="utf-8")
+    return path
+
+
+def list_experience_crafts(workspace_root: Path) -> list[dict[str, Any]]:
+    root = experience_craft_root(workspace_root)
+    if not root.is_dir():
+        return []
+    rows: list[dict[str, Any]] = []
+    for path in sorted(root.glob("*.md"), key=lambda item: item.stat().st_mtime, reverse=True):
+        text = _read_text(path)
+        meta = _metadata(text)
+        rows.append({
+            "id": path.name,
+            "path": _experience_rel(workspace_root, path, "craft"),
+            "source": "craft",
+            "status": meta.get("review_status", "pending_review"),
+            "source_mission_id": meta.get("source_mission_id", ""),
+            "mission_name": meta.get("mission_name", ""),
+            "target": meta.get("target", ""),
+            "created_at": meta.get("created_at", ""),
+            "reviewed_at": meta.get("reviewed_at", ""),
+            "reviewer": meta.get("reviewer", ""),
+            "distilled_path": meta.get("distilled_path", ""),
+            "snippet": _snippet(text, [], limit=500),
+        })
+    return rows
+
+
+def load_experience_craft(workspace_root: Path, craft_id: str, *, max_chars: int = 40000) -> dict[str, Any]:
+    path = resolve_experience_craft_path(workspace_root, craft_id)
+    if not path:
+        return {"ok": False, "error": "craft not found"}
+    text = _read_text(path)
+    truncated = len(text) > max_chars
+    if truncated:
+        text = text[:max_chars] + "\n... [truncated]"
+    meta = _metadata(text)
+    return {
+        "ok": True,
+        "id": path.name,
+        "path": _experience_rel(workspace_root, path, "craft"),
+        "source": "craft",
+        "status": meta.get("review_status", "pending_review"),
+        "source_mission_id": meta.get("source_mission_id", ""),
+        "mission_name": meta.get("mission_name", ""),
+        "target": meta.get("target", ""),
+        "created_at": meta.get("created_at", ""),
+        "reviewed_at": meta.get("reviewed_at", ""),
+        "reviewer": meta.get("reviewer", ""),
+        "distilled_path": meta.get("distilled_path", ""),
+        "snippet": _snippet(text, [], limit=500),
+        "truncated": truncated,
+        "content": text,
+    }
+
+
+def promote_experience_craft(
+    workspace_root: Path,
+    craft_id: str,
+    *,
+    reviewer: str = "",
+    notes: str = "",
+) -> dict[str, Any]:
+    path = resolve_experience_craft_path(workspace_root, craft_id)
+    if not path:
+        return {"ok": False, "error": "craft not found"}
+    original = _read_text(path)
+    meta = _metadata(original)
+    if meta.get("review_status") == "approved" and meta.get("distilled_path"):
+        return {
+            "ok": True,
+            "craft": load_experience_craft(workspace_root, craft_id),
+            "distilled_path": meta.get("distilled_path", ""),
+        }
+    reviewed_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    active_markdown = _craft_to_distilled_markdown(
+        original,
+        source_craft_path=_experience_rel(workspace_root, path, "craft"),
+        reviewed_at=reviewed_at,
+        reviewer=reviewer,
+        notes=notes,
+    )
+    distilled_path = write_distilled_experience(
+        workspace_root,
+        mission={
+            "id": meta.get("source_mission_id", ""),
+            "name": meta.get("mission_name") or path.stem,
+            "target": meta.get("target", ""),
+        },
+        markdown=active_markdown,
+    )
+    updated = _upsert_metadata(
+        original,
+        {
+            "review_status": "approved",
+            "reviewed_at": reviewed_at,
+            "reviewer": reviewer or "human",
+            "distilled_path": _experience_rel(workspace_root, distilled_path, "distilled"),
+        },
+    )
+    path.write_text(updated.strip() + "\n", encoding="utf-8")
+    return {
+        "ok": True,
+        "craft": load_experience_craft(workspace_root, craft_id),
+        "distilled_path": _experience_rel(workspace_root, distilled_path, "distilled"),
+    }
+
+
+def reject_experience_craft(
+    workspace_root: Path,
+    craft_id: str,
+    *,
+    reviewer: str = "",
+    notes: str = "",
+) -> dict[str, Any]:
+    path = resolve_experience_craft_path(workspace_root, craft_id)
+    if not path:
+        return {"ok": False, "error": "craft not found"}
+    reviewed_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    text = _upsert_metadata(
+        _read_text(path),
+        {
+            "review_status": "rejected",
+            "reviewed_at": reviewed_at,
+            "reviewer": reviewer or "human",
+            "review_notes": _clean_text(notes, 1000),
+        },
+    )
+    path.write_text(text.strip() + "\n", encoding="utf-8")
+    return {"ok": True, "craft": load_experience_craft(workspace_root, craft_id)}
+
+
+def resolve_experience_craft_path(workspace_root: Path, craft_id: str) -> Path | None:
+    raw = str(craft_id or "").strip().replace("\\", "/")
+    if not raw or "/" in raw or raw.startswith("."):
+        return None
+    target = (experience_craft_root(workspace_root) / raw).resolve()
+    root = experience_craft_root(workspace_root).resolve()
+    if not target.is_file() or target.suffix.lower() != ".md":
+        return None
+    if not _is_under(target, root):
+        return None
+    return target
+
+
 def _experience_sources(workspace_root: Path) -> list[tuple[Path, str]]:
     return [
         ((workspace_root / "experience").resolve(), "manual"),
@@ -216,6 +388,72 @@ def _query_tokens(query: str) -> list[str]:
 def _extract_source_mission_id(text: str) -> str:
     match = re.search(r"source_mission_id\s*[:=]\s*`?([A-Za-z0-9_.:-]+)`?", text)
     return match.group(1) if match else ""
+
+
+def _metadata(text: str) -> dict[str, str]:
+    meta: dict[str, str] = {}
+    for line in str(text or "").splitlines()[:80]:
+        match = re.match(r"^([A-Za-z][A-Za-z0-9_-]{1,60})\s*:\s*(.*?)\s*$", line)
+        if match:
+            meta[match.group(1)] = match.group(2).strip().strip("`")
+    return meta
+
+
+def _ensure_craft_metadata(markdown: str, meta: dict[str, str]) -> str:
+    text = str(markdown or "").strip()
+    if not text.startswith("#"):
+        text = "# Experience Craft\n\n" + text
+    return _upsert_metadata(text, meta)
+
+
+def _upsert_metadata(markdown: str, updates: dict[str, str]) -> str:
+    lines = str(markdown or "").strip().splitlines()
+    if not lines:
+        lines = ["# Experience Craft"]
+    insert_at = 1 if lines[0].startswith("#") else 0
+    existing: dict[str, int] = {}
+    for idx, line in enumerate(lines[:80]):
+        match = re.match(r"^([A-Za-z][A-Za-z0-9_-]{1,60})\s*:\s*.*$", line)
+        if match:
+            existing[match.group(1)] = idx
+    for key, value in updates.items():
+        clean = str(value or "").replace("\n", " ").strip()
+        line = f"{key}: {clean}"
+        if key in existing:
+            lines[existing[key]] = line
+        else:
+            lines.insert(insert_at, line)
+            insert_at += 1
+            existing = {
+                name: (pos + 1 if pos >= insert_at - 1 else pos)
+                for name, pos in existing.items()
+            }
+            existing[key] = insert_at - 1
+    return "\n".join(lines)
+
+
+def _craft_to_distilled_markdown(
+    markdown: str,
+    *,
+    source_craft_path: str,
+    reviewed_at: str,
+    reviewer: str,
+    notes: str,
+) -> str:
+    text = str(markdown or "").strip()
+    text = re.sub(r"^#\s+Experience Craft\b", "# Distilled Experience", text, count=1, flags=re.I)
+    if not text.startswith("#"):
+        text = "# Distilled Experience\n\n" + text
+    return _upsert_metadata(
+        text,
+        {
+            "review_status": "approved",
+            "reviewed_at": reviewed_at,
+            "reviewer": reviewer or "human",
+            "source_craft_path": source_craft_path,
+            "review_notes": _clean_text(notes, 1000),
+        },
+    )
 
 
 def _slug(value: Any) -> str:

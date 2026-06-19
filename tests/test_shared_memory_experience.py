@@ -47,6 +47,74 @@ class SharedMemoryExperienceTests(unittest.TestCase):
             self.assertIn("[distilled] .pikaqiu_agent/experience_distilled/mission-upload.md", hints)
             self.assertIn("source_mission_id=m-123", hints)
 
+    def test_experience_craft_is_not_searchable_until_approved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            craft_path = experience.write_experience_craft(
+                root,
+                mission={"id": "m-craft-1", "name": "Upload Lab", "target": "http://target/upload"},
+                markdown=(
+                    "# Experience Craft\n"
+                    "source_mission_id: wrong-id\n"
+                    "review_status: approved\n"
+                    "confidence: high\n\n"
+                    "## Vulnerability Type\n"
+                    "File upload polyglot bypass.\n\n"
+                    "## Payloads\n"
+                    "polyglot webshell payload\n"
+                ),
+            )
+
+            draft = experience.load_experience_craft(root, craft_path.name)
+            self.assertTrue(draft["ok"])
+            self.assertEqual(draft["status"], "pending_review")
+            self.assertEqual(draft["source_mission_id"], "m-craft-1")
+            self.assertEqual(experience.search_experience(root, "polyglot upload bypass", limit=5), [])
+
+            result = experience.promote_experience_craft(
+                root,
+                craft_path.name,
+                reviewer="tester",
+                notes="payload reproduced in clean sandbox",
+            )
+
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["distilled_path"].startswith(".pikaqiu_agent/experience_distilled/"))
+            approved = experience.load_experience_craft(root, craft_path.name)
+            self.assertEqual(approved["status"], "approved")
+            self.assertIn("distilled_path:", approved["content"])
+
+            rows = experience.search_experience(root, "polyglot upload bypass", limit=5)
+            self.assertEqual(len(rows), 1)
+            self.assertTrue(rows[0]["distilled"])
+            self.assertEqual(rows[0]["source_mission_id"], "m-craft-1")
+            distilled_text = (root / result["distilled_path"]).read_text(encoding="utf-8")
+            self.assertIn("source_craft_path:", distilled_text)
+            self.assertIn("reviewer: tester", distilled_text)
+
+    def test_rejected_experience_craft_does_not_enter_distilled_index(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            craft_path = experience.write_experience_craft(
+                root,
+                mission={"id": "m-craft-2", "name": "Rejected Lab", "target": "http://target/"},
+                markdown="# Experience Craft\n\n## Payloads\nnot reproduced payload\n",
+            )
+
+            result = experience.reject_experience_craft(
+                root,
+                craft_path.name,
+                reviewer="tester",
+                notes="could not reproduce",
+            )
+
+            self.assertTrue(result["ok"])
+            rejected = experience.load_experience_craft(root, craft_path.name)
+            self.assertEqual(rejected["status"], "rejected")
+            self.assertIn("review_notes: could not reproduce", rejected["content"])
+            self.assertFalse(experience.distilled_experience_root(root).exists())
+            self.assertEqual(experience.search_experience(root, "not reproduced payload", limit=5), [])
+
     def test_volatile_context_orders_boards_and_injects_experience_hints(self):
         memory = {
             "idea_board": {

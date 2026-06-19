@@ -28,6 +28,8 @@ import type {
   Bootstrap,
   Config,
   Event,
+  ExperienceCraft,
+  ExperienceCraftDetail,
   ExperimentRecord,
   KnowledgeItem,
   Mission,
@@ -1108,6 +1110,66 @@ function KnowledgeTab({
   const [query, setQuery] = useState(mission.target || "");
   const [items, setItems] = useState<KnowledgeItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [crafts, setCrafts] = useState<ExperienceCraft[]>([]);
+  const [selectedCraftId, setSelectedCraftId] = useState("");
+  const [selectedCraft, setSelectedCraft] = useState<ExperienceCraftDetail | null>(null);
+  const [craftLoading, setCraftLoading] = useState(false);
+  const [reviewNotes, setReviewNotes] = useState("");
+
+  useEffect(() => {
+    let disposed = false;
+    async function loadCrafts() {
+      try {
+        const response = await api.experienceCrafts();
+        if (disposed) return;
+        const nextCrafts = response.crafts || [];
+        setCrafts(nextCrafts);
+        setSelectedCraftId((current) => current || nextCrafts.find((craft) => craft.status === "pending_review")?.id || nextCrafts[0]?.id || "");
+      } catch (err) {
+        if (!disposed) onError(readError(err));
+      }
+    }
+    loadCrafts();
+    return () => {
+      disposed = true;
+    };
+  }, [onError]);
+
+  useEffect(() => {
+    if (!selectedCraftId) {
+      setSelectedCraft(null);
+      return;
+    }
+    let disposed = false;
+    async function loadCraft() {
+      setCraftLoading(true);
+      try {
+        const response = await api.experienceCraft(selectedCraftId);
+        if (!disposed) setSelectedCraft(response.craft);
+      } catch (err) {
+        if (!disposed) onError(readError(err));
+      } finally {
+        if (!disposed) setCraftLoading(false);
+      }
+    }
+    loadCraft();
+    return () => {
+      disposed = true;
+    };
+  }, [selectedCraftId, onError]);
+
+  async function refreshCrafts(nextSelectedId = selectedCraftId) {
+    const response = await api.experienceCrafts();
+    const nextCrafts = response.crafts || [];
+    setCrafts(nextCrafts);
+    setSelectedCraftId(nextSelectedId || nextCrafts[0]?.id || "");
+    if (nextSelectedId) {
+      const detail = await api.experienceCraft(nextSelectedId);
+      setSelectedCraft(detail.craft);
+    } else {
+      setSelectedCraft(null);
+    }
+  }
 
   async function search(event?: React.FormEvent) {
     event?.preventDefault();
@@ -1137,39 +1199,142 @@ function KnowledgeTab({
     }
   }
 
+  async function reviewCraft(action: "approve" | "reject") {
+    if (!selectedCraftId) return;
+    setCraftLoading(true);
+    try {
+      if (action === "approve") {
+        const response = await api.approveExperienceCraft(selectedCraftId, {
+          reviewer: "human",
+          notes: reviewNotes
+        });
+        onNotice(`Experience Craft 已批准入库：${response.distilled_path}`);
+      } else {
+        await api.rejectExperienceCraft(selectedCraftId, {
+          reviewer: "human",
+          notes: reviewNotes
+        });
+        onNotice("Experience Craft 已驳回，不会进入主 Agent 经验提示。");
+      }
+      setReviewNotes("");
+      await refreshCrafts(selectedCraftId);
+    } catch (err) {
+      onError(readError(err));
+    } finally {
+      setCraftLoading(false);
+    }
+  }
+
   return (
-    <section className="panel">
-      <div className="section-title">
-        <MagnifyingGlass />
-        <div>
-          <h2>知识库检索</h2>
-          <p>查询离线 RAG/FTS 索引，辅助判断漏洞路径。</p>
+    <div className="knowledge-workspace">
+      <section className="panel">
+        <div className="section-title">
+          <MagnifyingGlass />
+          <div>
+            <h2>知识库检索</h2>
+            <p>查询离线 RAG/FTS 索引，辅助判断漏洞路径。</p>
+          </div>
         </div>
-      </div>
-      <form className="search-bar" onSubmit={search}>
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="thinkphp rce, file upload, redis unauth" />
-        <button className="primary-button slim" type="submit" disabled={loading}>
-          搜索
-        </button>
-        <button className="ghost-button" type="button" onClick={reindex} disabled={loading}>
-          重建索引
-        </button>
-      </form>
-      <div className="knowledge-results">
-        {items.length ? (
-          items.map((item) => (
-            <article className="knowledge-card" key={`${item.source}-${item.id}`}>
-              <span className="trace-type">{item.domain || item.source}</span>
-              <strong>{item.title || item.path}</strong>
-              <p>{stripSnippet(item.snippet || item.body || "")}</p>
-              <small>{item.path}</small>
-            </article>
-          ))
-        ) : (
-          <EmptyState title="等待检索" body="输入关键词后，会显示知识库命中的路径和摘要。" />
-        )}
-      </div>
-    </section>
+        <form className="search-bar" onSubmit={search}>
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="thinkphp rce, file upload, redis unauth" />
+          <button className="primary-button slim" type="submit" disabled={loading}>
+            搜索
+          </button>
+          <button className="ghost-button" type="button" onClick={reindex} disabled={loading}>
+            重建索引
+          </button>
+        </form>
+        <div className="knowledge-results">
+          {items.length ? (
+            items.map((item) => (
+              <article className="knowledge-card" key={`${item.source}-${item.id}`}>
+                <span className="trace-type">{item.domain || item.source}</span>
+                <strong>{item.title || item.path}</strong>
+                <p>{stripSnippet(item.snippet || item.body || "")}</p>
+                <small>{item.path}</small>
+              </article>
+            ))
+          ) : (
+            <EmptyState title="等待检索" body="输入关键词后，会显示知识库命中的路径和摘要。" />
+          )}
+        </div>
+      </section>
+
+      <section className="panel craft-review-panel">
+        <div className="section-title">
+          <ShieldCheck />
+          <div>
+            <h2>Experience Craft 复验</h2>
+            <p>Agent 成功后只生成草稿；人工批准后才会进入可检索经验库。</p>
+          </div>
+        </div>
+        <div className="craft-review-grid">
+          <div className="craft-list">
+            {crafts.length ? (
+              crafts.map((craft) => (
+                <button
+                  type="button"
+                  className={selectedCraftId === craft.id ? "craft-card active" : "craft-card"}
+                  key={craft.id}
+                  onClick={() => setSelectedCraftId(craft.id)}
+                >
+                  <span className={`status-badge ${craft.status === "approved" ? "ok" : craft.status === "rejected" ? "bad" : "warn"}`}>
+                    {craft.status}
+                  </span>
+                  <strong>{craft.mission_name || craft.id}</strong>
+                  <small>{craft.target || craft.path}</small>
+                  <p>{stripSnippet(craft.snippet || "")}</p>
+                </button>
+              ))
+            ) : (
+              <EmptyState compact title="暂无草稿" body="任务拿到 Flag 后会自动生成待复验 craft。" />
+            )}
+          </div>
+          <div className="craft-detail">
+            {selectedCraft ? (
+              <>
+                <div className="craft-meta">
+                  <RuntimeLine label="状态" value={selectedCraft.status} />
+                  <RuntimeLine label="Mission" value={selectedCraft.source_mission_id || "unknown"} />
+                  <RuntimeLine label="路径" value={selectedCraft.path} />
+                  <RuntimeLine label="入库" value={selectedCraft.distilled_path || "未入库"} />
+                </div>
+                <pre className="craft-preview">{selectedCraft.content}</pre>
+                <label className="review-notes">
+                  复验备注
+                  <textarea
+                    value={reviewNotes}
+                    onChange={(event) => setReviewNotes(event.target.value)}
+                    rows={3}
+                    placeholder="例如：已在干净沙箱复现 payload，确认漏洞类型与命令链。"
+                  />
+                </label>
+                <div className="craft-actions">
+                  <button
+                    className="primary-button slim"
+                    type="button"
+                    onClick={() => void reviewCraft("approve")}
+                    disabled={craftLoading || selectedCraft.status === "approved"}
+                  >
+                    批准入库
+                  </button>
+                  <button
+                    className="danger-button"
+                    type="button"
+                    onClick={() => void reviewCraft("reject")}
+                    disabled={craftLoading || selectedCraft.status === "approved"}
+                  >
+                    驳回
+                  </button>
+                </div>
+              </>
+            ) : (
+              <EmptyState title={craftLoading ? "正在加载草稿" : "选择草稿"} body="左侧选择一个 craft 后，可以查看完整内容并复验。" />
+            )}
+          </div>
+        </div>
+      </section>
+    </div>
   );
 }
 

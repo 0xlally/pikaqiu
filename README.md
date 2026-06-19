@@ -128,7 +128,7 @@ python -m pikaqiu_agent
 ## 当前前端能力
 
 - Mission Control 首页：创建任务、选择任务、查看运行状态和 Flag。
-- 任务详情：总览、时间线、Observer、记忆、证据、知识库检索。
+- 任务详情：总览、时间线、Observer、记忆、证据、知识库检索和 Experience Craft 复验。
 - 操作按钮：继续、停止、删除单个任务。
 - 人工协作：开启任务指导通道，并向运行中的任务提交 guidance。
 - Experiment 归档：保存 challenge code、难度、结果、失败原因、关键参数和备注。
@@ -154,12 +154,13 @@ Flask API (pikaqiu_agent/web_app.py)
   |
   +-- Sandbox Executor
   |     |
-  |     +-- Docker container: pikaqiu-sandbox-1
+  |     +-- Docker containers: pikaqiu-sandbox-1..5
   |
   +-- Knowledge Base
   |     |
   |     +-- RAG / FTS search
   |     +-- CVE / PoC index
+  |     +-- Human-reviewed distilled experience
   |
   +-- Skill Loader
   |
@@ -177,6 +178,8 @@ Flask API (pikaqiu_agent/web_app.py)
 7. Passive Observer 按配置间隔审核运行轨迹，只在关键风险、重复卡住或需要纠偏时注入短建议。
 8. 前端每 3 秒轮询 mission、detail、experiment 数据并刷新 UI。
 9. 达到目标、捕获足够 Flag、达到最大轮数或用户停止后，任务进入终态。
+10. 如果任务成功捕获 Flag，系统会自动提炼 `Experience Craft` 草稿，记录漏洞类型、适用场景、Payload、命令链和证据；草稿不会直接进入主 Agent 的经验检索。
+11. 人工在前端知识库页复验 craft，批准后才写入 `.pikaqiu_agent/experience_distilled/`，之后才会被主 Agent 作为可复用经验提示检索到；驳回则只保留审查记录。
 
 ## 关键目录
 
@@ -238,6 +241,28 @@ curl http://127.0.0.1:8001/api/missions/<mission_id>
 curl "http://127.0.0.1:8001/api/knowledge/search?q=file%20upload&limit=8"
 ```
 
+查看待复验经验草稿：
+
+```powershell
+curl http://127.0.0.1:8001/api/experience/crafts
+```
+
+批准经验草稿入库：
+
+```powershell
+curl -X POST http://127.0.0.1:8001/api/experience/crafts/<craft_id>/approve `
+  -H "Content-Type: application/json" `
+  -d "{\"reviewer\":\"human\",\"notes\":\"payload reproduced in clean sandbox\"}"
+```
+
+驳回经验草稿：
+
+```powershell
+curl -X POST http://127.0.0.1:8001/api/experience/crafts/<craft_id>/reject `
+  -H "Content-Type: application/json" `
+  -d "{\"reviewer\":\"human\",\"notes\":\"could not reproduce\"}"
+```
+
 查看 Skills：
 
 ```powershell
@@ -254,6 +279,7 @@ curl http://127.0.0.1:8001/api/skills
 - ZIP 包自动解压和索引
 - RAG / FTS 检索
 - `cve-poc-index.json` 结构化 CVE / PoC 检索
+- `.pikaqiu_agent/experience_distilled/` 中已经人工批准的成功经验
 
 前端的知识库页调用：
 
@@ -261,6 +287,10 @@ curl http://127.0.0.1:8001/api/skills
 GET /api/knowledge/search
 POST /api/knowledge/reindex
 GET /api/knowledge/cve-search
+GET /api/experience/crafts
+GET /api/experience/crafts/<craft_id>
+POST /api/experience/crafts/<craft_id>/approve
+POST /api/experience/crafts/<craft_id>/reject
 ```
 
 ## Skills

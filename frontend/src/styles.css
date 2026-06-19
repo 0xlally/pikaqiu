@@ -1318,7 +1318,8 @@ select:focus {
 }
 
 .message-card,
-.knowledge-card {
+.knowledge-card,
+.craft-card {
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
@@ -1333,7 +1334,8 @@ select:focus {
 }
 
 .message-card small,
-.knowledge-card small {
+.knowledge-card small,
+.craft-card small {
   color: var(--faint);
   font-family: var(--font-mono);
   font-size: 11px;
@@ -1385,6 +1387,95 @@ select:focus {
   grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 10px;
   padding: 0 16px 16px;
+}
+
+.knowledge-workspace {
+  display: grid;
+  gap: 14px;
+}
+
+.craft-review-panel {
+  min-height: 0;
+}
+
+.craft-review-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.72fr) minmax(0, 1.28fr);
+  gap: 12px;
+  padding: 0 16px 16px;
+}
+
+.craft-list {
+  display: grid;
+  max-height: 420px;
+  gap: 8px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.craft-card {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  cursor: pointer;
+  text-align: left;
+}
+
+.craft-card.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.craft-card strong {
+  color: var(--text);
+}
+
+.craft-card p {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.craft-detail {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+
+.craft-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+}
+
+.craft-meta .runtime-line {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #ffffff;
+  padding: 8px;
+}
+
+.craft-preview {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #f8fbff;
+  color: var(--text);
+  padding: 12px;
+  white-space: pre-wrap;
+}
+
+.review-notes {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.craft-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .runtime-line {

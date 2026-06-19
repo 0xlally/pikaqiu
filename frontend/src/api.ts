@@ -4,6 +4,8 @@ import type {
   Config,
   ConfigResponse,
   ConfigSaveResponse,
+  ExperienceCraft,
+  ExperienceCraftDetail,
   ExperimentRecord,
   KnowledgeItem,
   Mission,
@@ -60,6 +62,25 @@ export const api = {
   skills: () => requestJson<{ skills: Skill[]; stats: SkillStats }>("/api/skills"),
   experiments: () =>
     requestJson<{ records: ExperimentRecord[]; summary: Record<string, unknown> }>("/api/experiments"),
+  experienceCrafts: () => requestJson<{ crafts: ExperienceCraft[] }>("/api/experience/crafts"),
+  experienceCraft: (craftId: string) =>
+    requestJson<{ craft: ExperienceCraftDetail }>(`/api/experience/crafts/${encodeURIComponent(craftId)}`),
+  approveExperienceCraft: (craftId: string, payload: { reviewer?: string; notes?: string } = {}) =>
+    requestJson<{ ok: boolean; craft: ExperienceCraftDetail; distilled_path: string }>(
+      `/api/experience/crafts/${encodeURIComponent(craftId)}/approve`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload)
+      }
+    ),
+  rejectExperienceCraft: (craftId: string, payload: { reviewer?: string; notes?: string } = {}) =>
+    requestJson<{ ok: boolean; craft: ExperienceCraftDetail }>(
+      `/api/experience/crafts/${encodeURIComponent(craftId)}/reject`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload)
+      }
+    ),
   missions: () => requestJson<{ missions: Mission[]; agent_slots?: AgentSlot[] }>("/api/missions"),
   createMission: (payload: Record<string, unknown>) =>
     requestJson<{ mission_id: string }>("/api/missions", {

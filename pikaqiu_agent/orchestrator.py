@@ -545,7 +545,7 @@ class OrchestratorManager:
                 content=_compact_json(new_memory),
             )
             if flag_events and outcome == "success":
-                self._distill_success_experience(
+                self._craft_success_experience(
                     mission_id=mission_id,
                     mission=mission,
                     memory=new_memory,
@@ -572,7 +572,7 @@ class OrchestratorManager:
             logger.warning("[orchestrator] experience hint search failed: %s", e)
             return ""
 
-    def _distill_success_experience(
+    def _craft_success_experience(
         self,
         *,
         mission_id: str,
@@ -588,12 +588,13 @@ class OrchestratorManager:
         mission_with_id["id"] = mission_id
         flags = self.store.get_captured_flags(mission_id)
         prompt = (
-            "Distill this successful authorized CTF/pentest mission into a reusable Markdown experience card.\n"
+            "Draft a human-reviewable experience craft from this successful authorized CTF/pentest mission.\n"
             "Use only the provided evidence. Do not invent payloads, vulnerability types, or commands.\n"
             "If a payload or command is not visible in evidence, write 'unknown from evidence'.\n\n"
             "Required Markdown sections:\n"
-            "# Distilled Experience\n"
+            "# Experience Craft\n"
             "source_mission_id: <mission id>\n"
+            "review_status: pending_review\n"
             "confidence: high|medium|low\n\n"
             "## Vulnerability Type\n"
             "## Applicable Scenario\n"
@@ -616,8 +617,8 @@ class OrchestratorManager:
             finally:
                 pool.shutdown(wait=False, cancel_futures=True)
             if "source_mission_id" not in markdown:
-                markdown = f"source_mission_id: {mission_id}\nconfidence: low\n\n{markdown}"
-            path = _experience.write_distilled_experience(
+                markdown = f"source_mission_id: {mission_id}\nreview_status: pending_review\nconfidence: low\n\n{markdown}"
+            path = _experience.write_experience_craft(
                 self.settings.workspace_root,
                 mission=mission_with_id,
                 markdown=markdown,
@@ -626,17 +627,21 @@ class OrchestratorManager:
                 mission_id=mission_id,
                 round_no=round_no,
                 event_type="knowledge",
-                title="Distilled experience written",
+                title="Experience craft written",
                 content=str(path.relative_to(self.settings.workspace_root)),
-                metadata={"distilled_experience_path": str(path)},
+                metadata={
+                    "experience_craft_path": str(path),
+                    "review_status": "pending_review",
+                    "note": "Craft is not injected into the active experience index until human approval.",
+                },
             )
         except Exception as e:
-            logger.warning("[orchestrator] success experience distillation failed: %s", e)
+            logger.warning("[orchestrator] success experience craft failed: %s", e)
             self.store.add_event(
                 mission_id=mission_id,
                 round_no=round_no,
                 event_type="warning",
-                title="Experience distillation failed",
+                title="Experience craft failed",
                 content=str(e)[:2000],
             )
 

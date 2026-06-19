@@ -6,6 +6,7 @@ from typing import Any
 
 from flask import Flask, jsonify, request, send_from_directory
 
+from pikaqiu_agent import experience
 from pikaqiu_agent.config import AgentSettings, load_settings
 from pikaqiu_agent.knowledge import KnowledgeIndexer
 from pikaqiu_agent.llm_client import LLMClient
@@ -190,6 +191,47 @@ def create_app(runtime: AppRuntime | None = None) -> Flask:
             "records": records,
             "summary": _experiment_summary(records),
         })
+
+    # ── Experience Crafts ─────────────────────────────────────
+
+    @app.route("/api/experience/crafts")
+    def api_experience_crafts_list():
+        return jsonify({
+            "crafts": experience.list_experience_crafts(rt().settings.workspace_root)
+        })
+
+    @app.route("/api/experience/crafts/<craft_id>")
+    def api_experience_craft_detail(craft_id: str):
+        craft = experience.load_experience_craft(rt().settings.workspace_root, craft_id)
+        if not craft.get("ok"):
+            return _json_error(str(craft.get("error") or "craft not found"), 404)
+        return jsonify({"craft": craft})
+
+    @app.route("/api/experience/crafts/<craft_id>/approve", methods=["POST"])
+    def api_experience_craft_approve(craft_id: str):
+        payload = request.get_json(silent=True) or {}
+        result = experience.promote_experience_craft(
+            rt().settings.workspace_root,
+            craft_id,
+            reviewer=_clamp_text(payload.get("reviewer"), 80) or "human",
+            notes=_clamp_text(payload.get("notes"), 1000),
+        )
+        if not result.get("ok"):
+            return _json_error(str(result.get("error") or "craft not found"), 404)
+        return jsonify(result)
+
+    @app.route("/api/experience/crafts/<craft_id>/reject", methods=["POST"])
+    def api_experience_craft_reject(craft_id: str):
+        payload = request.get_json(silent=True) or {}
+        result = experience.reject_experience_craft(
+            rt().settings.workspace_root,
+            craft_id,
+            reviewer=_clamp_text(payload.get("reviewer"), 80) or "human",
+            notes=_clamp_text(payload.get("notes"), 1000),
+        )
+        if not result.get("ok"):
+            return _json_error(str(result.get("error") or "craft not found"), 404)
+        return jsonify(result)
 
     # ── Missions ──────────────────────────────────────────────
 
