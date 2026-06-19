@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useTransition } from "react";
+import React, { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Brain,
@@ -17,7 +17,6 @@ import {
   Plus,
   Pulse,
   ShieldCheck,
-  Skull,
   TerminalWindow,
   Trash,
   WarningCircle
@@ -58,6 +57,9 @@ const tabs: { id: AppTab; label: string }[] = [
   { id: "evidence", label: "证据" },
   { id: "knowledge", label: "知识库" }
 ];
+
+const tabButtonId = (tab: AppTab) => `mission-tab-${tab}`;
+const tabPanelId = (tab: AppTab) => `mission-panel-${tab}`;
 
 const configFields = [
   { key: "mock", label: "Mock 模式", type: "checkbox", section: "运行模式" },
@@ -216,66 +218,95 @@ function MissionControl() {
     }
   }
 
+  function handleTabKeyDown(event: React.KeyboardEvent<HTMLButtonElement>, tabId: AppTab) {
+    const currentIndex = tabs.findIndex((tab) => tab.id === tabId);
+    const lastIndex = tabs.length - 1;
+    let nextIndex = currentIndex;
+    if (event.key === "ArrowRight") nextIndex = currentIndex === lastIndex ? 0 : currentIndex + 1;
+    if (event.key === "ArrowLeft") nextIndex = currentIndex === 0 ? lastIndex : currentIndex - 1;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = lastIndex;
+    if (nextIndex === currentIndex) return;
+    event.preventDefault();
+    const nextTab = tabs[nextIndex];
+    setActiveTab(nextTab.id);
+    window.requestAnimationFrame(() => document.getElementById(tabButtonId(nextTab.id))?.focus());
+  }
+
   return (
-    <div className="app-shell">
+    <div className="app-shell mission-shell">
       <Atmosphere />
       <Header bootstrap={bootstrap} active="missions" />
-      <main className="control-grid">
-        <aside className="left-rail">
-          <MissionLaunch defaults={bootstrap?.defaults} skills={skills} onCreated={handleCreated} onError={setError} />
-          <MissionList missions={missions} selectedId={selectedId} onSelect={setSelectedId} />
-        </aside>
+      <main className="command-center">
+        <DashboardStrip
+          loading={loading || isPending}
+          model={bootstrap?.model}
+          runningCount={runningCount}
+          flagCount={flagCount}
+          missionCount={missions.length}
+          knowledgeDocs={bootstrap?.knowledge?.total_docs || bootstrap?.knowledge?.total_chunks || 0}
+        />
 
-        <section className="workbench">
-          <DashboardStrip
-            loading={loading || isPending}
-            model={bootstrap?.model}
-            runningCount={runningCount}
-            flagCount={flagCount}
-            missionCount={missions.length}
-            knowledgeDocs={bootstrap?.knowledge?.total_docs || bootstrap?.knowledge?.total_chunks || 0}
-          />
+        {notice ? <InlineNotice tone="ok" message={notice} onClose={() => setNotice("")} /> : null}
+        {error ? <InlineNotice tone="bad" message={error} actionLabel="重新同步" onAction={refreshAll} onClose={() => setError("")} /> : null}
 
-          {notice ? <InlineNotice tone="ok" message={notice} onClose={() => setNotice("")} /> : null}
-          {error ? <InlineNotice tone="bad" message={error} onClose={() => setError("")} /> : null}
+        <section className="control-grid">
+          <aside className={missions.length ? "left-rail" : "left-rail empty-queue"}>
+            <MissionLaunch
+              defaults={bootstrap?.defaults}
+              skills={skills}
+              hasMissions={missions.length > 0}
+              onCreated={handleCreated}
+              onError={setError}
+            />
+            <MissionList missions={missions} selectedId={selectedId} onSelect={setSelectedId} />
+          </aside>
 
-          <MissionDetailHeader
-            mission={selectedMission}
-            detail={detail}
-            detailLoading={detailLoading}
-            onStop={() => missionAction("stop")}
-            onResume={() => missionAction("resume")}
-            onDelete={() => missionAction("delete")}
-          />
+          <section className="workbench">
+            <SystemBar bootstrap={bootstrap} skills={skills} experiments={experiments} />
 
-          <div className="tabs" role="tablist" aria-label="任务视图">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                className={activeTab === tab.id ? "tab active" : "tab"}
-                onClick={() => setActiveTab(tab.id)}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
+            <MissionDetailHeader
+              mission={selectedMission}
+              detail={detail}
+              detailLoading={detailLoading}
+              onStop={() => missionAction("stop")}
+              onResume={() => missionAction("resume")}
+              onDelete={() => missionAction("delete")}
+            />
 
-          <MissionPane
-            tab={activeTab}
-            detail={detail}
-            experiments={experiments}
-            onError={setError}
-            onNotice={setNotice}
-            onRefresh={refreshAll}
-          />
+            <FunctionMap detail={detail} onOpenTab={setActiveTab} />
+
+            <div className="pane-region">
+              <div className="tabs" role="tablist" aria-label="任务视图">
+                {tabs.map((tab) => (
+                  <button
+                    key={tab.id}
+                    id={tabButtonId(tab.id)}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === tab.id}
+                    aria-controls={tabPanelId(tab.id)}
+                    tabIndex={activeTab === tab.id ? 0 : -1}
+                    className={activeTab === tab.id ? "tab active" : "tab"}
+                    onClick={() => setActiveTab(tab.id)}
+                    onKeyDown={(event) => handleTabKeyDown(event, tab.id)}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              <MissionPane
+                tab={activeTab}
+                detail={detail}
+                experiments={experiments}
+                onError={setError}
+                onNotice={setNotice}
+                onRefresh={refreshAll}
+              />
+            </div>
+          </section>
         </section>
-
-        <aside className="right-rail">
-          <RuntimeCard bootstrap={bootstrap} skills={skills} />
-          <ExperimentPulse experiments={experiments} />
-          <SkillDeck skills={skills} />
-        </aside>
       </main>
     </div>
   );
@@ -357,16 +388,27 @@ function DashboardStrip({
 function MissionLaunch({
   defaults,
   skills,
+  hasMissions,
   onCreated,
   onError
 }: {
   defaults?: Bootstrap["defaults"];
   skills: Skill[];
+  hasMissions: boolean;
   onCreated: (id: string) => Promise<void>;
   onError: (message: string) => void;
 }) {
   const [submitting, setSubmitting] = useState(false);
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
+  const [expanded, setExpanded] = useState(() => !hasMissions);
+  const autoCollapsed = useRef(false);
+
+  useEffect(() => {
+    if (hasMissions && !autoCollapsed.current) {
+      autoCollapsed.current = true;
+      setExpanded(false);
+    }
+  }, [hasMissions]);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -400,8 +442,8 @@ function MissionLaunch({
   }
 
   return (
-    <section className="panel launch-panel">
-      <div className="panel-heading">
+    <details className="panel launch-panel" open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
+      <summary className="panel-heading">
         <span className="panel-icon">
           <Plus />
         </span>
@@ -409,7 +451,8 @@ function MissionLaunch({
           <h2>发起任务</h2>
           <p>定义目标、范围和终止条件。</p>
         </div>
-      </div>
+        <span className="summary-action">{expanded ? "收起" : "展开"}</span>
+      </summary>
       <form className="mission-form" onSubmit={submit}>
         <label>
           任务名
@@ -421,7 +464,7 @@ function MissionLaunch({
         </label>
         <label>
           目标说明
-          <textarea name="goal" rows={4} placeholder="例如：找到并提交所有 flag，记录可复现路径。" required />
+          <textarea name="goal" rows={3} placeholder="例如：找到并提交所有 flag，记录可复现路径。" required />
         </label>
         <div className="form-grid">
           <label>
@@ -467,7 +510,7 @@ function MissionLaunch({
           {submitting ? "创建中" : "启动任务"}
         </button>
       </form>
-    </section>
+    </details>
   );
 }
 
@@ -498,6 +541,8 @@ function MissionList({
               key={mission.id}
               type="button"
               className={mission.id === selectedId ? "mission-card active" : "mission-card"}
+              aria-pressed={mission.id === selectedId}
+              aria-label={`${mission.name}，状态 ${mission.status}，目标 ${mission.target}，${relativeTime(mission.updated_at)}${mission.captured_flag_count ? `，${mission.captured_flag_count} 个 flag` : ""}`}
               onClick={() => onSelect(mission.id)}
             >
               <span className={`status-badge ${statusTone(mission.status)}`}>{mission.status}</span>
@@ -511,7 +556,7 @@ function MissionList({
             </button>
           ))
         ) : (
-          <EmptyState title="暂无任务" body="左上角创建一个目标后，这里会显示运行状态和最近更新。" />
+          <EmptyState title="暂无任务" body="展开上方表单创建目标，任务启动后这里会显示状态、目标和最近更新。" compact />
         )}
       </div>
     </section>
@@ -560,15 +605,15 @@ function MissionDetailHeader({
         </div>
       </div>
       <div className="mission-command-card">
-        <div className="progress-ring" style={{ "--progress": `${progress}%` } as React.CSSProperties}>
-          <span>{progress}%</span>
-        </div>
         <div className="command-copy">
           <span className={`status-badge ${statusTone(mission.status)}`}>{mission.status}</span>
           <strong>
             R{String(mainRounds).padStart(2, "0")} / {mission.max_rounds}
           </strong>
-          <small>{detail?.thread_alive ? "worker alive" : detailLoading ? "同步中" : "worker idle"}</small>
+          <div className="progress-line" aria-label={`任务进度 ${progress}%`}>
+            <span style={{ width: `${progress}%` }} />
+          </div>
+          <small>{detail?.thread_alive ? "worker alive" : detailLoading ? "同步中" : `worker idle · ${progress}%`}</small>
         </div>
         <div className="action-row">
           <button type="button" className="ghost-button" onClick={onResume} disabled={active}>
@@ -589,6 +634,143 @@ function MissionDetailHeader({
   );
 }
 
+function FunctionMap({
+  detail,
+  onOpenTab
+}: {
+  detail: MissionDetail | null;
+  onOpenTab: (tab: AppTab) => void;
+}) {
+  if (!detail) {
+    return (
+      <section className="function-map empty">
+        <div className="function-map-head">
+          <div>
+            <h2>一屏功能总览</h2>
+            <p>创建或选择任务后，这里会集中显示审核、记忆、证据、知识库和协作入口。</p>
+          </div>
+        </div>
+        <div className="function-grid placeholder-grid">
+          {tabs.slice(2).map((tab) => (
+            <button key={tab.id} type="button" className="function-card muted-card" disabled>
+              <span className="function-label">{tab.label}</span>
+              <strong>等待任务数据</strong>
+            </button>
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  const evidenceCount = detail.events.filter((event) =>
+    ["flag", "command", "knowledge", "error", "sandbox"].includes(event.type)
+  ).length;
+  const observer = detail.observer;
+  const latest = observer.latest_decision || {};
+  const modules: {
+    label: string;
+    title: string;
+    body: string;
+    meta: string;
+    icon: React.ReactNode;
+    tab: AppTab;
+    tone?: string;
+  }[] = [
+    {
+      label: "Observer",
+      title: observer.status || "idle",
+      body: compact(toText(latest.reason || latest.summary || latest.steer || "等待被动审核"), 92),
+      meta: `${observer.stats?.decisions || 0} 次审核`,
+      icon: <Circuitry />,
+      tab: "observer",
+      tone: observer.stats?.steers ? "warn" : "blue"
+    },
+    {
+      label: "Memory",
+      title: detail.memory.highest_value_lead || detail.memory.primary_hypothesis || "暂无主线",
+      body: compact(detail.memory.next_one_command || detail.memory.next_verification || detail.memory.summary || "等待下一轮压缩", 92),
+      meta: formatTime(detail.memory.updated_at),
+      icon: <Brain />,
+      tab: "memory",
+      tone: "blue"
+    },
+    {
+      label: "Evidence",
+      title: `${evidenceCount} 条证据`,
+      body: detail.captured_flags.length ? compact(detail.captured_flags[0], 92) : "命令输出、知识命中、错误和 Flag 会进入证据仓。",
+      meta: `${detail.captured_flag_count} / ${detail.mission.expected_flags || 1} flag`,
+      icon: <Database />,
+      tab: "evidence",
+      tone: detail.captured_flag_count ? "ok" : "blue"
+    },
+    {
+      label: "Knowledge",
+      title: "RAG / FTS 检索",
+      body: `默认用目标 ${compact(detail.mission.target || "关键词", 64)} 发起离线知识库查询。`,
+      meta: "可搜索并重建索引",
+      icon: <MagnifyingGlass />,
+      tab: "knowledge",
+      tone: "blue"
+    }
+  ];
+
+  return (
+    <section className="function-map" aria-label="一屏功能总览">
+      <div className="function-map-head">
+        <div>
+          <h2>一屏功能总览</h2>
+          <p>核心能力全部收在当前任务下，深看再切换下方详情。</p>
+        </div>
+        <span>{detail.thread_alive ? "worker online" : "worker idle"}</span>
+      </div>
+      <div className="function-grid">
+        {modules.map((item) => (
+          <button
+            key={item.label}
+            type="button"
+            className={`function-card ${item.tone || "blue"}`}
+            aria-label={`打开${item.label}视图，${item.title}，${item.meta}`}
+            onClick={() => onOpenTab(item.tab)}
+          >
+            <span className="function-icon">{item.icon}</span>
+            <span className="function-label">{item.label}</span>
+            <strong>{item.title}</strong>
+            <p>{item.body}</p>
+            <small>{item.meta}</small>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function SystemBar({
+  bootstrap,
+  skills,
+  experiments
+}: {
+  bootstrap: Bootstrap | null;
+  skills: Skill[];
+  experiments: ExperimentRecord[];
+}) {
+  const knowledgeStatus = bootstrap?.knowledge?.rag?.available
+    ? `${bootstrap.knowledge.rag.total_chunks || 0} chunks`
+    : bootstrap?.knowledge?.status || bootstrap?.knowledge?.search_backend || "未加载";
+  const loadedEnabledSkills = skills.filter((skill) => skill.enabled).length;
+  const enabledSkills = Math.max(Number(bootstrap?.skills?.enabled || 0), loadedEnabledSkills);
+  const totalSkills = Math.max(Number(bootstrap?.skills?.total || 0), skills.length);
+  const success = experiments.filter((item) => item.outcome === "success").length;
+  return (
+    <section className="system-bar" aria-label="运行环境摘要">
+      <RuntimeLine label="沙箱" value={bootstrap?.sandbox_container || "sandbox pending"} />
+      <RuntimeLine label="工作目录" value={bootstrap?.sandbox_workdir || "未加载"} />
+      <RuntimeLine label="知识库" value={knowledgeStatus} />
+      <RuntimeLine label="Skills" value={`${enabledSkills}/${totalSkills} enabled`} />
+      <RuntimeLine label="归档成功" value={`${success}/${experiments.length}`} />
+    </section>
+  );
+}
+
 function MissionPane({
   tab,
   detail,
@@ -604,13 +786,39 @@ function MissionPane({
   onNotice: (message: string) => void;
   onRefresh: () => Promise<void>;
 }) {
-  if (!detail) return <EmptyState title="等待任务数据" body="创建或选择任务后，这里会出现运行态详情。" large />;
-  if (tab === "overview") return <OverviewTab detail={detail} experiments={experiments} onError={onError} onNotice={onNotice} onRefresh={onRefresh} />;
-  if (tab === "timeline") return <TimelineTab detail={detail} />;
-  if (tab === "observer") return <ObserverTab detail={detail} />;
-  if (tab === "memory") return <MemoryTab detail={detail} />;
-  if (tab === "evidence") return <EvidenceTab detail={detail} />;
-  return <KnowledgeTab mission={detail.mission} onError={onError} onNotice={onNotice} />;
+  let content: React.ReactNode;
+  if (!detail) {
+    content = (
+      <EmptyState
+        title="等待任务数据"
+        body="选择左侧任务，或展开发起任务表单创建新目标。这里会显示总览、时间线、Observer、记忆、证据和知识库。"
+        large
+      />
+    );
+  } else if (tab === "overview") {
+    content = <OverviewTab detail={detail} experiments={experiments} onError={onError} onNotice={onNotice} onRefresh={onRefresh} />;
+  } else if (tab === "timeline") {
+    content = <TimelineTab detail={detail} />;
+  } else if (tab === "observer") {
+    content = <ObserverTab detail={detail} />;
+  } else if (tab === "memory") {
+    content = <MemoryTab detail={detail} />;
+  } else if (tab === "evidence") {
+    content = <EvidenceTab detail={detail} />;
+  } else {
+    content = <KnowledgeTab mission={detail.mission} onError={onError} onNotice={onNotice} />;
+  }
+  return (
+    <div
+      className="tab-panel-scroll"
+      id={tabPanelId(tab)}
+      role="tabpanel"
+      aria-labelledby={tabButtonId(tab)}
+      tabIndex={0}
+    >
+      {content}
+    </div>
+  );
 }
 
 function OverviewTab({
@@ -631,53 +839,60 @@ function OverviewTab({
   const experiment = detail.experiment || experiments.find((record) => record.mission_id === mission.id) || null;
   return (
     <div className="tab-grid overview-grid">
-      <section className="panel span-2">
-        <div className="section-title">
-          <ShieldCheck />
-          <div>
-            <h2>当前判断</h2>
-            <p>把 agent 的目标、阻塞点和下一步压缩成可读指挥面板。</p>
+      <div className="overview-main">
+        <section className="panel judgement-panel">
+          <div className="section-title">
+            <ShieldCheck />
+            <div>
+              <h2>当前判断</h2>
+              <p>目标、阻塞点和下一步压缩成可读指挥面板。</p>
+            </div>
           </div>
-        </div>
-        <div className="brief-grid">
-          <BriefItem label="摘要" value={memory.summary || "暂未形成稳定摘要。"} />
-          <BriefItem label="最高价值线索" value={memory.highest_value_lead || "暂无"} />
-          <BriefItem label="下一条命令" value={memory.next_one_command || "等待下一轮规划"} mono />
-          <BriefItem label="阻塞原因" value={memory.blocked_reason || mission.error_message || "未阻塞"} />
-        </div>
-      </section>
-      <section className="panel">
-        <div className="section-title">
-          <FlagBanner />
-          <div>
-            <h2>Flag 状态</h2>
-            <p>{detail.captured_flag_count} / {mission.expected_flags || 1}</p>
+          <div className="brief-grid">
+            <BriefItem label="摘要" value={memory.summary || "暂未形成稳定摘要。"} />
+            <BriefItem label="最高价值线索" value={memory.highest_value_lead || "暂无"} />
+            <BriefItem label="下一条命令" value={memory.next_one_command || "等待下一轮规划"} mono />
+            <BriefItem label="阻塞原因" value={memory.blocked_reason || mission.error_message || "未阻塞"} />
           </div>
-        </div>
-        <div className="flag-stack">
-          {detail.captured_flags.length ? (
-            detail.captured_flags.map((flag) => (
-              <code className="flag-chip" key={flag}>
-                {flag}
-              </code>
-            ))
-          ) : (
-            <EmptyState title="尚未捕获 Flag" body="捕获后会在这里固定显示。" />
-          )}
-        </div>
-      </section>
-      <HumanCollaborationPanel detail={detail} onError={onError} onNotice={onNotice} onRefresh={onRefresh} />
-      <ExperimentEditor missionId={mission.id} experiment={experiment} onError={onError} onNotice={onNotice} onRefresh={onRefresh} />
-      <section className="panel span-2">
-        <div className="section-title">
-          <TerminalWindow />
-          <div>
-            <h2>最近活动</h2>
-            <p>{rounds.length} 条模型轮次，{events.length} 条事件。</p>
+        </section>
+
+        <section className="panel recent-activity-panel">
+          <div className="section-title">
+            <TerminalWindow />
+            <div>
+              <h2>最近活动</h2>
+              <p>{rounds.length} 条模型轮次，{events.length} 条事件。</p>
+            </div>
           </div>
-        </div>
-        <EventStream events={latestEvents} />
-      </section>
+          <EventStream events={latestEvents} />
+        </section>
+      </div>
+
+      <div className="overview-side">
+        <section className="panel flag-panel">
+          <div className="section-title">
+            <FlagBanner />
+            <div>
+              <h2>Flag 状态</h2>
+              <p>{detail.captured_flag_count} / {mission.expected_flags || 1}</p>
+            </div>
+          </div>
+          <div className="flag-stack">
+            {detail.captured_flags.length ? (
+              detail.captured_flags.map((flag) => (
+                <code className="flag-chip" key={flag}>
+                  {flag}
+                </code>
+              ))
+            ) : (
+              <EmptyState title="尚未捕获 Flag" body="捕获后会在这里固定显示。" />
+            )}
+          </div>
+        </section>
+
+        <HumanCollaborationPanel detail={detail} onError={onError} onNotice={onNotice} onRefresh={onRefresh} />
+        <ExperimentEditor missionId={mission.id} experiment={experiment} onError={onError} onNotice={onNotice} onRefresh={onRefresh} />
+      </div>
     </div>
   );
 }
@@ -831,7 +1046,7 @@ function EvidenceTab({ detail }: { detail: MissionDetail }) {
     ["flag", "command", "knowledge", "error", "sandbox"].includes(event.type)
   );
   return (
-    <section className="panel">
+    <section className="panel collaboration-panel">
       <div className="section-title">
         <Database />
         <div>
@@ -921,80 +1136,6 @@ function KnowledgeTab({
   );
 }
 
-function RuntimeCard({ bootstrap, skills }: { bootstrap: Bootstrap | null; skills: Skill[] }) {
-  const knowledgeStatus = bootstrap?.knowledge?.rag?.available
-    ? `RAG ready · ${bootstrap.knowledge.rag.total_chunks || 0} chunks`
-    : bootstrap?.knowledge?.status || bootstrap?.knowledge?.search_backend || "未加载";
-  const loadedEnabledSkills = skills.filter((skill) => skill.enabled).length;
-  const enabledSkills = Math.max(Number(bootstrap?.skills?.enabled || 0), loadedEnabledSkills);
-  const totalSkills = Math.max(Number(bootstrap?.skills?.total || 0), skills.length);
-  return (
-    <section className="panel runtime-card">
-      <div className="panel-heading compact">
-        <span className="panel-icon">
-          <Skull />
-        </span>
-        <div>
-          <h2>运行态</h2>
-          <p>{bootstrap?.sandbox_container || "sandbox pending"}</p>
-        </div>
-      </div>
-      <div className="runtime-lines">
-        <RuntimeLine label="工作目录" value={bootstrap?.sandbox_workdir || "未加载"} />
-        <RuntimeLine label="LLM 模式" value={bootstrap?.llm_mode || "未加载"} />
-        <RuntimeLine label="知识库" value={knowledgeStatus} />
-        <RuntimeLine label="Skills" value={`${enabledSkills}/${totalSkills} enabled`} />
-      </div>
-    </section>
-  );
-}
-
-function ExperimentPulse({ experiments }: { experiments: ExperimentRecord[] }) {
-  const success = experiments.filter((item) => item.outcome === "success").length;
-  const failed = experiments.filter((item) => item.outcome === "failed" || item.outcome === "blocked").length;
-  return (
-    <section className="panel">
-      <div className="panel-heading compact">
-        <span className="panel-icon">
-          <CheckCircle />
-        </span>
-        <div>
-          <h2>实验记录</h2>
-          <p>{experiments.length} 条 mission 归档</p>
-        </div>
-      </div>
-      <div className="experiment-bars">
-        <MetricTile label="成功" value={String(success)} />
-        <MetricTile label="失败或阻塞" value={String(failed)} />
-      </div>
-    </section>
-  );
-}
-
-function SkillDeck({ skills }: { skills: Skill[] }) {
-  return (
-    <section className="panel">
-      <div className="panel-heading compact">
-        <span className="panel-icon">
-          <Circuitry />
-        </span>
-        <div>
-          <h2>Skills</h2>
-          <p>{skills.length ? `${skills.length} 个可用` : "未加载"}</p>
-        </div>
-      </div>
-      <div className="skill-deck">
-        {skills.slice(0, 10).map((skill) => (
-          <article className="skill-card" key={skill.id}>
-            <strong>{skill.name || skill.id}</strong>
-            <p>{compact(skill.description, 90)}</p>
-          </article>
-        ))}
-      </div>
-    </section>
-  );
-}
-
 function SettingsPage() {
   const [config, setConfig] = useState<Config>({});
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
@@ -1042,38 +1183,70 @@ function SettingsPage() {
   }
 
   const sections = Array.from(new Set(configFields.map((field) => field.section)));
+  const sectionId = (section: string) => `settings-${section.replace(/\s+/g, "-").toLowerCase()}`;
+  const sectionCounts = Object.fromEntries(sections.map((section) => [section, configFields.filter((field) => field.section === section).length]));
+  const settingsSummary = [
+    { label: "主模型", value: String(config.effective_chat_model || config.llm_model || bootstrap?.model || "未加载") },
+    { label: "LLM 模式", value: String(bootstrap?.llm_mode || "未加载") },
+    { label: "Observer 间隔", value: `${String(config.observer_review_interval || "未加载")} 轮` },
+    { label: "Skill", value: `${String(bootstrap?.skills?.enabled ?? "-")}/${String(bootstrap?.skills?.total ?? "-")} enabled` }
+  ];
   return (
     <div className="app-shell settings-shell">
       <Atmosphere />
       <Header bootstrap={bootstrap} active="settings" />
       <main className="settings-page">
         <section className="settings-hero">
-          <p className="kicker">CONFIG SURFACE</p>
-          <h1>把模型、Observer、知识库和运行参数放在一个清晰面板里。</h1>
-          <p>保存后后端会热更新可变配置。API Key 返回值会被后端脱敏。</p>
+          <div>
+            <p className="kicker">CONFIG SURFACE</p>
+            <h1>运行配置</h1>
+            <p>保存后后端会热更新可变配置。API Key 返回值会被后端脱敏。</p>
+          </div>
+          <div className="settings-summary">
+            {settingsSummary.map((item) => (
+              <RuntimeLine key={item.label} label={item.label} value={item.value} />
+            ))}
+          </div>
         </section>
-        {loading ? <SkeletonPanel /> : null}
+        {loading ? <SkeletonPanel title="正在加载配置" rows={6} /> : null}
         {status ? <InlineNotice tone="ok" message={status} onClose={() => setStatus("")} /> : null}
-        {error ? <InlineNotice tone="bad" message={error} onClose={() => setError("")} /> : null}
-        <div className="settings-grid">
-          {sections.map((section) => (
-            <section className="panel settings-card" key={section}>
-              <h2>{section}</h2>
-              <div className="settings-fields">
-                {configFields
-                  .filter((field) => field.section === section)
-                  .map((field) => (
-                    <ConfigField
-                      key={field.key}
-                      label={field.label}
-                      type={field.type}
-                      value={config[field.key]}
-                      onChange={(value) => update(field.key, value)}
-                    />
-                  ))}
-              </div>
-            </section>
-          ))}
+        {error ? <InlineNotice tone="bad" message={error} actionLabel="重新加载" onAction={() => window.location.reload()} onClose={() => setError("")} /> : null}
+        <div className="settings-layout">
+          <aside className="settings-index panel">
+            <h2>配置分区</h2>
+            <nav aria-label="配置分区">
+              {sections.map((section) => (
+                <a href={`#${sectionId(section)}`} key={section}>
+                  <span>{section}</span>
+                  <strong>{sectionCounts[section]}</strong>
+                </a>
+              ))}
+            </nav>
+          </aside>
+
+          <div className="settings-grid">
+            {sections.map((section) => (
+              <section className="panel settings-card" id={sectionId(section)} key={section}>
+                <div className="settings-card-head">
+                  <h2>{section}</h2>
+                  <span>{sectionCounts[section]} 项</span>
+                </div>
+                <div className="settings-fields">
+                  {configFields
+                    .filter((field) => field.section === section)
+                    .map((field) => (
+                      <ConfigField
+                        key={field.key}
+                        label={field.label}
+                        type={field.type}
+                        value={config[field.key]}
+                        onChange={(value) => update(field.key, value)}
+                      />
+                    ))}
+                </div>
+              </section>
+            ))}
+          </div>
         </div>
         <div className="settings-savebar">
           <div>
@@ -1238,14 +1411,14 @@ function ExperimentEditor({
   }
 
   return (
-    <section className="panel">
-      <div className="section-title">
+    <details className="panel experiment-collapsible archive-panel">
+      <summary className="section-title">
         <Graph />
         <div>
           <h2>实验归档</h2>
           <p>记录难度、结果、失败边界和关键参数。</p>
         </div>
-      </div>
+      </summary>
       <form className="experiment-form" onSubmit={save}>
         <div className="form-grid">
           <label>
@@ -1283,7 +1456,7 @@ function ExperimentEditor({
           保存归档
         </button>
       </form>
-    </section>
+    </details>
   );
 }
 
@@ -1353,12 +1526,29 @@ function RuntimeLine({ label, value }: { label: string; value: string }) {
   );
 }
 
-function EmptyState({ title, body, large }: { title: string; body: string; large?: boolean }) {
+function EmptyState({
+  title,
+  body,
+  large,
+  compact,
+  action
+}: {
+  title: string;
+  body: string;
+  large?: boolean;
+  compact?: boolean;
+  action?: { label: string; onClick: () => void };
+}) {
   return (
-    <div className={large ? "empty-state large" : "empty-state"}>
+    <div className={large ? "empty-state large" : compact ? "empty-state compact" : "empty-state"}>
       <TerminalWindow />
       <strong>{title}</strong>
       <p>{body}</p>
+      {action ? (
+        <button type="button" className="ghost-button" onClick={action.onClick}>
+          {action.label}
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -1366,16 +1556,25 @@ function EmptyState({ title, body, large }: { title: string; body: string; large
 function InlineNotice({
   tone,
   message,
+  actionLabel,
+  onAction,
   onClose
 }: {
   tone: "ok" | "bad";
   message: string;
+  actionLabel?: string;
+  onAction?: () => void | Promise<void>;
   onClose: () => void;
 }) {
   return (
-    <div className={`inline-notice ${tone}`}>
+    <div className={`inline-notice ${tone}`} role={tone === "bad" ? "alert" : "status"} aria-live={tone === "bad" ? "assertive" : "polite"}>
       <span>{tone === "ok" ? <CheckCircle /> : <WarningCircle />}</span>
       <p>{message}</p>
+      {actionLabel && onAction ? (
+        <button type="button" onClick={() => void onAction()}>
+          {actionLabel}
+        </button>
+      ) : null}
       <button type="button" onClick={onClose}>
         关闭
       </button>
@@ -1383,12 +1582,13 @@ function InlineNotice({
   );
 }
 
-function SkeletonPanel() {
+function SkeletonPanel({ title = "正在加载", rows = 3 }: { title?: string; rows?: number }) {
   return (
     <section className="panel skeleton-panel">
-      <span />
-      <span />
-      <span />
+      <strong>{title}</strong>
+      {Array.from({ length: rows }).map((_, index) => (
+        <span key={index} />
+      ))}
     </section>
   );
 }
