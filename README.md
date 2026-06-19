@@ -1,173 +1,279 @@
 # PikaQiu Agent
 
-An LLM-powered autonomous penetration testing agent that runs in a Kali Linux sandbox. It uses a ReAct (Reason + Act) loop to analyze targets, execute commands, and capture flags — all without human intervention.
+PikaQiu Agent 是一个面向 CTF、靶场和授权测试环境的自动化渗透测试 Agent。它通过主 LLM 执行 ReAct 循环，在 Kali Docker 沙箱里运行命令，结合记忆压缩、离线知识库、Skill 和被动 Observer 完成目标分析、利用验证和 Flag 捕获。
 
-## How It Works
+## 快速启动
 
-```
-Orchestrator (ReAct Loop)
-  ├─ Main Agent (LLM) — analyze context → plan → issue commands
-  ├─ Sandbox (Kali Docker) — execute bash/python commands
-  ├─ Memory Agent — compress observations into structured memory
-  ├─ Passive Observer — periodic runtime audit and corrective steer injection
-  ├─ Knowledge Base — offline FTS search (HackTricks, PayloadsAllTheThings, etc.)
-  └─ CVE/POC Search — product+version matching with embedded exploits
-```
+### 1. 安装 Python 依赖
 
-**Key Features:**
-- **ReAct loop**: Analyze → Command → Execute → Compress → Repeat
-- **Multi-node memory**: Per-IP state tracking, network topology, credential management
-- **Auto flag detection**: Scans output for `flag{...}` patterns, multi-flag support
-- **Context management**: Importance-graded compression, output truncation, stall detection
-- **CVE/POC index**: Product+version matching with embedded PoC code
-- **Internet search tools**: `web_search` and `web_fetch` let the agent query public web pages from the sandbox when fresh CVE/PoC data is needed
-- **Passive Observer**: Secondary LLM reviews runtime behavior every 16 main-model turns by default; it is not a callable tool
-- **Environment auto-discovery**: Sandbox capabilities injected into system prompt
-
-## Quick Start
-
-### Prerequisites
-
-| Component | Requirement |
-|-----------|-------------|
-| **OS** | Linux (Ubuntu 22.04+), macOS, or Windows with WSL |
-| **Docker** | Docker Engine 24.0+ |
-| **Python** | 3.11+ |
-| **RAM** | ≥ 8GB |
-| **Disk** | ≥ 20GB (Kali sandbox image ~6GB) |
-
-### 1. Install dependencies
-
-```bash
-git clone https://github.com/0xlally/pikaqiu.git
-cd pikaqiu
-
+```powershell
+cd F:\project\pikaqiu
 python -m pip install -r requirements.txt
 ```
 
-### 2. Configure LLM
+### 2. 配置模型
 
-Keep the real API key in `.env` so it is not committed:
+项目优先读取 `config.yml`，也可以用 `.env` 保存密钥。建议不要把真实 API Key 提交到 Git。
 
-```bash
-cp .env.example .env
+当前默认模型配置使用 OpenAI 兼容 Responses API：
+
+```yaml
+llm:
+  base_url: "https://www.inroi.shop"
+  model: "gpt-5.5"
+  reasoning_effort: "xhigh"
+  use_responses_api: true
+  disable_response_storage: true
 ```
 
-Edit `.env`:
+`.env` 示例：
 
-```bash
-PIKAQIU_LLM_BASE_URL=https://www.inroi.shop
-PIKAQIU_LLM_MODEL=gpt-5.5
+```powershell
+OPENAI_API_KEY=replace-with-your-api-key
 PIKAQIU_LLM_API_KEY=replace-with-your-api-key
-PIKAQIU_LLM_REASONING_EFFORT=xhigh
-PIKAQIU_LLM_USE_RESPONSES_API=true
-PIKAQIU_LLM_DISABLE_RESPONSE_STORAGE=true
-
-PIKAQIU_OBSERVER_BASE_URL=https://www.inroi.shop
-PIKAQIU_OBSERVER_MODEL=gpt-5.5
-PIKAQIU_OBSERVER_API_KEY=replace-with-your-api-key
-PIKAQIU_OBSERVER_REASONING_EFFORT=xhigh
-PIKAQIU_OBSERVER_USE_RESPONSES_API=true
-PIKAQIU_OBSERVER_DISABLE_RESPONSE_STORAGE=true
-PIKAQIU_OBSERVER_REVIEW_INTERVAL=16
 ```
 
-`config.yml` provides the default model and sandbox settings. Environment variables in `.env` override the main YAML model, so secrets can stay outside tracked files.
+Observer 默认复用主模型配置。它是被动审核器，不是主 Agent 可调用工具；默认每 16 次主模型 turn 介入审核一次，可通过 `observer_review_interval` 或 `PIKAQIU_OBSERVER_REVIEW_INTERVAL` 修改。
 
-Observer is passive: the main agent has no callable supervision tool. The orchestrator invokes the Observer runtime after `observer_review_interval` main-model turns, then injects only actionable audit notes back into the mission context.
+### 3. 启动沙箱容器
 
-### 3. Build and start sandbox
+如果已经有 `pikaqiu-kali-sandbox:latest` 镜像，可以直接启动：
 
-```bash
-# If you have sandbox-package.7z/.zip, extract it and run:
-#   powershell -ExecutionPolicy Bypass -File .\restore-scripts\restore-sandbox.ps1
-# The restore script imports sandbox-rootfs.tar as pikaqiu-kali-sandbox:latest.
-#
-# Otherwise build Kali sandbox image (~15-30 min first time):
-docker build -f Dockerfile.sandbox -t pikaqiu-kali-sandbox .
-
-# Start sandbox container
+```powershell
 docker compose up -d
-
-# Verify sandbox command execution
 docker exec pikaqiu-sandbox-1 bash -lc "pwd && python3 --version"
 ```
 
-The agent uses a single sandbox container, `pikaqiu-sandbox-1`, with workdir `/tmp/pikaqiu-agent-workspace`.
+如果本地没有镜像，先构建：
 
-### 4. Run Web UI
+```powershell
+docker build -f Dockerfile.sandbox -t pikaqiu-kali-sandbox .
+docker compose up -d
+```
 
-```bash
+### 4. 启动 Web UI
+
+```powershell
 python -m pikaqiu_agent
-# Open http://127.0.0.1:8001
 ```
 
-Create a mission via the Web UI or API. This starts active testing against the target:
+打开：
 
-```bash
-curl -X POST http://localhost:8001/api/missions \
-  -H "Content-Type: application/json" \
-  -d '{"name":"pikaqiu-target","target":"http://10.50.1.182:36543/","goal":"Find and capture all flags","expected_flags":1}'
+```text
+http://127.0.0.1:8001
 ```
 
-## Project Structure
+配置页：
 
+```text
+http://127.0.0.1:8001/settings.html
 ```
+
+## 前端开发
+
+当前前端已经迁移为 React + Vite + TypeScript。源码在 `frontend/`，构建产物输出到 `pikaqiu_agent/static/`，由 Flask 直接服务。
+
+### 安装前端依赖
+
+```powershell
+cd F:\project\pikaqiu\frontend
+npm install
+```
+
+### 开发模式
+
+先启动后端：
+
+```powershell
+cd F:\project\pikaqiu
+python -m pikaqiu_agent
+```
+
+再启动 Vite：
+
+```powershell
+cd F:\project\pikaqiu\frontend
+npm run dev
+```
+
+访问：
+
+```text
+http://127.0.0.1:5173
+```
+
+Vite 会把 `/api/*` 代理到 `http://127.0.0.1:8001`。
+
+### 构建前端
+
+```powershell
+cd F:\project\pikaqiu\frontend
+npm run build
+```
+
+构建会执行：
+
+1. 清理旧的 `pikaqiu_agent/static/assets/`
+2. TypeScript 类型检查
+3. Vite 构建并输出 `index.html`、`settings.html` 和静态资源
+
+构建后只需要运行：
+
+```powershell
+cd F:\project\pikaqiu
+python -m pikaqiu_agent
+```
+
+## 当前前端能力
+
+- Mission Control 首页：创建任务、选择任务、查看运行状态和 Flag。
+- 任务详情：总览、时间线、Observer、记忆、证据、知识库检索。
+- 操作按钮：继续、停止、删除单个任务。
+- 人工协作：开启任务指导通道，并向运行中的任务提交 guidance。
+- Experiment 归档：保存 challenge code、难度、结果、失败原因、关键参数和备注。
+- 设置页：热更新主模型、Observer、Agent 参数、Skill 和知识库相关配置。
+- 状态处理：包含加载态、空态、错误提示和移动端布局。
+
+## 系统架构
+
+```text
+User
+  |
+  v
+React + Vite Web UI
+  |
+  v
+Flask API (pikaqiu_agent/web_app.py)
+  |
+  +-- Orchestrator
+  |     |
+  |     +-- Main Agent LLM
+  |     +-- Memory Agent
+  |     +-- Passive Observer
+  |
+  +-- Sandbox Executor
+  |     |
+  |     +-- Docker container: pikaqiu-sandbox-1
+  |
+  +-- Knowledge Base
+  |     |
+  |     +-- RAG / FTS search
+  |     +-- CVE / PoC index
+  |
+  +-- Skill Loader
+  |
+  +-- SQLite Storage
+```
+
+## 任务工作流
+
+1. 用户在 Web UI 创建 mission，填写目标、目标说明、轮数、命令数、超时和预期 Flag 数。
+2. Flask API 调用 Orchestrator 创建任务记录，并启动后台 mission 线程。
+3. 主 Agent 读取目标、记忆、知识库结果和已激活 Skill，生成下一步动作。
+4. Sandbox Executor 在 `pikaqiu-sandbox-1` 中执行 bash/python 等命令。
+5. 命令输出写入 SQLite events，并触发 Flag 自动识别。
+6. Memory Agent 将关键发现压缩成结构化记忆。
+7. Passive Observer 按配置间隔审核运行轨迹，只在关键风险、重复卡住或需要纠偏时注入短建议。
+8. 前端每 3 秒轮询 mission、detail、experiment 数据并刷新 UI。
+9. 达到目标、捕获足够 Flag、达到最大轮数或用户停止后，任务进入终态。
+
+## 关键目录
+
+```text
 pikaqiu_agent/
-  ├─ orchestrator.py   # ReAct main loop, mission execution
-  ├─ llm_client.py     # LangChain LLM wrapper (model pool, failover)
-  ├─ prompts.py        # System prompts and context building
-  ├─ tools.py          # Tool definitions (bash, python, web, flag submission)
-  ├─ sandbox.py        # Docker sandbox command execution
-  ├─ memory.py         # Memory compression (multi-node, topology)
-  ├─ knowledge.py      # Knowledge base indexer (FTS + CVE)
-  ├─ storage.py        # SQLite persistence
-  ├─ config.py         # Configuration (YAML + runtime adjustable)
-  ├─ web_app.py        # Flask Web backend
-  └─ static/           # Frontend
-      ├─ index.html    # Mission dashboard
-      └─ settings.html # Settings page
+  __main__.py          Python module entrypoint
+  web_app.py           Flask Web backend and REST API
+  orchestrator.py      Mission execution and ReAct loop
+  llm_client.py        LLM client wrapper
+  prompts.py           System prompts and context assembly
+  tools.py             Agent tool definitions
+  sandbox.py           Docker sandbox command execution
+  memory.py            Memory compression and normalization
+  observer_runtime.py  Passive Observer runtime
+  knowledge.py         Knowledge indexing and search
+  skill_loader.py      SKILL.md discovery and activation
+  storage.py           SQLite persistence
+  static/              Built frontend served by Flask
 
-config.yml             # Main configuration
-skills/                # Mission skills using one SKILL.md file per skill
-Dockerfile.sandbox     # Kali sandbox image
-docker-compose.yml     # Container orchestration
-requirements.txt       # Python dependencies
+frontend/
+  src/                 React + TypeScript source
+  scripts/             Build helper scripts
+  package.json         Frontend commands and dependencies
+  vite.config.ts       Vite config, builds into pikaqiu_agent/static
+
+knowledge/             Offline knowledge base source files
+skills/                Local skills, one SKILL.md per skill
+config.yml             Main configuration
+docker-compose.yml     Sandbox container orchestration
+Dockerfile.sandbox     Kali sandbox image definition
+requirements.txt       Python dependencies
 ```
 
-## Knowledge Base
+## 常用 API
 
-Place knowledge files under the configured `knowledge_dir` (default: `./knowledge/`).
+创建任务：
 
-Supported formats:
-- **ZIP archives** — automatically extracted and indexed (e.g., `hacktricks.zip`, `PayloadsAllTheThings.zip`)
-- **Directories** — recursively indexed
+```powershell
+curl -X POST http://127.0.0.1:8001/api/missions `
+  -H "Content-Type: application/json" `
+  -d "{\"name\":\"pikaqiu-target\",\"target\":\"http://127.0.0.1:8080\",\"goal\":\"Find and capture all flags\",\"expected_flags\":1}"
+```
 
-### CVE/POC Index
+查看任务列表：
 
-Place a `cve-poc-index.json` file in `knowledge_dir` for structured CVE search:
-- Product name matching: `search_cve(product="thinkphp")`
-- Version range matching: `search_cve(product="redis", version="5.0.5")`
-- Vulnerability type filter: `search_cve(vuln_type="deserialization")`
-- CVE ID lookup: `search_cve(cve_id="CVE-2021-44228")`
+```powershell
+curl http://127.0.0.1:8001/api/missions
+```
+
+查看任务详情：
+
+```powershell
+curl http://127.0.0.1:8001/api/missions/<mission_id>
+```
+
+知识库检索：
+
+```powershell
+curl "http://127.0.0.1:8001/api/knowledge/search?q=file%20upload&limit=8"
+```
+
+查看 Skills：
+
+```powershell
+curl http://127.0.0.1:8001/api/skills
+```
+
+## 知识库
+
+默认知识库目录是 `knowledge/`，由 `knowledge_dir` 控制。当前后端会在启动时确保索引可用。
+
+支持：
+
+- 目录递归索引
+- ZIP 包自动解压和索引
+- RAG / FTS 检索
+- `cve-poc-index.json` 结构化 CVE / PoC 检索
+
+前端的知识库页调用：
+
+```text
+GET /api/knowledge/search
+POST /api/knowledge/reindex
+GET /api/knowledge/cve-search
+```
 
 ## Skills
 
-Place skills under the configured `skills_dir` (default: `./skills/`).
-Each skill lives in its own folder and uses a single `SKILL.md` file with YAML frontmatter plus a Markdown body. The built-in layout is `skills/builtin/<skill-name>/SKILL.md`.
-
-Example:
+默认目录是 `skills/`。每个 Skill 使用一个 `SKILL.md`：
 
 ```text
 skills/
   builtin/
     recon/
       SKILL.md
-    ffuf-skill/
-      SKILL.md
 ```
 
-`SKILL.md` format:
+基本格式：
 
 ```markdown
 ---
@@ -182,55 +288,49 @@ enabled: true
 Follow the reconnaissance workflow here.
 ```
 
-List loaded skills:
+任务创建时可以手动指定 Skills：
 
-```bash
-curl http://localhost:8001/api/skills
+```powershell
+curl -X POST http://127.0.0.1:8001/api/missions `
+  -H "Content-Type: application/json" `
+  -d "{\"name\":\"target\",\"target\":\"http://127.0.0.1:8080\",\"goal\":\"Find flag\",\"skills\":[\"recon\"]}"
 ```
 
-Enable skills when creating a mission:
+当 `skills_auto_use` 为 true 时，主 Agent 也可以在任务过程中通过 Skill 搜索和激活机制自动加载相关 Skill。
 
-```bash
-curl -X POST http://localhost:8001/api/missions \
-  -H "Content-Type: application/json" \
-  -d '{"name":"pikaqiu-target","target":"http://10.50.1.182:36543/","goal":"Find and capture all flags","expected_flags":1,"skills":["recon"]}'
+## 配置速查
+
+| 字段 | 默认含义 |
+| --- | --- |
+| `llm_base_url` | 主模型 API 地址 |
+| `llm_model` | 主模型名称 |
+| `llm_reasoning_effort` | 推理强度 |
+| `llm_use_responses_api` | 是否使用 Responses API |
+| `llm_disable_response_storage` | 是否禁用响应存储 |
+| `observer_review_interval` | Observer 被动审核间隔 |
+| `initial_rounds` | 新任务默认最大轮数 |
+| `initial_commands` | 新任务默认每轮命令数 |
+| `command_timeout_sec` | 单条沙箱命令超时 |
+| `stdout_limit` | 命令输出截断长度 |
+| `knowledge_top_k` | 注入上下文的知识库结果数 |
+| `skills_dir` | Skill 根目录 |
+| `skills_auto_use` | 是否允许主 Agent 自动搜索和激活 Skill |
+
+## 验证命令
+
+```powershell
+cd F:\project\pikaqiu\frontend
+npm run build
+
+cd F:\project\pikaqiu
+python -m pikaqiu_agent
 ```
 
-The AI can also activate skills automatically during a mission when `skills_auto_use` is enabled:
+另开一个终端：
 
-- `skill_search`: searches loaded `SKILL.md` metadata for the current situation.
-- `activate_skill`: loads one relevant skill body and records it in the mission.
-- `skill_read_reference`: reads optional files bundled inside a skill only when needed.
+```powershell
+curl http://127.0.0.1:8001/api/bootstrap
+curl http://127.0.0.1:8001/
+curl http://127.0.0.1:8001/settings.html
+```
 
-`knowledge/` is searchable reference material used by `knowledge_search`.
-Manually selected skills and AI-activated skills are injected into later rounds.
-
-## Sandbox Tools
-
-The Kali Docker sandbox is built from the official `kalilinux/kali-rolling` image and installs a practical baseline toolset:
-
-- **Network**: nmap, netcat, socat, curl, wget, dig, whois
-- **Web**: sqlmap and Python HTTP tooling
-- **Runtimes**: Python 3, Python 2.7, Node.js, Java 8/17, PHP, Perl
-- **Python packages**: requests/httpx/aiohttp, PyJWT, flask-unsign, impacket, certipy-ad, bloodyAD
-- **Browser automation**: Playwright with Chromium
-- **Project tools**: `/opt/pikaqiu-tools/env-info` for runtime capability discovery
-
-## Configuration Reference
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `initial_rounds` | 8 | Max reasoning rounds per mission |
-| `initial_commands` | 200 | Max tool calls per round |
-| `command_timeout_sec` | 300 | Single command timeout |
-| `llm_timeout_sec` | 240 | LLM API call timeout |
-| `stdout_limit` | 8000 | Output truncation threshold (chars) |
-| `knowledge_top_k` | 6 | Knowledge search results count |
-| `knowledge_dir` | `./knowledge` | Path to knowledge base files |
-| `skills_dir` | `./skills` | Path to skill folders containing `SKILL.md` |
-| `skills_auto_use` | `true` | Allow the AI to search and activate skills during a mission |
-| `skill_catalog_limit` | `50` | Max skill metadata entries injected into the system prompt |
-| `skill_prompt_max_chars` | `12000` | Max `SKILL.md` body chars returned by `activate_skill` |
-| `skill_reference_max_chars` | `20000` | Max chars returned by `skill_read_reference` |
-
-## License
