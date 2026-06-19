@@ -9,7 +9,7 @@ Orchestrator (ReAct Loop)
   ├─ Main Agent (LLM) — analyze context → plan → issue commands
   ├─ Sandbox (Kali Docker) — execute bash/python commands
   ├─ Memory Agent — compress observations into structured memory
-  ├─ Advisor Agent — expert consultation when stuck
+  ├─ Passive Observer — periodic runtime audit and corrective steer injection
   ├─ Knowledge Base — offline FTS search (HackTricks, PayloadsAllTheThings, etc.)
   └─ CVE/POC Search — product+version matching with embedded exploits
 ```
@@ -21,7 +21,7 @@ Orchestrator (ReAct Loop)
 - **Context management**: Importance-graded compression, output truncation, stall detection
 - **CVE/POC index**: Product+version matching with embedded PoC code
 - **Internet search tools**: `web_search` and `web_fetch` let the agent query public web pages from the sandbox when fresh CVE/PoC data is needed
-- **Advisor tool**: Secondary LLM provides expert guidance when the agent is stuck
+- **Passive Observer**: Secondary LLM reviews runtime behavior every 16 main-model turns by default; it is not a callable tool
 - **Environment auto-discovery**: Sandbox capabilities injected into system prompt
 
 ## Quick Start
@@ -56,21 +56,41 @@ cp .env.example .env
 Edit `.env`:
 
 ```bash
-PIKAQIU_LLM_BASE_URL=http://10.50.1.215:8080/v1
-PIKAQIU_LLM_MODEL=minimax-m2.7
+PIKAQIU_LLM_BASE_URL=https://www.inroi.shop
+PIKAQIU_LLM_MODEL=gpt-5.5
 PIKAQIU_LLM_API_KEY=replace-with-your-api-key
+PIKAQIU_LLM_REASONING_EFFORT=xhigh
+PIKAQIU_LLM_USE_RESPONSES_API=true
+PIKAQIU_LLM_DISABLE_RESPONSE_STORAGE=true
+
+PIKAQIU_OBSERVER_BASE_URL=https://www.inroi.shop
+PIKAQIU_OBSERVER_MODEL=gpt-5.5
+PIKAQIU_OBSERVER_API_KEY=replace-with-your-api-key
+PIKAQIU_OBSERVER_REASONING_EFFORT=xhigh
+PIKAQIU_OBSERVER_USE_RESPONSES_API=true
+PIKAQIU_OBSERVER_DISABLE_RESPONSE_STORAGE=true
+PIKAQIU_OBSERVER_REVIEW_INTERVAL=16
 ```
 
 `config.yml` provides the default model and sandbox settings. Environment variables in `.env` override the main YAML model, so secrets can stay outside tracked files.
 
+Observer is passive: the main agent has no callable supervision tool. The orchestrator invokes the Observer runtime after `observer_review_interval` main-model turns, then injects only actionable audit notes back into the mission context.
+
 ### 3. Build and start sandbox
 
 ```bash
-# Build Kali sandbox image (~15-30 min first time)
+# If you have sandbox-package.7z/.zip, extract it and run:
+#   powershell -ExecutionPolicy Bypass -File .\restore-scripts\restore-sandbox.ps1
+# The restore script imports sandbox-rootfs.tar as pikaqiu-kali-sandbox:latest.
+#
+# Otherwise build Kali sandbox image (~15-30 min first time):
 docker build -f Dockerfile.sandbox -t pikaqiu-kali-sandbox .
 
 # Start sandbox container
 docker compose up -d
+
+# Verify sandbox command execution
+docker exec pikaqiu-sandbox-1 bash -lc "pwd && python3 --version"
 ```
 
 The agent uses a single sandbox container, `pikaqiu-sandbox-1`, with workdir `/tmp/pikaqiu-agent-workspace`.
@@ -79,13 +99,13 @@ The agent uses a single sandbox container, `pikaqiu-sandbox-1`, with workdir `/t
 
 ```bash
 python -m pikaqiu_agent
-# Open http://127.0.0.1:8765
+# Open http://127.0.0.1:8001
 ```
 
 Create a mission via the Web UI or API. This starts active testing against the target:
 
 ```bash
-curl -X POST http://localhost:8765/api/missions \
+curl -X POST http://localhost:8001/api/missions \
   -H "Content-Type: application/json" \
   -d '{"name":"pikaqiu-target","target":"http://10.50.1.182:36543/","goal":"Find and capture all flags","expected_flags":1}'
 ```
@@ -97,7 +117,7 @@ pikaqiu_agent/
   ├─ orchestrator.py   # ReAct main loop, mission execution
   ├─ llm_client.py     # LangChain LLM wrapper (model pool, failover)
   ├─ prompts.py        # System prompts and context building
-  ├─ tools.py          # Tool definitions (bash, python, knowledge, CVE, advisor)
+  ├─ tools.py          # Tool definitions (bash, python, web, flag submission)
   ├─ sandbox.py        # Docker sandbox command execution
   ├─ memory.py         # Memory compression (multi-node, topology)
   ├─ knowledge.py      # Knowledge base indexer (FTS + CVE)
@@ -165,13 +185,13 @@ Follow the reconnaissance workflow here.
 List loaded skills:
 
 ```bash
-curl http://localhost:8765/api/skills
+curl http://localhost:8001/api/skills
 ```
 
 Enable skills when creating a mission:
 
 ```bash
-curl -X POST http://localhost:8765/api/missions \
+curl -X POST http://localhost:8001/api/missions \
   -H "Content-Type: application/json" \
   -d '{"name":"pikaqiu-target","target":"http://10.50.1.182:36543/","goal":"Find and capture all flags","expected_flags":1,"skills":["recon"]}'
 ```

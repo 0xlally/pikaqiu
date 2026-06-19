@@ -7,10 +7,13 @@
 # priority: lower number = higher priority (auto-assigned to missions)
 model_pool:
   - id: main
-    base_url: "https://www.heilovehei.com"
+    base_url: "https://www.inroi.shop"
     api_key: ""
-    model: "gpt-5.4"
+    model: "gpt-5.5"
     thinking: false
+    reasoning_effort: "xhigh"
+    use_responses_api: true
+    disable_response_storage: true
     priority: 1
     max_concurrent: 5
 
@@ -23,14 +26,17 @@ model_pool:
   #   priority: 2
   #   max_concurrent: 3
 
-# 鈹€鈹€鈹€ Advisor Model 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-# A separate model for the "ask_adviser" tool (optional).
+# 鈹€鈹€鈹€ Passive Observer Model 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# A separate model for passive Observer/runtime guidance (optional).
 # Falls back to the primary model if left empty.
-advisor:
+observer:
   base_url: ""
   api_key: ""
   model: ""
   thinking: false
+  reasoning_effort: "xhigh"
+  use_responses_api: true
+  disable_response_storage: true
 
 # 鈹€鈹€鈹€ Compression Model 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 # A cheap/fast model for mid-round context compression (optional).
@@ -39,6 +45,9 @@ compression:
   base_url: ""
   api_key: ""
   model: ""
+  reasoning_effort: "xhigh"
+  use_responses_api: true
+  disable_response_storage: true
   timeout_sec: 60
 
 # 鈹€鈹€鈹€ Agent Defaults 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -50,6 +59,7 @@ agent_defaults:
   llm_max_retries: 10             # LLM timeout/error auto-retry count
   stdout_limit: 8000              # output truncation (chars); keeps head+tail, drops middle
   context_compress_threshold: 80000  # mid-round compression trigger (chars)
+  observer_review_interval: 16    # passive Observer audit interval, counted by main LLM turns
   round_timeout_sec: 300          # per-round timeout (seconds)
   knowledge_top_k: 5              # number of knowledge docs to retrieve
   knowledge_dir: "./knowledge"    # directory for knowledge zips/folders (drop .zip or dirs here)

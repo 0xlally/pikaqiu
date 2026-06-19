@@ -156,7 +156,7 @@ def create_app(runtime: AppRuntime | None = None) -> Flask:
         errors = rt().settings.update(changes)
         # Rebuild LLM client if relevant fields changed
         llm_fields = {"llm_base_url", "llm_api_key", "llm_model", "llm_timeout_sec",
-                      "advisor_base_url", "advisor_api_key", "advisor_model"}
+                      "observer_base_url", "observer_api_key", "observer_model"}
         if llm_fields & set(changes.keys()):
             rt().llm = LLMClient(rt().settings)
             rt().orchestrator.llm = rt().llm

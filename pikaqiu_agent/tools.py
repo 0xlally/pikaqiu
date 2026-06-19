@@ -79,12 +79,6 @@ class CVESearchInput(BaseModel):
     limit: int = Field(default=8, description="Max results")
 
 
-class AdviserInput(BaseModel):
-    question: str = Field(description="Specific question about attack technique, payload, or next step")
-
-
-class ObserverInput(BaseModel):
-    question: str = Field(description="Ask whether current progress is repeated, stuck, off-track, or whether skill_search/activate_skill should be used or fixed")
 
 
 class SubmitFlagInput(BaseModel):
@@ -240,7 +234,7 @@ def create_web_fetch_tool(
         """Fetch an HTTP/HTTPS page from the public internet and extract readable text.
 
         Use after web_search when a result looks relevant. Prefer official docs,
-        advisories, Exploit-DB, NVD, GitHub PoCs, and vendor pages.
+        security bulletins, Exploit-DB, NVD, GitHub PoCs, and vendor pages.
         """
         max_chars = max(1000, min(int(max_chars or 12000), 30000))
         timeout = _clamp_timeout(int(timeout or 20), max_timeout, min_timeout=5)
@@ -535,122 +529,6 @@ def create_skill_reference_tool(
     return skill_read_reference
 
 
-def create_adviser_tool(
-    llm_client, mission: dict, memory: dict | None = None,
-    current_messages: list | None = None,
-) -> BaseTool:
-    @tool("ask_adviser", args_schema=AdviserInput)
-    def ask_adviser(question: str) -> str:
-        """Ask the expert penetration testing adviser.
-        Use when stuck, need specific payloads, or bypass techniques.
-        Be specific: include what you tried, errors, and what you expect.
-        """
-        context_parts = [
-            f"目标: {mission.get('target', '')}",
-            f"任务目标: {mission.get('goal', '')}",
-        ]
-        if memory:
-            if memory.get("summary"):
-                context_parts.append(f"当前态势: {memory['summary']}")
-            if memory.get("findings"):
-                findings = "\n".join(f"- {f}" for f in memory["findings"][:8])
-                context_parts.append(f"已知发现:\n{findings}")
-            if memory.get("leads"):
-                leads = "\n".join(f"- {l}" for l in memory["leads"][:5])
-                context_parts.append(f"待验证线索:\n{leads}")
-            if memory.get("dead_ends"):
-                dead = ", ".join(str(d) for d in memory["dead_ends"][:5])
-                context_parts.append(f"已排除路径: {dead}")
-
-        # Append recent tool execution history from current round
-        if current_messages:
-            from langchain_core.messages import AIMessage as _AI, ToolMessage as _TM
-            recent = []
-            for msg in current_messages[-30:]:
-                if isinstance(msg, _AI) and msg.content:
-                    text = str(msg.content)[:200]
-                    recent.append(f"[AI] {text}")
-                elif isinstance(msg, _TM):
-                    text = str(msg.content)[:400]
-                    recent.append(f"[工具结果] {text}")
-            if recent:
-                context_parts.append("本轮最近操作:\n" + "\n".join(recent[-15:]))
-
-        context = "\n".join(context_parts)
-        prompt = (
-            f"## 渗透现状\n{context}\n\n"
-            f"## 当前提问者的疑问\n{question}\n\n"
-            "## 请你独立评估\n"
-            "1. 基于以上上下文，当前渗透路径是否正确？有无被忽略的攻击向量？\n"
-            "2. 如果方向有问题，直接指出并说明正确方向。\n"
-            "3. 针对提问者的具体问题，给出可直接执行的命令或代码。"
-        )
-        result = llm_client.invoke_advisor(prompt)
-        return result.raw_text
-    return ask_adviser
-
-
-def create_observer_tool(
-    observer,
-    mission: dict,
-    observer_runtime=None,
-    memory: dict | None = None,
-    tool_call_log: list[dict[str, Any]] | None = None,
-    captured_flags: list[str] | None = None,
-) -> BaseTool:
-    @tool("ask_observer", args_schema=ObserverInput)
-    def ask_observer(question: str) -> str:
-        """Ask the observer whether the current path is stuck/repeated/off-track or whether skill usage is wrong.
-
-        Use when you are unsure whether to continue, switch tactics, return to a lead,
-        or call skill_search / activate_skill based on the current evidence.
-        """
-        current_log = tool_call_log or []
-        current_memory = memory or {}
-        flags = captured_flags or []
-        summary = {}
-        mission_id = str(mission.get("id") or "").strip()
-        if observer_runtime and mission_id:
-            try:
-                summary = observer_runtime.summary(mission_id)
-            except Exception as exc:
-                summary = {"error": str(exc)}
-        if current_log:
-            decision = observer.observe_tool_call(
-                mission=mission,
-                tool_call_log=current_log,
-                memory=current_memory,
-                captured_flags=flags,
-            ).normalised()
-        else:
-            decision = observer.review_round(
-                mission=mission,
-                memory_before=current_memory,
-                memory_after=current_memory,
-                tool_call_log=[],
-                llm_call_count=0,
-                stall_rounds=0,
-                captured_flags=flags,
-            ).normalised()
-
-        result = {
-            "question": question,
-            "observer": summary,
-            "fallback_rule": decision.to_dict(),
-            "skill_observations": observer.skill_observations(
-                mission=mission,
-                recent_events=[],
-                tool_call_log=current_log,
-            ),
-            "next_step": (
-                "Read the latest observer decision first. If it includes skill_signal, call your own "
-                "skill_search with the current evidence, then activate_skill only with a valid returned "
-                "skill id. ask_observer is read-only and does not create any other agent."
-            ),
-        }
-        return json.dumps(result, ensure_ascii=False, indent=2)
-    return ask_observer
-
 
 def create_submit_flag_tool(on_flag: Callable[[str], str]) -> BaseTool:
         @tool("submit_flag", args_schema=SubmitFlagInput)
@@ -706,19 +584,12 @@ def create_all_tools(
     store=None,
     knowledge=None,
     skills=None,
-    observer=None,
-    observer_runtime=None,
-    llm_client=None,
     mission: dict | None = None,
-    memory: dict | None = None,
-    tool_call_log: list[dict[str, Any]] | None = None,
-    captured_flags: list[str] | None = None,
     on_flag: Callable[[str], str] | None = None,
     on_give_up: Callable[[str], str] | None = None,
     stop_fn: Callable[[], bool] | None = None,
     on_chunk: Callable[[str], None] | None = None,
     knowledge_top_k: int = 3,
-    current_messages: list | None = None,
     command_timeout_sec: int = 120,
     skill_prompt_max_chars: int = 12000,
     skill_reference_max_chars: int = 20000,
@@ -750,17 +621,6 @@ def create_all_tools(
                 default_max_chars=skill_reference_max_chars,
             ),
         ])
-    if llm_client and mission:
-        tools.append(create_adviser_tool(llm_client, mission, memory=memory, current_messages=current_messages))
-    if observer and mission:
-        tools.append(create_observer_tool(
-            observer,
-            mission,
-            observer_runtime=observer_runtime,
-            memory=memory,
-            tool_call_log=tool_call_log,
-            captured_flags=captured_flags,
-        ))
     if on_flag:
         tools.append(create_submit_flag_tool(on_flag))
     if on_give_up:

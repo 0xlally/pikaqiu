@@ -63,22 +63,22 @@
           </div>
         </section>
 
-        <!-- 顾问模型 -->
+        <!-- Observer 审核模型 -->
         <section class="settings-section">
-          <h3>顾问模型（Advisor）</h3>
-          <p class="section-hint" id="advisor-effective"></p>
+          <h3>Observer 审核模型</h3>
+          <p class="section-hint" id="observer-effective"></p>
           <div class="field-grid">
             <label>
               API 地址
-              <input type="text" data-cfg="advisor_base_url" placeholder="留空则复用主模型地址" />
+              <input type="text" data-cfg="observer_base_url" placeholder="留空则复用主模型地址" />
             </label>
             <label>
               API Key
-              <input type="password" data-cfg="advisor_api_key" placeholder="留空则复用主模型 Key" />
+              <input type="password" data-cfg="observer_api_key" placeholder="留空则复用主模型 Key" />
             </label>
             <label>
               模型
-              <input type="text" data-cfg="advisor_model" placeholder="留空则复用主模型" />
+              <input type="text" data-cfg="observer_model" placeholder="留空则复用主模型" />
             </label>
           </div>
         </section>
@@ -110,6 +110,10 @@
             <label>
               知识库检索数
               <input type="number" data-cfg="knowledge_top_k" min="1" max="50" />
+            </label>
+            <label>
+              Observer 审核间隔
+              <input type="number" data-cfg="observer_review_interval" min="1" max="200" />
             </label>
           </div>
           <div class="field-row">
@@ -179,9 +183,9 @@
             if (el.type === "checkbox") el.checked = !!cfg[key];
             else el.value = cfg[key] ?? "";
           });
-          const advEl = document.getElementById("advisor-effective");
-          if (advEl && cfg.effective_advisor_model) {
-            advEl.textContent = "当前生效模型: " + cfg.effective_advisor_model;
+          const observerEl = document.getElementById("observer-effective");
+          if (observerEl && cfg.effective_observer_model) {
+            observerEl.textContent = "当前生效模型: " + cfg.effective_observer_model;
           }
         } catch (err) {
           showStatus("加载配置失败: " + err.message, true);

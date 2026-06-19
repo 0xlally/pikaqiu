@@ -34,7 +34,7 @@ EXPLICIT_TARGET_RE = re.compile(
 )
 MEMORY_MISSING_TOOL_RE = re.compile(r"`?([A-Za-z0-9_.+-]+)`?\s+is unavailable\b", re.I)
 MISSING_TOOL_RE = re.compile(r"(?:^|\n)(?:bash:\s+line\s+\d+:\s+)?([A-Za-z0-9_.+-]+):\s+command not found\b")
-ADVICE_RESULT_TOOLS = {"ask_adviser", "knowledge_search"}
+GUIDANCE_RESULT_TOOLS = {"knowledge_search"}
 
 
 def is_scan_like_tool_call(tool_name: str, display_cmd: str) -> bool:
@@ -137,8 +137,31 @@ def missing_tool_block_message(tool: str) -> str:
     )
 
 
-def summarize_advice_result(tool_name: str, result_str: str, limit: int) -> str:
-    if tool_name not in ADVICE_RESULT_TOOLS:
+def low_evidence_stop_block_message(memory: dict[str, Any]) -> str:
+    lead = next_verification_hint(memory) or "the current strongest lead"
+    return (
+        "[LOW_EVIDENCE_STOP_BLOCKED]\n"
+        "Stopping is blocked because the latest evidence is too weak to conclude the mission. "
+        "Run one targeted verification tied to memory, preserve the decisive raw output, or call give_up again "
+        "with a concrete failure boundary, blocked prerequisite, and required next evidence.\n"
+        f"Next targeted lead: {lead}\n"
+        "[EXIT_CODE: 0]"
+    )
+
+
+def stale_observer_steer_block_message(memory: dict[str, Any]) -> str:
+    lead = next_verification_hint(memory) or "the current strongest lead"
+    return (
+        "[STALE_OBSERVER_STEER_BLOCKED]\n"
+        "The pending Observer steer has not been resolved. Execute one command that directly verifies or falsifies it "
+        "before changing direction or stopping.\n"
+        f"Next targeted lead: {lead}\n"
+        "[EXIT_CODE: 0]"
+    )
+
+
+def summarize_guidance_result(tool_name: str, result_str: str, limit: int) -> str:
+    if tool_name not in GUIDANCE_RESULT_TOOLS:
         return flag_capture.truncate_middle(result_str, limit)
     text = str(result_str or "")
     if len(text) <= limit:
@@ -147,7 +170,7 @@ def summarize_advice_result(tool_name: str, result_str: str, limit: int) -> str:
     tail = max(600, limit - head - 140)
     return (
         text[:head]
-        + f"\n\n... [advice output truncated; omitted {len(text) - head - tail} chars. "
+        + f"\n\n... [guidance output truncated; omitted {len(text) - head - tail} chars. "
           "Use this as guidance only, not target evidence.] ...\n\n"
         + text[-tail:]
     )
@@ -253,7 +276,9 @@ _missing_tool_name = missing_tool_name
 _known_missing_tool_blocks = known_missing_tool_blocks
 _missing_tools_from_memory = missing_tools_from_memory
 _missing_tool_block_message = missing_tool_block_message
-_summarize_advice_result = summarize_advice_result
+_low_evidence_stop_block_message = low_evidence_stop_block_message
+_stale_observer_steer_block_message = stale_observer_steer_block_message
+_summarize_guidance_result = summarize_guidance_result
 _round_time_guidance = round_time_guidance
 _route_guard_guidance = route_guard_guidance
 _post_partial_flag_guidance = post_partial_flag_guidance

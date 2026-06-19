@@ -375,8 +375,7 @@ def build_tool_system_prompt(
             "- **skill_search**: 在进入专项流程前检索可用 SKILL.md 元数据\n"
             "- **activate_skill**: 只在命中明确时加载一个相关 skill，并持久化到当前任务\n"
             "- **skill_read_reference**: 仅在已激活 skill 需要引用附带文件时读取\n"
-            "- **ask_observer**: 当你怀疑重复、空转、跑偏，或不确定 skill 是否该检索/激活/已出错时，询问观察纠偏 agent\n"
-            "- **ask_adviser**: 专家顾问，详述已尝试的步骤和观察\n"
+            "- **Runtime Observer**: 被动运行时审核，不是可调用工具；系统会按配置周期注入审计建议\n"
             "- **submit_flag**: 找到flag后立即提交\n"
             "- **give_up**: request Observer stop audit only; stopping is allowed only with failure_boundary, blocked_prerequisite, and required_next_evidence."
         ),
@@ -420,7 +419,7 @@ def build_tool_system_prompt(
         (
             "## 核心原则\n"
             "1. **聚焦攻击面**：充分了解环境后，判断最可能导向flag的功能入口，专注深入，不广撒网\n"
-            "2. **漏洞坚持**：发现漏洞迹象后持续深挖；如果连续失败/重复/不确定是否跑偏，先 `ask_observer`，需要专家payload再 `ask_adviser`\n"
+            "2. **漏洞坚持**：发现漏洞迹象后持续深挖；如果连续失败/重复/不确定是否跑偏，回到可观测证据做最小验证；Observer 会按周期被动审核并注入纠偏建议\n"
             "3. **先查资料再攻击**：识别产品+版本→先 `search_cve`，本地无结果或需要最新资料→`web_search`/`web_fetch`；识别漏洞类型→`knowledge_search`；bash可用`searchsploit`。**不要凭记忆构造payload**\n"
             "4. **Session管理**：python_exec无跨调用会话——每次脚本内完成登录→操作。有注册页面直接注册新号。操作cookie前先`Session().get(target)`获取全部cookie，只替换目标cookie保留其余\n"
             "5. **遇阻先调试**：获取原始信息（状态码/响应头/响应体/错误栈），确认问题本质后再决策\n"

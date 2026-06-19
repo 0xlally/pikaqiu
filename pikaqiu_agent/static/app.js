@@ -32,15 +32,14 @@ const EVENT_TITLES = {
   sandbox: "沙箱",
   main_agent: "主决策",
   memory_agent: "记忆压缩",
-  advisor_agent: "策略纠偏",
   observer_agent: "观察纠偏",
   human_guidance: "人类协同",
   error: "异常",
   flag: "🚩 Flag",
 };
 
-const ROLE_LABELS = { main: "主决策", memory: "记忆压缩", advisor: "策略纠偏" };
-const ROLE_ORDER = { main: 1, memory: 2, advisor: 3 };
+const ROLE_LABELS = { main: "主决策", memory: "记忆压缩" };
+const ROLE_ORDER = { main: 1, memory: 2 };
 const OUTCOME_LABELS = {
   unknown: "unknown",
   success: "success",
@@ -713,7 +712,7 @@ function summarizeRound(round) {
   const d = round.decision || {};
   if (round.worker_role === "main") return compactText(d.round_goal || d.thought_summary || "等待下一步动作", 140);
   if (round.worker_role === "memory") return compactText(d.summary || "记忆压缩完成", 140);
-  return compactText(d.advice || "advisor 已返回建议", 140);
+  return compactText(d.visible_summary || d.route_assessment || "未识别的历史记录", 140);
 }
 
 function roundStats(round) {
@@ -975,14 +974,13 @@ function renderEventCard(event) {
 function renderFlowRound(group, index) {
   const mainRound = group.rounds.find((r) => r.worker_role === "main");
   const memoryRound = group.rounds.find((r) => r.worker_role === "memory");
-  const advisorRound = group.rounds.find((r) => r.worker_role === "advisor");
   const mainD = mainRound?.decision || {};
   const title = group.roundNo === 0
     ? "任务启动 / 知识库索引 / Sandbox 自检"
-    : mainD.round_goal || summarizeRound(mainRound || memoryRound || advisorRound || {});
+    : mainD.round_goal || summarizeRound(mainRound || memoryRound || {});
   const digest = group.roundNo === 0
     ? compactText(group.events.map((e) => e.title).join(" / "), 180)
-    : compactText(mainD.thought_summary || memoryRound?.decision?.summary || advisorRound?.decision?.advice || "", 220);
+    : compactText(mainD.thought_summary || memoryRound?.decision?.summary || "", 220);
   const cmdCount = group.events.filter((e) => e.type === "command").length;
   const badge = group.roundNo === 0 ? "BOOT" : `R${String(group.roundNo).padStart(2, "0")}`;
   const dur = formatDuration(group.startedAt, group.endedAt);
@@ -1009,7 +1007,6 @@ function renderFlowRound(group, index) {
         <div class="role-brief-grid">
           ${renderDecisionBrief(mainRound, "main", group.roundNo)}
           ${renderDecisionBrief(memoryRound, "memory", group.roundNo)}
-          ${advisorRound ? renderDecisionBrief(advisorRound, "advisor", group.roundNo) : ""}
         </div>
       `}
       <div class="event-stack">

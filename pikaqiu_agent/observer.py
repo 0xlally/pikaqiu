@@ -38,15 +38,11 @@ SCOPE_SAFE_TOOLS = {
     "web_fetch",
     "knowledge_search",
     "search_cve",
-    "ask_adviser",
-    "ask_observer",
     "skill_search",
     "activate_skill",
     "skill_read_reference",
 }
 EVIDENCE_AUDIT_EXEMPT_TOOLS = {
-    "ask_adviser",
-    "ask_observer",
     "knowledge_search",
     "search_cve",
     "skill_search",
@@ -320,8 +316,7 @@ class ObserverAgent:
                 intervention="follow_up",
                 problems=["round had LLM turns but no tool calls"],
                 steer_message=(
-                    "Stop pure text analysis. Ask observer/adviser if needed, then call one concrete "
-                    "probe tool and make the result observable."
+                    "Stop pure text analysis. Call one concrete probe tool and make the result observable."
                 ),
             ).normalised()
 
@@ -722,9 +717,9 @@ class ObserverAgent:
             return True
         if VAGUE_RESULT_RE.match(cleaned):
             return True
-        advice_words = ("should", "could", "maybe", "recommend", "suggest", "next step", "analysis")
+        guidance_words = ("should", "could", "maybe", "recommend", "suggest", "next step", "analysis")
         lowered = cleaned.lower()
-        return any(word in lowered for word in advice_words)
+        return any(word in lowered for word in guidance_words)
 
     def _has_concrete_evidence(self, row: dict[str, Any]) -> bool:
         result = _tool_result_text(row)

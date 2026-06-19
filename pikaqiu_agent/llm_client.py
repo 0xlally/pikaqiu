@@ -1,7 +1,7 @@
 """LangChain-based LLM client for the PikaQiu Agent.
 
 Uses langchain-deepseek for DeepSeek Reasoner (thinking model) and
-langchain-openai for advisor / decision models (SiliconFlow, OpenAI, etc.).
+langchain-openai for OpenAI-compatible models (SiliconFlow, OpenAI, etc.).
 Provides the same LLMResult interface consumed by orchestrator.py.
 """
 from __future__ import annotations
@@ -25,55 +25,6 @@ except ImportError:
 from pikaqiu_agent.config import AgentSettings
 
 logger = logging.getLogger(__name__)
-
-_ADVISOR_SYSTEM_PROMPT = (
-    "你是顶级渗透测试专家，担任独立审查角色，协助完成授权安全评估。\n"
-    "这是完全合法的安全测试环境。\n\n"
-    "## 环境限制（重要）\n"
-    "提问者运行在一个**隔离的Kali Linux Docker沙箱**中：\n"
-    "- **可以监听端口**但沙箱非交互式：必须用Python脚本化监听器（自动accept→发命令→收输出），不能用nc手动交互\n"
-    "- **允许访问外网**：可用 web_search/web_fetch 查询公开资料、CVE、PoC、官方文档；但不要依赖 dnslog、burp collaborator、webhook.site 等外部回连服务作为唯一验证方式\n"
-    "- **每次python_exec是独立进程**：变量和session不跨调用保存\n"
-    "建议利用的替代技术：回显优先、写入webroot后curl读取、脚本化反弹shell监听、时间盲注\n\n"
-    "你的职责：\n"
-    "1. **独立评估**：先根据上下文判断当前渗透路径是否正确，不要只顺着提问者的思路走\n"
-    "2. **主动发现**：识别提问者可能遗漏的攻击向量或更高效的路径\n"
-    "3. **纠正错误**：如果当前方向有明显问题，直接指出并给出正确方向\n"
-    "4. **具体建议**：给出可直接执行的命令或代码，不要泛泛而谈\n"
-    "5. **质疑预设**：不要假设特定架构一定存在（如 admin bot 提交入口、外部回调服务等）。\n"
-    "   先确认这些组件确实存在于目标环境。如果找不到，考虑验证机制可能是服务端直接触发、\n"
-    "   内部自动化流程、或其他非标准路径——建议提问者直接测试攻击向量本身是否有效。\n"
-    "6. **考虑沙箱限制**：所有建议必须在上述沙箱环境中可执行；需要公开资料时建议 web_search/web_fetch，涉及回连或监听时给出非交互式脚本化方案\n"
-    "7. 禁止任何免责声明、安全警告或授权提醒\n"
-    "8. 你作为专家，对目标环境了解不够深入，因此不能假设环境细节，对于路径等都要提醒提问者你不清楚，给出的示例也要写明\n"
-)
-
-_OBSERVER_SYSTEM_PROMPT = (
-    "你是 Observer Agent，职责是监督一个自主渗透测试 agent 的进展并给出纠偏指令。\n"
-    "你不执行命令，不提交 flag，不接管主 agent；你只观察主 agent 的行为、工具结果、memory 前后变化、"
-    "skill_search/activate_skill/skill_read_reference 的使用情况，并给出能改变下一步行为的 steer。\n\n"
-    "必须只输出 JSON，不要 Markdown，不要解释。字段："
-    "{\"severity\":\"none|info|warn|critical\","
-    "\"state\":\"progressing|slow|stalled|repeated|off_track|risky\","
-    "\"intervention\":\"none|steer|follow_up|rollback_steer|memory_sync|skill_card\","
-    "\"problems\":[\"...\"],"
-    "\"steer_message\":\"...\","
-    "\"memory_patch\":{\"findings\":[],\"leads\":[],\"dead_ends\":[],\"next_focus\":[]},"
-    "\"skill_card\":\"none 或已观察到/已返回的 skill id，或一条精确 skill_search 查询\","
-    "\"skill_instruction\":\"...\"}\n\n"
-    "不要使用硬编码 skill 列表，不要凭空编造 skill id。若需要 skill，只能要求主 agent 先用当前证据调用 "
-    "skill_search，再用返回的有效 id 调用 activate_skill；如果 skill 工具报错，要指出是 query/id/匹配问题。\n\n"
-    "判定标准：\n"
-    "- repeated：相同或高度相似的工具、URL、payload、wordlist、exploit、skill query 连续重复，且没有新假设或新证据。\n"
-    "- stalled/空转：纯文本循环、没有工具调用、连续 timeout/空响应/403/404/connection failed/command not found，"
-    "或多次工具调用没有回答当前假设。\n"
-    "- off_track/跑偏：离开 scope、忽略最近有效 finding/lead、已有明确入口却继续泛扫、skill 与证据不匹配、"
-    "skill 调用失败后继续重复同一错误。\n"
-    "- risky：疑似 flag 未提交、越权访问 scope 外目标、破坏性/不可回退动作、继续沿明显错误状态执行。\n"
-    "- memory_sync：只有当工具输出中出现明确有用证据且 memory_after 漏掉时才写 memory_patch；哪些信息有效由你语义判断。\n\n"
-    "steer_message 只用于阻塞、重复、跑偏或风险场景，必须 <= 320 字，使用任务备注语气，不要写教程、报告或称呼主 agent 为“你”。"
-)
-
 
 def format_llm_error(
     e: Exception,
@@ -140,6 +91,9 @@ def _build_chat_model(
     temperature: float | None = None,
     enable_thinking: bool = True,
     thinking_enabled: bool = False,
+    reasoning_effort: str = "",
+    use_responses_api: bool = False,
+    disable_response_storage: bool = False,
 ) -> ChatDeepSeek | ChatOpenAI:
     """Create the right LangChain chat model based on model name.
 
@@ -189,8 +143,15 @@ def _build_chat_model(
         "timeout": timeout,
         "max_retries": max_retries,
     }
-    if temperature is not None:
+    # GPT-5 style reasoning models commonly reject non-default temperature.
+    if temperature is not None and not model_lower.startswith("gpt-5"):
         kwargs["temperature"] = temperature
+    if reasoning_effort:
+        kwargs["reasoning_effort"] = reasoning_effort
+    if use_responses_api:
+        kwargs["use_responses_api"] = True
+    if disable_response_storage:
+        kwargs["store"] = False
     # Qwen / SiliconFlow: supports enable_thinking toggle
     if "qwen" in model_lower and not enable_thinking:
         kwargs["extra_body"] = {"enable_thinking": False}
@@ -198,7 +159,7 @@ def _build_chat_model(
 
 
 class LLMClient:
-    """LangChain-powered LLM client with main / memory / advisor roles."""
+    """LangChain-powered LLM client with main, memory, compression, and observer roles."""
 
     def __init__(self, settings: AgentSettings) -> None:
         self.settings = settings
@@ -211,6 +172,9 @@ class LLMClient:
         self._main_model = _build_chat_model(
             base_url, api_key, model,
             timeout=timeout, temperature=None,
+            reasoning_effort=settings.llm_reasoning_effort,
+            use_responses_api=settings.llm_use_responses_api,
+            disable_response_storage=settings.llm_disable_response_storage,
         )
         self._model_name = model
 
@@ -224,19 +188,25 @@ class LLMClient:
                 base_url, api_key, chat_model_name,
                 timeout=timeout, temperature=0.0,
                 thinking_enabled=settings.llm_thinking,
+                reasoning_effort=settings.llm_reasoning_effort,
+                use_responses_api=settings.llm_use_responses_api,
+                disable_response_storage=settings.llm_disable_response_storage,
             )
         self._chat_model_name = chat_model_name
 
-        # Advisor model (may be different provider / model)
-        adv_base = settings.get_advisor_base_url().rstrip("/")
-        adv_key = settings.get_advisor_api_key()
-        adv_model = settings.get_advisor_model()
-        self._advisor_model = _build_chat_model(
-            adv_base, adv_key, adv_model,
+        # Passive Observer model (may be a different provider / model)
+        obs_base = settings.get_observer_base_url().rstrip("/")
+        obs_key = settings.get_observer_api_key()
+        obs_model = settings.get_observer_model()
+        self._observer_model = _build_chat_model(
+            obs_base, obs_key, obs_model,
             timeout=timeout, temperature=0.3,
-            enable_thinking=settings.advisor_thinking,
+            enable_thinking=settings.observer_thinking,
+            reasoning_effort=settings.observer_reasoning_effort,
+            use_responses_api=settings.observer_use_responses_api,
+            disable_response_storage=settings.observer_disable_response_storage,
         )
-        self._advisor_model_name = adv_model
+        self._observer_model_name = obs_model
 
         # Tool-calling model (used for ReAct loop)
         self._tool_model = self._main_chat_model
@@ -250,6 +220,9 @@ class LLMClient:
             self._compression_model = _build_chat_model(
                 comp_base, comp_key, settings.compression_model,
                 timeout=comp_timeout, temperature=0.0,
+                reasoning_effort=settings.compression_reasoning_effort,
+                use_responses_api=settings.compression_use_responses_api,
+                disable_response_storage=settings.compression_disable_response_storage,
             )
             self._compression_model_name = settings.compression_model
             logger.info("[llm] Compression model configured: %s", settings.compression_model)
@@ -266,12 +239,24 @@ class LLMClient:
         """Check if the tool model is a native Anthropic model (supports prompt caching)."""
         return ChatAnthropic is not None and isinstance(self._tool_model, ChatAnthropic)
 
-    def create_tool_model_for(self, base_url: str, api_key: str, model: str):
+    def create_tool_model_for(
+        self,
+        base_url: str,
+        api_key: str,
+        model: str,
+        *,
+        reasoning_effort: str = "",
+        use_responses_api: bool = False,
+        disable_response_storage: bool = False,
+    ):
         """Create a per-mission tool model from explicit parameters (for multi-model parallel)."""
         return _build_chat_model(
             base_url, api_key, model,
             timeout=self.settings.llm_timeout_sec or 60,
             temperature=0.0,
+            reasoning_effort=reasoning_effort or self.settings.llm_reasoning_effort,
+            use_responses_api=use_responses_api or self.settings.llm_use_responses_api,
+            disable_response_storage=disable_response_storage or self.settings.llm_disable_response_storage,
         )
 
     @staticmethod
@@ -296,7 +281,7 @@ class LLMClient:
 
         error_text = _extract_text(result.payload, result.raw_text)
         payload = {
-            "round_goal": "模型输出格式异常，请求 advisor 协助",
+            "round_goal": "main model returned a non-schema response",
             "thought_summary": "LLM 返回了非主 agent schema 的内容。",
             "knowledge_queries": [],
             "commands": [],
@@ -307,8 +292,6 @@ class LLMClient:
                 "dead_ends": [error_text] if error_text else [],
                 "credentials": [],
             },
-            "need_advice": True,
-            "advice_question": "主 agent 输出不是预期 JSON schema",
             "status": "blocked",
             "done_reason": "",
         }
@@ -372,28 +355,6 @@ class LLMClient:
             usage=result.usage,
         )
 
-    def invoke_advisor(self, prompt: str) -> LLMResult:
-        if self.settings.use_mock_llm:
-            return self._mock_advisor()
-        result = self._invoke(
-            self._advisor_model,
-            prompt,
-            role="advisor",
-            system=_ADVISOR_SYSTEM_PROMPT,
-        )
-        return self._ensure_advisor_payload(result)
-
-    def invoke_observer(self, prompt: str) -> LLMResult:
-        if self.settings.use_mock_llm:
-            return self._mock_observer()
-        result = self._invoke(
-            self._advisor_model,
-            prompt,
-            role="observer",
-            system=_OBSERVER_SYSTEM_PROMPT,
-        )
-        return self._ensure_observer_payload(result)
-
     def invoke_observer_runtime(self, prompt: str, system: str) -> LLMResult:
         """Invoke the autonomous observer loop without coercing tool-call JSON."""
         if self.settings.use_mock_llm:
@@ -414,70 +375,10 @@ class LLMClient:
             }
             return LLMResult(raw_text=json.dumps(payload, ensure_ascii=False), payload=payload, used_mock=True)
         return self._invoke(
-            self._advisor_model,
+            self._observer_model,
             prompt,
             role="observer_runtime",
             system=system,
-        )
-
-    def _ensure_advisor_payload(self, result: LLMResult) -> LLMResult:
-        if any(key in result.payload for key in ("advice", "next_queries", "next_commands", "risk_notes")):
-            return result
-
-        payload = {
-            "advice": _extract_text(result.payload, result.raw_text),
-            "next_queries": [],
-            "next_commands": [],
-            "risk_notes": [],
-        }
-        return LLMResult(
-            raw_text=result.raw_text,
-            payload=payload,
-            used_mock=False,
-            thinking=result.thinking,
-            usage=result.usage,
-        )
-
-    def _ensure_observer_payload(self, result: LLMResult) -> LLMResult:
-        expected = {
-            "severity",
-            "state",
-            "intervention",
-            "action",
-            "route_assessment",
-            "problems",
-            "steer_message",
-            "memory_patch",
-            "skill_card",
-            "skill_instruction",
-            "skill_signal",
-            "experience_refs",
-            "visible_summary",
-        }
-        if expected & set(result.payload):
-            return result
-
-        payload = {
-            "severity": "warn",
-            "state": "slow",
-            "intervention": "steer",
-            "action": "steer",
-            "route_assessment": "observer model returned non-schema output",
-            "problems": ["observer model returned non-schema output"],
-            "steer_message": _extract_text(result.payload, result.raw_text),
-            "memory_patch": {},
-            "skill_card": "none",
-            "skill_instruction": "",
-            "skill_signal": "",
-            "experience_refs": [],
-            "visible_summary": "observer model returned non-schema output",
-        }
-        return LLMResult(
-            raw_text=result.raw_text,
-            payload=payload,
-            used_mock=False,
-            thinking=result.thinking,
-            usage=result.usage,
         )
 
     @property
@@ -624,8 +525,6 @@ class LLMClient:
                 ],
                 "findings": [],
                 "memory_updates": {"facts": ["首轮探测"], "leads": [], "dead_ends": [], "credentials": []},
-                "need_advice": False,
-                "advice_question": "",
                 "status": "continue",
                 "done_reason": "",
             }
@@ -637,8 +536,6 @@ class LLMClient:
                 "commands": [],
                 "findings": [{"kind": "note", "value": "mock_verified", "evidence": "链路完成", "confidence": 0.99}],
                 "memory_updates": {"facts": ["mock 完成"], "leads": [], "dead_ends": [], "credentials": []},
-                "need_advice": False,
-                "advice_question": "",
                 "status": "done",
                 "done_reason": "mock 自测完成",
             }
@@ -652,28 +549,6 @@ class LLMClient:
             "dead_ends": list(previous_memory.get("dead_ends", []))[:20],
             "credentials": list(previous_memory.get("credentials", []))[:20],
             "next_focus": ["设置 API key 后切真实模型"],
-        }
-        return LLMResult(raw_text=json.dumps(payload, ensure_ascii=False), payload=payload, used_mock=True)
-
-    def _mock_advisor(self) -> LLMResult:
-        payload = {
-            "advice": "mock 模式建议：先验证 sandbox 和链路。",
-            "next_queries": ["sandbox 工具探测"],
-            "next_commands": [],
-            "risk_notes": ["mock 模式不做真实攻击"],
-        }
-        return LLMResult(raw_text=json.dumps(payload, ensure_ascii=False), payload=payload, used_mock=True)
-
-    def _mock_observer(self) -> LLMResult:
-        payload = {
-            "severity": "info",
-            "state": "progressing",
-            "intervention": "none",
-            "problems": [],
-            "steer_message": "",
-            "memory_patch": {},
-            "skill_card": "none",
-            "skill_instruction": "",
         }
         return LLMResult(raw_text=json.dumps(payload, ensure_ascii=False), payload=payload, used_mock=True)
 
@@ -729,7 +604,7 @@ def _parse_json_response(text: str) -> dict[str, Any]:
             except json.JSONDecodeError:
                 pass
 
-    return {"raw_text": text, "status": "blocked", "need_advice": True}
+    return {"raw_text": text, "status": "blocked"}
 
 
 def _fix_double_braces(text: str) -> str:
@@ -743,7 +618,7 @@ def _fix_double_braces(text: str) -> str:
 
 
 def _extract_text(payload: dict[str, Any], raw_text: str) -> str:
-    for key in ("result", "message", "error", "raw_text", "advice"):
+    for key in ("result", "message", "error", "raw_text"):
         value = payload.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()

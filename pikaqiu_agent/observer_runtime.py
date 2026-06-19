@@ -108,38 +108,6 @@ class ObserverRuntime:
     def summary(self, mission_id: str) -> dict[str, Any]:
         return self.store.get_observer_summary(mission_id)
 
-    def observe_tool_result(
-        self,
-        *,
-        mission_id: str,
-        round_no: int,
-        mission: dict[str, Any],
-        memory: dict[str, Any],
-        captured_flags: list[str],
-        tool_call_log: list[dict[str, Any]],
-        round_tool_call_log: list[dict[str, Any]],
-        rule_decision: ObserverDecision,
-    ) -> ObserverDecision:
-        latest = (tool_call_log or [{}])[-1]
-        observation = {
-            "phase": "tool_result",
-            "mission": self._mission_view(mission),
-            "memory": self._memory_view(memory),
-            "captured_flags": captured_flags,
-            "latest_tool_call": self._tool_call_view(latest, include_observer_result=True),
-            "recent_tool_calls": self._tool_call_views((tool_call_log or [])[-12:]),
-            "round_tool_calls": self._tool_call_views((round_tool_call_log or [])[-12:]),
-            "rule_observation": rule_decision.to_dict(),
-        }
-        return self._run_observer_loop(
-            mission_id=mission_id,
-            round_no=round_no,
-            phase="tool",
-            observation=observation,
-            rule_decision=rule_decision,
-            memory_after=memory,
-        )
-
     def review_round(
         self,
         *,
@@ -353,7 +321,7 @@ class ObserverRuntime:
             "Your hard-coded capabilities are only these internal tools: observer_think, "
             "experience_search, load_experience, observer_skill_search, observer_load_skill, observer_finish. "
             "You decide when to use load_experience, which experience file matters, whether to search/load skills "
-            "for your own judgement, and what route advice to give.\n\n"
+            "for your own judgement, and what route guidance to give.\n\n"
             "/experience is the human best-practice route library, not a generic payload dump. "
             "Use experience/okk for agent execution protocols, supervision, context management, and pentest "
             "methodology. Use experience/rules for common mistakes, hunting route choices, proven techniques, "

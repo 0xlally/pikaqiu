@@ -67,7 +67,7 @@ _is_scan_like_tool_call = _success_guards.is_scan_like_tool_call
 _is_broad_scan_tool_call = _success_guards.is_broad_scan_tool_call
 _highest_value_lead = _success_guards.highest_value_lead
 _next_verification_hint = _success_guards.next_verification_hint
-_summarize_advice_result = _success_guards.summarize_advice_result
+_summarize_guidance_result = _success_guards.summarize_guidance_result
 _round_time_guidance = _success_guards.round_time_guidance
 _route_guard_guidance = _success_guards.route_guard_guidance
 _post_partial_flag_guidance = _success_guards.post_partial_flag_guidance
@@ -672,6 +672,9 @@ class OrchestratorManager:
             try:
                 fallback = self.llm.create_tool_model_for(
                     entry.base_url, entry.api_key, entry.model,
+                    reasoning_effort=entry.reasoning_effort,
+                    use_responses_api=entry.use_responses_api,
+                    disable_response_storage=entry.disable_response_storage,
                 )
                 return fallback.bind_tools(tools), entry.model
             except Exception:
@@ -776,7 +779,7 @@ class OrchestratorManager:
             return (
                 f"[连续 {stall_rounds} 轮无新发现]\n"
                 "请**重新评估攻击方向**，选择一个全新的思路。\n"
-                "如果不确定该尝试什么，调用 ask_adviser 获取建议。"
+                "如果不确定该尝试什么，回到已验证证据，优先用 knowledge_search/search_cve/web_search 或最小可观测探针推进。"
             )
         if round_no == 1:
             return f"开始第 {round_no} 轮渗透。目标: {target}。"
@@ -871,56 +874,6 @@ class OrchestratorManager:
             content=self.observer.format_event_content(decision),
             metadata={"observer": decision.to_dict(), "phase": phase},
         )
-
-    def _refine_observer_decision(
-        self,
-        *,
-        mission_id: str,
-        round_no: int,
-        mission: dict[str, Any],
-        memory: dict[str, Any],
-        tool_call_log: list[dict[str, Any]],
-        decision: ObserverDecision,
-        stall_rounds: int,
-        memory_before: dict[str, Any] | None = None,
-        force: bool = False,
-    ) -> ObserverDecision:
-        decision = decision.normalised()
-        if self.settings.use_mock_llm or (not force and not decision.needs_llm):
-            return decision
-        try:
-            prompt = self.observer.build_llm_prompt(
-                mission=mission,
-                round_no=round_no,
-                decision=decision,
-                memory=memory,
-                memory_before=memory_before,
-                recent_events=self.store.get_recent_events(mission_id, limit=30),
-                tool_call_log=tool_call_log,
-                stall_rounds=stall_rounds,
-            )
-            pool = ThreadPoolExecutor(max_workers=1)
-            try:
-                future = pool.submit(self.llm.invoke_observer, prompt)
-                observer_result = future.result(timeout=self.settings.llm_timeout_sec)
-            finally:
-                pool.shutdown(wait=False)
-            refined = self.observer.normalize_llm_decision(
-                observer_result.payload,
-                fallback=decision,
-                raw_text=observer_result.raw_text,
-            )
-            return self.observer.combine_decisions(decision, refined)
-        except Exception as obs_err:
-            logger.warning("[observer] LLM review failed: %s", obs_err)
-            self.store.add_event(
-                mission_id=mission_id,
-                round_no=round_no,
-                event_type="observer_agent",
-                title="Observer LLM review failed",
-                content=str(obs_err)[:2000],
-            )
-            return decision
 
     def _apply_observer_memory_patch(
         self,
@@ -1072,6 +1025,9 @@ class OrchestratorManager:
                 try:
                     tool_model = self.llm.create_tool_model_for(
                         entry.base_url, entry.api_key, entry.model,
+                        reasoning_effort=entry.reasoning_effort,
+                        use_responses_api=entry.use_responses_api,
+                        disable_response_storage=entry.disable_response_storage,
                     )
                     logger.info("[orchestrator] mission %s using per-mission model: %s",
                                 mission_id[:8], entry.model)
@@ -1095,6 +1051,8 @@ class OrchestratorManager:
         captured_flags: list[str] = []
         pending_observer_guidance: list[str] = []
         pending_observer_steer: ObserverDecision | None = None
+        observer_review_interval = max(1, int(getattr(self.settings, "observer_review_interval", 16) or 16))
+        observer_turns_since_review = 0
         mission_scan_timeout_count = 0
         missing_tools_seen: set[str] = _missing_tools_from_memory(memory)
 
@@ -1358,19 +1316,12 @@ class OrchestratorManager:
                 store=self.store,
                 knowledge=self.knowledge,
                 skills=self.skills if self.settings.skills_auto_use else None,
-                observer=self.observer,
-                observer_runtime=self.observer_runtime,
-                llm_client=self.llm,
                 mission=mission,
-                memory=memory,
-                tool_call_log=tool_call_log,
-                captured_flags=captured_flags,
                 on_flag=on_flag,
                 on_give_up=on_give_up,
                 stop_fn=lambda: self.store.should_stop(mission_id),
                 on_chunk=_on_chunk,
                 knowledge_top_k=self.settings.knowledge_top_k,
-                current_messages=messages,
                 command_timeout_sec=self.settings.command_timeout_sec,
                 skill_prompt_max_chars=self.settings.skill_prompt_max_chars,
                 skill_reference_max_chars=self.settings.skill_reference_max_chars,
@@ -1382,7 +1333,6 @@ class OrchestratorManager:
             tool_exec_count = 0  # total individual tool executions this round (for logging)
             round_tool_call_log: list[dict[str, Any]] = []
             consecutive_no_tool = 0
-            observer_seen_signatures: set[str] = set()
             round_start_time = time.monotonic()
             round_timeout_sec = mission.get("round_timeout_sec", self.settings.round_timeout_sec)
             round_broad_scan_count = 0
@@ -1448,6 +1398,7 @@ class OrchestratorManager:
                     break
 
                 llm_call_count += 1
+                observer_turns_since_review += 1
                 messages.append(response)
 
                 # Log AI response text
@@ -1471,9 +1422,9 @@ class OrchestratorManager:
                         messages.append(HumanMessage(content=(
                             "[系统强制提醒] 你已连续输出纯文本而未调用任何工具，这违反了核心规则。"
                             "你是自主agent，没有人在看你的文本输出。"
-                            "立即调用一个工具（bash_exec/python_exec/knowledge_search/ask_adviser等）继续推进攻击。"
-                            "如果不确定下一步，先调用 ask_observer 判断是否跑偏、是否空转、以及 skill 是否该检索/激活/修正；"
-                            "需要具体payload时再调用 ask_adviser。"
+                            "立即调用一个工具（bash_exec/python_exec/knowledge_search/search_cve/skill_search等）继续推进攻击。"
+                            "如果不确定下一步，先用当前证据做一个最小可观测验证，或用 skill_search 检索相关专项流程；"
+                            "需要具体payload时优先用 knowledge_search/search_cve/web_search 查证后再执行。"
                         )))
                     continue
                 consecutive_no_tool = 0
@@ -1482,7 +1433,6 @@ class OrchestratorManager:
                 # IMPORTANT: All ToolMessages must be adjacent after AIMessage —
                 # inserting HumanMessage between them causes Claude 400 errors.
                 deferred_guidance: list[str] = []
-                observer_batch_decisions: list[ObserverDecision] = []
                 batch_memory_before = memory
                 pending_at_batch_start = pending_observer_steer
                 for tc in response.tool_calls:
@@ -1547,7 +1497,7 @@ class OrchestratorManager:
                         is_complete=flag_captured.is_set,
                     )
                     auto_flag_results = [message for _, message in auto_flag_events]
-                    truncated_result = _summarize_advice_result(tool_name, result_str, stdout_limit)
+                    truncated_result = _summarize_guidance_result(tool_name, result_str, stdout_limit)
                     truncated_result = _flag_capture.append_flag_candidate_summary(truncated_result, flag_candidates)
                     if auto_flag_results:
                         truncated_result += "\n\n[AUTO_FLAG_CAPTURE]\n" + "\n".join(auto_flag_results)
@@ -1672,65 +1622,12 @@ class OrchestratorManager:
                     if auto_flag_results and flag_captured.is_set():
                         break
 
-                    rule_decision = self.observer.observe_tool_call(
-                        mission=mission,
-                        tool_call_log=tool_call_log,
-                        memory=memory,
-                        captured_flags=captured_flags,
-                    ).normalised()
-                    observer_decision = self.observer_runtime.observe_tool_result(
-                        mission_id=mission_id,
-                        round_no=round_no,
-                        mission=mission,
-                        memory=memory,
-                        captured_flags=captured_flags,
-                        tool_call_log=tool_call_log,
-                        round_tool_call_log=round_tool_call_log,
-                        rule_decision=rule_decision,
-                    )
-                    if observer_decision.actionable:
-                        sig = observer_decision.signature()
-                        if sig not in observer_seen_signatures:
-                            observer_seen_signatures.add(sig)
-                            self._record_observer_decision(
-                                mission_id=mission_id,
-                                round_no=round_no,
-                                decision=observer_decision,
-                                phase="steer",
-                            )
-                            memory = self._apply_observer_memory_patch(
-                                mission_id=mission_id,
-                                round_no=round_no,
-                                memory=memory,
-                                decision=observer_decision,
-                            )
-                            pending_observer_steer = self._update_pending_observer_steer(
-                                pending_observer_steer,
-                                observer_decision,
-                            )
-                            observer_batch_decisions.append(observer_decision)
-
                     if flag_captured.is_set():
                         break
 
                 # Now safe to inject deferred guidance after ALL ToolMessages
                 if deferred_guidance:
                     messages.append(HumanMessage(content="\n".join(deferred_guidance)))
-
-                if observer_batch_decisions:
-                    severity_rank = {"none": 0, "info": 1, "warn": 2, "critical": 3}
-                    observer_decision = max(
-                        observer_batch_decisions,
-                        key=lambda d: severity_rank.get(d.severity, 0),
-                    )
-                    self._inject_observer_steer(
-                        mission_id=mission_id,
-                        round_no=round_no,
-                        messages=messages,
-                        pending_guidance=None,
-                        decision=observer_decision,
-                        phase="tool",
-                    )
 
                 if pending_at_batch_start:
                     override_decision = self.observer.audit_override(
@@ -1909,43 +1806,45 @@ class OrchestratorManager:
                 content=_compact_json(new_memory),
             )
 
-            round_observer_decision = self.observer_runtime.review_round(
-                mission_id=mission_id,
-                round_no=round_no,
-                mission=mission,
-                memory_before=memory,
-                memory_after=new_memory,
-                tool_call_log=tool_call_log,
-                round_tool_call_log=round_tool_call_log,
-                llm_call_count=llm_call_count,
-                stall_rounds=_stall_rounds,
-                captured_flags=captured_flags,
-            )
-            self._record_observer_decision(
-                mission_id=mission_id,
-                round_no=round_no,
-                decision=round_observer_decision,
-                phase="round",
-            )
-            new_memory = self._apply_observer_memory_patch(
-                mission_id=mission_id,
-                round_no=round_no,
-                memory=new_memory,
-                decision=round_observer_decision,
-            )
-            if round_observer_decision.actionable:
-                self._inject_observer_steer(
+            if observer_turns_since_review >= observer_review_interval:
+                round_observer_decision = self.observer_runtime.review_round(
                     mission_id=mission_id,
                     round_no=round_no,
-                    messages=None,
-                    pending_guidance=pending_observer_guidance,
+                    mission=mission,
+                    memory_before=memory,
+                    memory_after=new_memory,
+                    tool_call_log=tool_call_log,
+                    round_tool_call_log=round_tool_call_log,
+                    llm_call_count=llm_call_count,
+                    stall_rounds=_stall_rounds,
+                    captured_flags=captured_flags,
+                )
+                observer_turns_since_review = 0
+                self._record_observer_decision(
+                    mission_id=mission_id,
+                    round_no=round_no,
                     decision=round_observer_decision,
                     phase="round",
                 )
-                pending_observer_steer = self._update_pending_observer_steer(
-                    pending_observer_steer,
-                    round_observer_decision,
+                new_memory = self._apply_observer_memory_patch(
+                    mission_id=mission_id,
+                    round_no=round_no,
+                    memory=new_memory,
+                    decision=round_observer_decision,
                 )
+                if round_observer_decision.actionable:
+                    self._inject_observer_steer(
+                        mission_id=mission_id,
+                        round_no=round_no,
+                        messages=None,
+                        pending_guidance=pending_observer_guidance,
+                        decision=round_observer_decision,
+                        phase="round",
+                    )
+                    pending_observer_steer = self._update_pending_observer_steer(
+                        pending_observer_steer,
+                        round_observer_decision,
+                    )
 
             # Stall detection: semantic comparison instead of fragile hash
             if detect_stall(new_memory, memory):
