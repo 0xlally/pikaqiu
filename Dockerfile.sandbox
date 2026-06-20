@@ -59,6 +59,9 @@ RUN printf 'wireshark-common wireshark-common/install-setuid boolean true\n' | d
     php-mbstring \
     jq \
     file \
+    tesseract-ocr \
+    imagemagick \
+    chafa \
     vim-common \
     openssh-client \
     dnsutils \
@@ -285,7 +288,10 @@ RUN printf '%s\n' \
 
 # Tool initialization (offline-ready where practical).
 RUN nuclei -update-templates 2>/dev/null; exit 0
-RUN gunzip -k /usr/share/wordlists/rockyou.txt.gz 2>/dev/null || true
+RUN if [ ! -s /usr/share/wordlists/rockyou.txt ]; then \
+      gunzip -k /usr/share/wordlists/rockyou.txt.gz; \
+    fi \
+    && test -s /usr/share/wordlists/rockyou.txt
 RUN playwright install --with-deps chromium
 RUN netexec --help >/dev/null 2>&1; crackmapexec --help >/dev/null 2>&1; exit 0
 

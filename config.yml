@@ -7,7 +7,7 @@
 # priority: lower number = higher priority (auto-assigned to missions)
 model_pool:
   - id: main
-    base_url: "https://www.inroi.shop"
+    base_url: "https://www.heilovehei.com/v1"
     api_key: ""
     model: "gpt-5.5"
     thinking: false
@@ -30,9 +30,9 @@ model_pool:
 # A separate model for passive Observer/runtime guidance (optional).
 # Falls back to the primary model if left empty.
 observer:
-  base_url: ""
+  base_url: "https://www.heilovehei.com/v1"
   api_key: ""
-  model: ""
+  model: "gpt-5.5"
   thinking: false
   reasoning_effort: "xhigh"
   use_responses_api: true

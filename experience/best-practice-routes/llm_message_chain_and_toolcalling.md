@@ -1,6 +1,6 @@
 # LLM Message Chain And Toolcalling
 
-## Source: experience/okk/backend/docs/llms_how_to.md
+## Source: experience/best-practice-routes/backend/docs/llms_how_to.md
 
 ## General Requirements
 
@@ -218,7 +218,7 @@ if choice.Reasoning != nil && choice.Reasoning.Content != "" {
 }
 ```
 
-## Source: experience/okk/backend/docs/chain_ast.md
+## Source: experience/best-practice-routes/backend/docs/chain_ast.md
 
 ## Common Validation Rules
 
@@ -278,7 +278,7 @@ Kimi reasoning models require **reasoning_content in TextContent** before ToolCa
 8. **Last Pair Protection**: Never summarize the last (most recent) body pair in a section to preserve reasoning signatures
 9. **Multi-Provider Support**: When summarizing for current turn, preserve both ToolCall and TextContent reasoning for maximum compatibility
 
-## Source: experience/okk/backend/docs/chain_summary.md
+## Source: experience/best-practice-routes/backend/docs/chain_summary.md
 
 Key features of the enhanced algorithm:
 
@@ -323,7 +323,7 @@ The enhanced algorithm operates in these sequential phases:
 | Chain with already summarized content | Detected during processing and handled appropriately (idempotent) |
 | Multiple consecutive summarization calls | Idempotent - no changes after first summarization |
 
-## Source: experience/okk/backend/pkg/templates/prompts/toolcall_fixer.tmpl
+## Source: experience/best-practice-routes/backend/pkg/templates/prompts/toolcall_fixer.tmpl
 
 ## OPERATIONAL GUIDELINES
 
@@ -345,7 +345,7 @@ The enhanced algorithm operates in these sequential phases:
 <verification>Validate final JSON against schema requirements before submission</verification>
 </execution_steps>
 
-## Source: experience/okk/backend/pkg/templates/prompts/tool_call_id_detector.tmpl
+## Source: experience/best-practice-routes/backend/pkg/templates/prompts/tool_call_id_detector.tmpl
 
 <pattern_format>
 The pattern template uses the following format:

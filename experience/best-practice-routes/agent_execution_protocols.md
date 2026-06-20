@@ -1,6 +1,6 @@
 # Agent Execution Protocols
 
-## Source: experience/okk/backend/pkg/templates/prompts/assistant.tmpl
+## Source: experience/best-practice-routes/backend/pkg/templates/prompts/assistant.tmpl
 
 ## INTERACTION MODEL
 
@@ -66,7 +66,7 @@
    - Provide sufficient context for users to understand your findings
    - Offer recommendations based on security best practices
 
-## Source: experience/okk/backend/pkg/templates/prompts/primary_agent.tmpl
+## Source: experience/best-practice-routes/backend/pkg/templates/prompts/primary_agent.tmpl
 
 ## TOOL EXECUTION RULES
 
@@ -124,7 +124,7 @@
    - AVOID redundant actions and unnecessary tool usage
    - All work executes inside Docker container with {{.DockerImage}} image
 
-## Source: experience/okk/backend/pkg/templates/prompts/pentester.tmpl
+## Source: experience/best-practice-routes/backend/pkg/templates/prompts/pentester.tmpl
 
 ## COMMAND EXECUTION RULES
 
@@ -185,7 +185,7 @@ If you see hanging or port conflicts: `pkill -f msfconsole`, verify with `ps aux
 </failure_handling>
 </tool_management_protocol>
 
-## Source: experience/okk/backend/pkg/templates/prompts/coder.tmpl
+## Source: experience/best-practice-routes/backend/pkg/templates/prompts/coder.tmpl
 
 ## KNOWLEDGE MANAGEMENT
 
@@ -219,7 +219,7 @@ If you see hanging or port conflicts: `pkill -f msfconsole`, verify with `ps aux
 <management>Create dedicated working directories for file operations</management>
 </terminal_protocol>
 
-## Source: experience/okk/backend/pkg/templates/prompts/adviser.tmpl
+## Source: experience/best-practice-routes/backend/pkg/templates/prompts/adviser.tmpl
 
 ## BACKEND TERMINAL EXECUTION MECHANICS
 
@@ -321,7 +321,7 @@ When YOU lack confident understanding of optimal solution:
 - Indicate knowledge gaps requiring domain-specific expertise
 </research_recommendation>
 
-## Source: experience/okk/backend/pkg/templates/prompts/reflector.tmpl
+## Source: experience/best-practice-routes/backend/pkg/templates/prompts/reflector.tmpl
 
 ## SYSTEM ARCHITECTURE & ROLE
 

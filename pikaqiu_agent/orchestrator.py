@@ -14,7 +14,7 @@ from pikaqiu_agent.config import AgentSettings, MAX_AGENT_SLOTS
 from pikaqiu_agent import flag_capture as _flag_capture
 from pikaqiu_agent import experience as _experience
 from pikaqiu_agent.knowledge import KnowledgeIndexer
-from pikaqiu_agent.llm_client import LLMClient, format_llm_error
+from pikaqiu_agent.llm_client import LLMClient, format_llm_error, is_non_retryable_llm_error
 from pikaqiu_agent.memory import normalize_memory_enhanced, detect_stall, score_importance, retrieve_forgotten_context
 from pikaqiu_agent.observer import ObserverAgent, ObserverDecision, should_inject_decision
 from pikaqiu_agent.observer_runtime import ObserverRuntime
@@ -712,6 +712,20 @@ class OrchestratorManager:
             except Exception as e:
                 pool.shutdown(wait=False)
                 detail = format_llm_error(e, model=str(model_name), messages=messages)
+                if is_non_retryable_llm_error(e):
+                    self.store.add_event(
+                        mission_id=mission_id,
+                        round_no=round_no,
+                        event_type="error",
+                        title="LLM配置/认证失败",
+                        content=(
+                            "模型服务返回不可重试的认证或权限错误，请检查 API key、账号状态、"
+                            "base_url 和模型权限。\n\n"
+                            f"{detail}"
+                        )[:4000],
+                    )
+                    logger.error("[orchestrator] non-retryable LLM error: %s", detail)
+                    return None, None
                 err_msg = f"LLM错误 第{attempt}/{max_retries}次重试 | {detail}"
                 logger.warning("[orchestrator] LLM error attempt %d/%d: %s", attempt, max_retries, detail)
 
@@ -752,6 +766,16 @@ class OrchestratorManager:
                 except Exception as e:
                     pool.shutdown(wait=False)
                     detail = format_llm_error(e, model=fallback_name, messages=messages)
+                    if is_non_retryable_llm_error(e):
+                        self.store.add_event(
+                            mission_id=mission_id,
+                            round_no=round_no,
+                            event_type="error",
+                            title=f"备用模型认证失败: {fallback_name}",
+                            content=detail[:4000],
+                        )
+                        logger.error("[orchestrator] fallback non-retryable LLM error: %s", detail)
+                        break
                     logger.warning("[orchestrator] fallback model attempt %d/3: %s", attempt, detail)
                     time.sleep(5)
 

@@ -12,7 +12,7 @@ class SharedMemoryExperienceTests(unittest.TestCase):
     def test_experience_search_includes_manual_and_distilled_sources(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            manual = root / "experience" / "rules"
+            manual = root / "experience" / "route-rules"
             distilled = root / ".pikaqiu_agent" / "experience_distilled"
             manual.mkdir(parents=True)
             distilled.mkdir(parents=True)
@@ -32,9 +32,9 @@ class SharedMemoryExperienceTests(unittest.TestCase):
             rows = experience.search_experience(root, "upload polyglot parser", limit=5)
 
             by_path = {row["path"]: row for row in rows}
-            self.assertIn("experience/rules/upload.md", by_path)
+            self.assertIn("experience/route-rules/upload.md", by_path)
             self.assertIn(".pikaqiu_agent/experience_distilled/mission-upload.md", by_path)
-            self.assertFalse(by_path["experience/rules/upload.md"]["distilled"])
+            self.assertFalse(by_path["experience/route-rules/upload.md"]["distilled"])
             self.assertTrue(by_path[".pikaqiu_agent/experience_distilled/mission-upload.md"]["distilled"])
             self.assertEqual(
                 by_path[".pikaqiu_agent/experience_distilled/mission-upload.md"]["source_mission_id"],
@@ -43,7 +43,7 @@ class SharedMemoryExperienceTests(unittest.TestCase):
 
             hints = experience.format_experience_hints(rows, limit=5)
             self.assertIn("## Distilled Experience Hints", hints)
-            self.assertIn("[manual] experience/rules/upload.md", hints)
+            self.assertIn("[manual] experience/route-rules/upload.md", hints)
             self.assertIn("[distilled] .pikaqiu_agent/experience_distilled/mission-upload.md", hints)
             self.assertIn("source_mission_id=m-123", hints)
 

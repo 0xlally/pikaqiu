@@ -1,6 +1,6 @@
 # Observability And Runtime
 
-## Source: experience/okk/backend/docs/flow_execution.md
+## Source: experience/best-practice-routes/backend/docs/flow_execution.md
 
 ## Advanced Agent Supervision
 
@@ -109,7 +109,7 @@ Agents are instructed to expect tool responses containing both:
 - Agents can explicitly request advice via `advice` tool
 - Automatic mentor reviews occur at configured thresholds (not revealed to agents)
 
-## Source: experience/okk/backend/docs/docker.md
+## Source: experience/best-practice-routes/backend/docs/docker.md
 
 ## Security and Isolation
 
@@ -180,7 +180,7 @@ hostConfig := &container.HostConfig{
 - Use the provided logging and observability infrastructure
 - Follow the established naming conventions for containers
 
-## Source: experience/okk/backend/docs/observability.md
+## Source: experience/best-practice-routes/backend/docs/observability.md
 
 ### Context-Aware Logging
 
@@ -314,7 +314,7 @@ requestCounter.Add(ctx, 1,
 )
 ```
 
-## Source: experience/okk/backend/docs/analytics_api.md
+## Source: experience/best-practice-routes/backend/docs/analytics_api.md
 
 ## Understanding Metric Differences
 
@@ -352,7 +352,7 @@ Why different?
 - Manager wants to see system utilization -> Use **Toolcalls Stats**
 - SLA monitoring -> Use **Execution Stats**
 
-## Source: experience/okk/backend/docs/installer/processor-logic-implementation.md
+## Source: experience/best-practice-routes/backend/docs/installer/processor-logic-implementation.md
 
 ## Key Principles
 
@@ -374,7 +374,7 @@ Why different?
 - Partial installation can be completed
 - Remove/Purge operations for complete cleanup
 
-## Source: experience/okk/backend/docs/installer/checker.md
+## Source: experience/best-practice-routes/backend/docs/installer/checker.md
 
 ### Core Design Principles
 

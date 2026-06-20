@@ -37,13 +37,13 @@ OBSERVER_RUNTIME_TOOLS = {
 }
 MAX_OBSERVER_STEPS = 4
 PREFERRED_EXPERIENCE_REFS = [
-    "experience/okk/pentest_methodology.md",
-    "experience/okk/agent_execution_protocols.md",
-    "experience/okk/observability_and_runtime.md",
-    "experience/rules/mistakes.md",
-    "experience/rules/hunting.md",
-    "experience/rules/techniques.md",
-    "experience/rules/waf-bypass-protocol.md",
+    "experience/best-practice-routes/pentest_methodology.md",
+    "experience/best-practice-routes/agent_execution_protocols.md",
+    "experience/best-practice-routes/observability_and_runtime.md",
+    "experience/route-rules/mistakes.md",
+    "experience/route-rules/hunting.md",
+    "experience/route-rules/techniques.md",
+    "experience/route-rules/waf-bypass-protocol.md",
 ]
 
 
@@ -320,8 +320,8 @@ class ObserverRuntime:
             "You decide when to use load_experience, which experience file matters, whether to search/load skills "
             "for your own judgement, and what route guidance to give.\n\n"
             "/experience is the human best-practice route library, not a generic payload dump. "
-            "Use experience/okk for agent execution protocols, supervision, context management, and pentest "
-            "methodology. Use experience/rules for common mistakes, hunting route choices, proven techniques, "
+            "Use experience/best-practice-routes for agent execution protocols, supervision, context management, and pentest "
+            "methodology. Use experience/route-rules for common mistakes, hunting route choices, proven techniques, "
             "WAF bypass process, never-submit checks, and chain-building judgement. Do not hard-code a scene-to-file "
             "mapping; search or load the files that match the current evidence.\n\n"
             "Low-noise policy: every round review must end with exactly one verdict. "

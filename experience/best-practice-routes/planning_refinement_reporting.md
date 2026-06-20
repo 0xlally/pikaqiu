@@ -1,6 +1,6 @@
 # Planning, Refinement, Reporting
 
-## Source: experience/okk/backend/pkg/templates/prompts/generator.tmpl
+## Source: experience/best-practice-routes/backend/pkg/templates/prompts/generator.tmpl
 
 ## CORE RESPONSIBILITY
 
@@ -84,7 +84,7 @@ Each subtask MUST:
    - Consider both automated tools and manual verification
    - Incorporate proper documentation throughout
 
-## Source: experience/okk/backend/pkg/templates/prompts/refiner.tmpl
+## Source: experience/best-practice-routes/backend/pkg/templates/prompts/refiner.tmpl
 
 ## OPTIMIZATION PRINCIPLES
 
@@ -185,7 +185,7 @@ Instead of regenerating all subtasks, submit ONLY the changes needed using the "
 **Task Completion:**
 To signal that the task is complete, remove all remaining planned subtasks.
 
-## Source: experience/okk/backend/pkg/templates/prompts/reporter.tmpl
+## Source: experience/best-practice-routes/backend/pkg/templates/prompts/reporter.tmpl
 
 ## EVALUATION METHODOLOGY
 
@@ -226,7 +226,7 @@ Your final report MUST:
 4. **Evidence-Based Assessment** - Base your judgment on concrete evidence in the execution logs
 5. **Objective Identification of Gaps** - Clearly identify what remains unfinished or problematic
 
-## Source: experience/okk/backend/pkg/templates/prompts/question_execution_monitor.tmpl
+## Source: experience/best-practice-routes/backend/pkg/templates/prompts/question_execution_monitor.tmpl
 
 Based on my execution history above, I need your expert analysis on the following critical questions:
 
@@ -247,7 +247,7 @@ When analyzing terminal commands, check for these common mistakes:
 
 Please provide specific, concrete recommendations based on what you see in my execution history. I need clear guidance on whether to continue with my current approach, pivot to a different strategy, or conclude my work.
 
-## Source: experience/okk/backend/pkg/templates/prompts/question_task_planner.tmpl
+## Source: experience/best-practice-routes/backend/pkg/templates/prompts/question_task_planner.tmpl
 
 The plan should:
 - Include specific, actionable steps I need to take

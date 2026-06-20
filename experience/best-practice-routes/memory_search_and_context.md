@@ -1,6 +1,6 @@
 # Memory, Search, And Context
 
-## Source: experience/okk/backend/pkg/templates/prompts/memorist.tmpl
+## Source: experience/best-practice-routes/backend/pkg/templates/prompts/memorist.tmpl
 
 ## KNOWLEDGE MANAGEMENT
 
@@ -105,7 +105,7 @@ Vector database provides the "library" of reusable solutions.
 </integration_with_memory_protocol>
 </graphiti_search_protocol>
 
-## Source: experience/okk/backend/pkg/templates/prompts/searcher.tmpl
+## Source: experience/best-practice-routes/backend/pkg/templates/prompts/searcher.tmpl
 
 ## CORE CAPABILITIES
 
@@ -170,7 +170,7 @@ Vector database provides the "library" of reusable solutions.
    - Structure information by relevance and applicability
    - Include critical context without unnecessary details
 
-## Source: experience/okk/backend/pkg/templates/prompts/enricher.tmpl
+## Source: experience/best-practice-routes/backend/pkg/templates/prompts/enricher.tmpl
 
 ## ENRICHMENT PROTOCOL
 
@@ -227,7 +227,7 @@ Follow this prioritized approach to gather SUPPLEMENTARY information:
    - ONLY gather information that will materially help adviser provide better answer
 </retrieval_approach>
 
-## Source: experience/okk/backend/pkg/templates/prompts/full_execution_context.tmpl
+## Source: experience/best-practice-routes/backend/pkg/templates/prompts/full_execution_context.tmpl
 
 REQUIREMENTS:
 1. Create a cohesive narrative focused on the relationship between <global_task> and <current_subtask>
@@ -250,7 +250,7 @@ FORMAT:
 - Use concise, neutral language that describes status objectively
 - Structure information to clearly show relationships between tasks and subtasks
 
-## Source: experience/okk/backend/pkg/templates/prompts/summarizer.tmpl
+## Source: experience/best-practice-routes/backend/pkg/templates/prompts/summarizer.tmpl
 
 ## CORE MISSION
 

@@ -1,6 +1,6 @@
 # Prompt Engineering
 
-## Source: experience/okk/backend/docs/prompt_engineering_openai.md
+## Source: experience/best-practice-routes/backend/docs/prompt_engineering_openai.md
 
 ## Core Principles of Effective Prompt Engineering
 
@@ -75,7 +75,7 @@
 - Use examples to demonstrate desired formatting
 - Specify any required sections, headers, or organizational elements
 
-## Source: experience/okk/backend/docs/prompt_engineering_pentagi.md
+## Source: experience/best-practice-routes/backend/docs/prompt_engineering_pentagi.md
 
 ## Understanding Cognitive Aspects of Language Models
 

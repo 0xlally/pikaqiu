@@ -7,13 +7,13 @@ from typing import Any
 
 
 PREFERRED_EXPERIENCE_REFS = {
-    "experience/okk/pentest_methodology.md",
-    "experience/okk/agent_execution_protocols.md",
-    "experience/okk/observability_and_runtime.md",
-    "experience/rules/mistakes.md",
-    "experience/rules/hunting.md",
-    "experience/rules/techniques.md",
-    "experience/rules/waf-bypass-protocol.md",
+    "experience/best-practice-routes/pentest_methodology.md",
+    "experience/best-practice-routes/agent_execution_protocols.md",
+    "experience/best-practice-routes/observability_and_runtime.md",
+    "experience/route-rules/mistakes.md",
+    "experience/route-rules/hunting.md",
+    "experience/route-rules/techniques.md",
+    "experience/route-rules/waf-bypass-protocol.md",
 }
 
 

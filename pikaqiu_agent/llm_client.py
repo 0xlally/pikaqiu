@@ -76,6 +76,33 @@ def format_llm_error(
     return " | ".join(parts)
 
 
+def is_non_retryable_llm_error(e: Exception) -> bool:
+    """Return True for credential/config errors that retries cannot fix."""
+    status = getattr(e, "status_code", None)
+    if status in (401, 403):
+        return True
+
+    body = getattr(e, "body", None)
+    body_text = ""
+    if isinstance(body, dict):
+        body_text = json.dumps(body, ensure_ascii=False)
+
+    text = f"{type(e).__name__} {e} {body_text}".lower()
+    return any(
+        marker in text
+        for marker in (
+            "authenticationerror",
+            "permissiondeniederror",
+            "invalid_api_key",
+            "incorrect api key",
+            "user_inactive",
+            "account is not active",
+            "unauthorized",
+            "forbidden",
+        )
+    )
+
+
 @dataclass(frozen=True)
 class LLMResult:
     raw_text: str
