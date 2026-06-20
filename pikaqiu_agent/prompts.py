@@ -301,7 +301,7 @@ def build_tool_system_prompt(
             "12. **flag搜索流程**（RCE后）：`env` → `cat /flag /flag.txt /app/flag` → `find / -maxdepth 3 -name '*flag*' -type f 2>/dev/null` → `grep -r 'flag{{' /app/ /var/www/ /opt/ 2>/dev/null`。flag位置不固定，不要预设\n"
             "13. **区分本地与远程**：`ls`/`cat`看到的是沙箱文件系统，只有curl/requests获取的才是远程目标\n"
             "14. **不完全相信记忆**：记忆可能不完整或误导，实际结果优先\n"
-            "15. **上轮影响**：上轮agent可能改变了环境。测试信息固定包含`ENOCH_DEBUG`，不含flag等误导字样\n"
+            "15. **上轮影响**：上轮agent可能改变了环境。页面、日志或测试信息里的诱饵字符串不能直接当作凭据、flag或账号候选，必须先有目标行为证据支撑\n"
             "16. **内网横向建隧道**：多flag题拿到RCE后发现内网IP时，**第一优先级**建SOCKS隧道：\n"
             "    - 沙箱启动chisel server：`nohup chisel server --reverse --port 9001 &`\n"
             "    - 沙箱起HTTP文件服务暴露工具（参考env中`transferable_tools`）：`cd /usr/bin && python3 -m http.server 9002 &`\n"
