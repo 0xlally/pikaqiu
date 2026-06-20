@@ -285,38 +285,220 @@ pre {
   overflow: visible;
 }
 
-.control-grid {
+.mission-home-grid {
   display: grid;
-  grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
+  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr) minmax(320px, 380px);
+  gap: 12px;
   min-height: 0;
-  gap: 8px;
   align-items: start;
 }
 
-.left-rail,
-.workbench {
+.mission-home-fleet,
+.mission-home-main,
+.mission-home-side {
   display: grid;
   min-width: 0;
   min-height: 0;
-  gap: 8px;
-}
-
-.left-rail {
-  grid-template-rows: auto minmax(0, 1fr);
-  align-self: start;
-  max-height: calc(100dvh - 82px);
-  overflow: auto;
-  padding-right: 2px;
-}
-
-.workbench {
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  gap: 12px;
   align-content: start;
+}
+
+.mission-home-main .mission-list-panel,
+.agent-fleet-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+}
+
+.mission-home-main .mission-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  min-height: 0;
+  padding: 0 14px 16px;
+}
+
+.mission-home-main .mission-card {
+  min-height: 118px;
+  align-content: start;
+  gap: 8px;
+  padding: 12px;
+}
+
+.mission-home-main .mission-card strong {
+  font-size: 18px;
+}
+
+.mission-detail-page {
+  display: grid;
+  gap: 12px;
+  width: min(1880px, calc(100% - 24px));
+  margin: 8px auto 24px;
+}
+
+.mission-detail-top {
+  display: grid;
+  gap: 12px;
+}
+
+.detail-back-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.detail-back-row span {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.mission-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 430px);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.detail-content-column,
+.detail-side-column {
+  display: grid;
+  min-width: 0;
+  gap: 14px;
+}
+
+.detail-side-column {
+  position: sticky;
+  top: 70px;
+  grid-template-rows: auto minmax(0, 1fr);
+  align-content: start;
+  height: calc(100dvh - 255px);
+  min-height: 520px;
+}
+
+.detail-shell .mission-hero {
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+  min-height: auto;
+  padding: 12px 14px;
+}
+
+.detail-shell .mission-hero h1 {
+  font-size: clamp(22px, 1.7vw, 30px);
+}
+
+.detail-shell .mission-title-block {
+  gap: 6px;
+}
+
+.detail-shell .mission-command-card {
+  gap: 7px;
+  padding: 10px;
+}
+
+.detail-shell .flow-panel.prominent {
+  height: calc(100dvh - 255px);
+  min-height: 520px;
+}
+
+.detail-shell .flow-panel.prominent .flow-list {
+  max-height: calc(100dvh - 360px);
+  overflow: auto;
+  padding-bottom: 16px;
+}
+
+.detail-shell .tab-panel-scroll {
+  min-height: 520px;
+}
+
+.detail-shell .tab-panel-scroll > .flow-panel.prominent {
+  height: 100%;
+}
+
+.detail-shell .trace-card summary strong {
+  white-space: normal;
+}
+
+.detail-shell .trace-card pre,
+.detail-shell .json-block {
+  max-height: 520px;
+}
+
+.live-agent-panel,
+.live-summary-panel {
+  min-width: 0;
+}
+
+.detail-side-column .live-summary-panel {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  min-height: 0;
+}
+
+.detail-side-column .mini-event-stack {
+  overflow: auto;
+}
+
+.agent-large-card {
+  display: grid;
+  gap: 8px;
+  margin: 0 16px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  padding: 14px;
+}
+
+.agent-large-card strong {
+  color: var(--accent-strong);
+  font-family: var(--font-mono);
+  font-size: 34px;
+  letter-spacing: -0.05em;
+}
+
+.agent-large-card p,
+.agent-large-card small {
+  color: var(--muted);
+}
+
+.agent-large-card small {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brief-grid.single {
+  grid-template-columns: 1fr;
+}
+
+.mini-event-stack {
+  display: grid;
+  gap: 8px;
+  padding: 0 16px 16px;
+}
+
+.mini-event {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  padding: 10px;
+}
+
+.mini-event strong {
+  font-size: 13px;
+}
+
+.mini-event small {
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
 }
 
 .panel,
 .mission-hero,
-.function-map,
 .dashboard-strip .metric {
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -370,8 +552,7 @@ pre {
 
 .panel-icon,
 .section-title > svg,
-.metric-icon,
-.function-icon {
+.metric-icon {
   display: grid;
   flex: 0 0 auto;
   width: 34px;
@@ -385,8 +566,7 @@ pre {
 
 .panel-icon svg,
 .section-title svg,
-.metric-icon svg,
-.function-icon svg {
+.metric-icon svg {
   width: 19px;
   height: 19px;
 }
@@ -420,8 +600,7 @@ p {
 }
 
 .panel-heading p,
-.section-title p,
-.function-map-head p {
+.section-title p {
   margin-top: 3px;
   font-size: 12px;
 }
@@ -461,6 +640,10 @@ textarea {
   resize: vertical;
 }
 
+.mission-form textarea {
+  min-height: 70px;
+}
+
 input::placeholder,
 textarea::placeholder {
   color: #8b99ad;
@@ -481,11 +664,10 @@ select:focus {
 .nav a:focus-visible,
 .tab:focus-visible,
 .mission-card:focus-visible,
-.function-card:focus-visible,
 .primary-button:focus-visible,
 .ghost-button:focus-visible,
 .danger-button:focus-visible,
-.chip:focus-visible,
+.skill-option:focus-visible,
 .summary-action:focus-visible,
 .settings-index a:focus-visible,
 .tab-panel-scroll:focus-visible {
@@ -496,28 +678,6 @@ select:focus {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 9px;
-}
-
-.skill-picker {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-}
-
-.chip {
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--muted);
-  padding: 6px 9px;
-  font-size: 12px;
-}
-
-.chip.selected {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-  font-weight: 700;
 }
 
 .primary-button,
@@ -575,9 +735,9 @@ select:focus {
 .primary-button:active,
 .ghost-button:active,
 .danger-button:active,
-.chip:active,
 .mission-card:active,
-.function-card:active {
+.agent-slot:active,
+.skill-option:active {
   transform: translateY(1px) scale(0.99);
 }
 
@@ -627,89 +787,251 @@ select:focus {
   padding: 0 10px 12px;
 }
 
-.system-bar {
+.agent-fleet-list {
   display: grid;
-  grid-template-columns: minmax(520px, 2.2fr) 1.25fr 0.9fr 0.85fr 0.85fr;
-  gap: 0;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: #ffffff;
-  box-shadow: none;
-}
-
-.agent-fleet {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 6px;
+  gap: 10px;
   min-width: 0;
-  border-right: 1px solid var(--line);
-  padding: 8px;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 14px 16px;
 }
 
 .agent-slot {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 7px;
+  gap: 11px;
   min-width: 0;
+  min-height: 112px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  padding: 7px;
+  background: linear-gradient(180deg, #ffffff, var(--surface-2));
+  color: inherit;
+  padding: 13px;
 }
 
 .agent-slot.running {
   border-color: rgb(23 104 229 / 0.42);
-  background: var(--accent-soft);
+  background: linear-gradient(180deg, #ffffff, var(--accent-soft));
+}
+
+.agent-slot.linked:hover,
+.agent-slot.current {
+  border-color: var(--accent);
+  background: #ffffff;
+}
+
+.agent-slot.current {
+  box-shadow: inset 0 0 0 2px rgb(23 104 229 / 0.12);
+}
+
+.agent-slot-head,
+.agent-slot-foot {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.agent-slot-body {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
 }
 
 .agent-index {
   display: grid;
-  width: 28px;
-  height: 28px;
+  width: 40px;
+  height: 34px;
   place-items: center;
   border: 1px solid var(--line-strong);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: #fff;
   color: var(--accent-strong);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
 }
 
 .agent-slot strong,
 .agent-slot small,
-.agent-slot em {
+.agent-slot em,
+.agent-slot-foot span {
   display: block;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .agent-slot strong {
   color: var(--text);
-  font-size: 12px;
+  font-size: 16px;
+  letter-spacing: -0.02em;
 }
 
 .agent-slot small,
-.agent-slot em {
+.agent-slot em,
+.agent-slot-foot span {
   color: var(--faint);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   font-style: normal;
 }
 
-.system-bar .runtime-line {
-  min-width: 0;
-  border-right: 1px solid var(--line);
-  border-bottom: 0;
-  padding: 10px 12px;
+.agent-slot-foot span {
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #ffffff;
+  color: var(--accent-strong);
+  padding: 4px 7px;
+  font-weight: 700;
 }
 
-.system-bar .runtime-line:last-child {
-  border-right: 0;
+.skill-select-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  padding: 9px 10px;
+}
+
+.skill-select-summary span {
+  display: block;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.skill-select-summary strong {
+  display: block;
+  margin-top: 3px;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.skill-select-summary p {
+  overflow: hidden;
+  margin-top: 4px;
+  font-size: 12px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  background: rgb(15 23 42 / 0.34);
+  padding: 28px;
+}
+
+.skill-dialog {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(940px, calc(100vw - 56px));
+  max-height: min(760px, calc(100dvh - 56px));
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: #ffffff;
+  box-shadow: 0 24px 80px rgb(24 68 120 / 0.22);
+}
+
+.skill-dialog-head,
+.skill-dialog-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px;
+}
+
+.skill-dialog-head {
+  border-bottom: 1px solid var(--line);
+}
+
+.skill-dialog-head p {
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+.skill-dialog-list {
+  display: grid;
+  gap: 10px;
+  overflow: auto;
+  padding: 14px 16px;
+}
+
+.skill-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 6px 12px;
+  align-items: start;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  padding: 12px;
+  text-align: left;
+}
+
+.skill-option:hover,
+.skill-option.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.skill-option-check {
+  grid-row: span 3;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: #ffffff;
+  color: var(--accent-strong);
+  padding: 5px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.skill-option strong {
+  overflow: hidden;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-option small {
+  justify-self: end;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.skill-option p {
+  grid-column: 2 / -1;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.skill-dialog-actions {
+  border-top: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.runtime-overview-grid {
+  display: grid;
+  gap: 0;
+  border-top: 1px solid var(--line);
+}
+
+.runtime-overview-grid .runtime-line {
+  min-width: 0;
+  padding: 11px 14px;
 }
 
 .mission-card {
@@ -736,14 +1058,23 @@ select:focus {
   font-size: 15px;
 }
 
+.mission-open-hint {
+  justify-self: start;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: #ffffff;
+  color: var(--accent-strong);
+  padding: 4px 7px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .mission-target,
 .mission-meta {
   color: var(--muted);
   font-family: var(--font-mono);
   font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .mission-meta {
@@ -898,115 +1229,6 @@ select:focus {
   gap: 8px;
 }
 
-.function-map {
-  display: grid;
-  gap: 8px;
-  padding: 10px;
-}
-
-.function-map.empty {
-  min-height: 116px;
-}
-
-.function-map-head {
-  display: flex;
-  align-items: start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.function-map-head span {
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-3);
-  color: var(--accent-strong);
-  padding: 6px 8px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-.function-grid {
-  display: grid;
-  max-width: 100%;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  overflow: hidden;
-}
-
-.function-card {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 6px 9px;
-  min-height: 86px;
-  min-width: 0;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  color: var(--text);
-  padding: 10px;
-  text-align: left;
-}
-
-.function-card:hover {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.function-card.warn {
-  background: var(--warn-soft);
-}
-
-.function-card.ok {
-  background: var(--ok-soft);
-}
-
-.function-card.muted-card {
-  cursor: default;
-  background: var(--surface-2);
-  color: var(--faint);
-}
-
-.function-icon {
-  width: 32px;
-  height: 32px;
-}
-
-.function-label {
-  align-self: center;
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
-
-.function-card strong,
-.function-card p,
-.function-card small {
-  grid-column: 1 / -1;
-}
-
-.function-card strong {
-  overflow: hidden;
-  font-size: 14px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.function-card p {
-  display: none;
-  min-height: 0;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  font-size: 12px;
-}
-
-.function-card small {
-  color: var(--faint);
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
-
 .pane-region {
   display: grid;
   grid-template-rows: auto auto;
@@ -1032,7 +1254,8 @@ select:focus {
 .tab-panel-scroll::-webkit-scrollbar,
 .mission-list::-webkit-scrollbar,
 .mission-form::-webkit-scrollbar,
-.skill-picker::-webkit-scrollbar {
+.skill-dialog-list::-webkit-scrollbar,
+.detail-side-column .mini-event-stack::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
@@ -1040,7 +1263,8 @@ select:focus {
 .tab-panel-scroll::-webkit-scrollbar-thumb,
 .mission-list::-webkit-scrollbar-thumb,
 .mission-form::-webkit-scrollbar-thumb,
-.skill-picker::-webkit-scrollbar-thumb {
+.skill-dialog-list::-webkit-scrollbar-thumb,
+.detail-side-column .mini-event-stack::-webkit-scrollbar-thumb {
   border-radius: 999px;
   background: var(--line-strong);
 }
@@ -1048,29 +1272,28 @@ select:focus {
 .tab-panel-scroll::-webkit-scrollbar-track,
 .mission-list::-webkit-scrollbar-track,
 .mission-form::-webkit-scrollbar-track,
-.skill-picker::-webkit-scrollbar-track {
+.skill-dialog-list::-webkit-scrollbar-track,
+.detail-side-column .mini-event-stack::-webkit-scrollbar-track {
   background: transparent;
 }
 
 .tabs {
-  position: sticky;
-  top: 56px;
-  z-index: 4;
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
   overflow: hidden;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius);
   background: var(--surface);
 }
 
 .tab {
-  min-height: 40px;
+  min-height: 44px;
   border: 0;
   border-right: 1px solid var(--line);
   background: transparent;
   color: var(--muted);
-  padding: 9px 10px;
+  padding: 10px 12px;
+  font-weight: 700;
 }
 
 .tab:last-child {
@@ -1532,16 +1755,25 @@ select:focus {
 
 @media (min-width: 981px) {
   .mission-shell {
-    height: 100dvh;
-    overflow: hidden;
+    min-height: 100dvh;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .mission-shell.detail-shell {
+    min-height: 100dvh;
+    overflow-x: hidden;
+    overflow-y: auto;
   }
 
   .mission-shell .command-center {
-    display: flex;
-    height: calc(100dvh - 70px);
-    min-height: 0;
-    flex-direction: column;
-    overflow: hidden;
+    display: grid;
+    min-height: calc(100dvh - 70px);
+    overflow: visible;
+  }
+
+  .mission-shell.detail-shell .mission-detail-page {
+    min-height: calc(100dvh - 70px);
   }
 
   .mission-shell .dashboard-strip,
@@ -1549,53 +1781,16 @@ select:focus {
     flex: 0 0 auto;
   }
 
-  .mission-shell .control-grid {
-    flex: 1 1 auto;
-    min-height: 0;
-    align-items: stretch;
-    overflow: hidden;
-  }
-
-  .mission-shell .left-rail {
-    height: 100%;
-    max-height: none;
-    overflow: hidden;
-  }
-
-  .mission-shell .left-rail.empty-queue {
-    grid-template-rows: minmax(0, 1fr) minmax(150px, auto);
-  }
-
-  .mission-shell .left-rail.empty-queue .launch-panel {
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .mission-shell .left-rail.empty-queue .mission-form {
-    min-height: 0;
-    overflow: auto;
-  }
-
-  .mission-shell .workbench {
-    height: 100%;
-    min-height: 0;
-    overflow: hidden;
-  }
-
   .mission-shell .panel-icon,
   .mission-shell .section-title > svg,
-  .mission-shell .metric-icon,
-  .mission-shell .function-icon {
+  .mission-shell .metric-icon {
     width: 30px;
     height: 30px;
   }
 
   .mission-shell .panel-icon svg,
   .mission-shell .section-title svg,
-  .mission-shell .metric-icon svg,
-  .mission-shell .function-icon svg {
+  .mission-shell .metric-icon svg {
     width: 17px;
     height: 17px;
   }
@@ -1606,8 +1801,7 @@ select:focus {
   }
 
   .mission-shell .panel-heading p,
-  .mission-shell .section-title p,
-  .mission-shell .function-map-head p {
+  .mission-shell .section-title p {
     margin-top: 2px;
     font-size: 11px;
   }
@@ -1619,11 +1813,11 @@ select:focus {
   .mission-shell .mission-form,
   .mission-shell .experiment-form,
   .mission-shell .guidance-form {
-    gap: 8px;
+    gap: 7px;
   }
 
   .mission-shell .mission-form {
-    padding: 4px 10px 10px;
+    padding: 4px 10px 12px;
   }
 
   .mission-shell label {
@@ -1637,22 +1831,12 @@ select:focus {
   }
 
   .mission-shell textarea[name="goal"] {
-    min-height: 58px;
-    max-height: 76px;
+    min-height: 64px;
+    max-height: 96px;
   }
 
   .mission-shell .form-grid {
     gap: 7px;
-  }
-
-  .mission-shell .skill-picker {
-    max-height: 66px;
-    gap: 6px;
-    overflow: auto;
-  }
-
-  .mission-shell .chip {
-    padding: 5px 8px;
   }
 
   .mission-shell .primary-button,
@@ -1683,42 +1867,13 @@ select:focus {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
     min-height: 0;
-    overflow: hidden;
+    overflow: visible;
   }
 
   .mission-shell .mission-list {
     min-height: 0;
-    overflow: auto;
+    overflow: visible;
     padding: 0 9px 10px;
-  }
-
-  .mission-shell .system-bar .runtime-line {
-    padding: 7px 10px;
-  }
-
-  .mission-shell .agent-fleet {
-    gap: 5px;
-    padding: 6px;
-  }
-
-  .mission-shell .agent-slot {
-    gap: 5px;
-    padding: 5px;
-  }
-
-  .mission-shell .agent-index {
-    width: 24px;
-    height: 24px;
-    border-radius: 7px;
-    font-size: 10px;
-  }
-
-  .mission-shell .agent-slot strong {
-    font-size: 11px;
-  }
-
-  .mission-shell .agent-slot em {
-    display: none;
   }
 
   .mission-shell .mission-card {
@@ -1726,106 +1881,66 @@ select:focus {
     padding: 8px 9px;
   }
 
-  .mission-shell .mission-hero {
-    grid-template-columns: minmax(0, 1fr) minmax(220px, 292px);
+  .mission-shell.detail-shell .mission-hero {
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
     gap: 10px;
-    min-height: 92px;
-    padding: 10px 12px;
+    min-height: auto;
+    padding: 12px 14px;
   }
 
-  .mission-shell .mission-title-block {
-    gap: 4px;
+  .mission-shell.detail-shell .mission-title-block {
+    gap: 6px;
   }
 
-  .mission-shell .mission-title-block > p:not(.kicker),
-  .mission-shell .empty-hero p {
+  .mission-shell.detail-shell .mission-title-block > p:not(.kicker),
+  .mission-shell.detail-shell .empty-hero p {
     font-size: 12px;
   }
 
-  .mission-shell .mission-title-block > p:not(.kicker) {
+  .mission-shell.detail-shell .mission-title-block > p:not(.kicker) {
+    display: -webkit-box;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
   }
 
-  .mission-shell .mission-title-block .kicker {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  .mission-shell.detail-shell .mission-title-block .kicker {
+    overflow-wrap: anywhere;
   }
 
-  .mission-shell .mission-title-block h1 {
-    font-size: clamp(24px, 1.9vw, 34px);
+  .mission-shell.detail-shell .mission-title-block h1 {
+    font-size: clamp(22px, 1.7vw, 30px);
   }
 
-  .mission-shell .hero-tags {
+  .mission-shell.detail-shell .hero-tags {
     gap: 6px;
   }
 
-  .mission-shell .hero-tags span {
+  .mission-shell.detail-shell .hero-tags span {
     padding: 5px 7px;
   }
 
-  .mission-shell .mission-command-card {
-    gap: 6px;
-    padding: 9px;
+  .mission-shell.detail-shell .mission-command-card {
+    gap: 7px;
+    padding: 10px;
   }
 
-  .mission-shell .command-copy {
+  .mission-shell.detail-shell .command-copy {
     grid-template-columns: auto auto minmax(90px, 1fr);
     align-items: center;
     gap: 6px;
   }
 
-  .mission-shell .command-copy strong {
+  .mission-shell.detail-shell .command-copy strong {
     font-size: 18px;
   }
 
-  .mission-shell .command-copy small {
+  .mission-shell.detail-shell .command-copy small {
     grid-column: 1 / -1;
   }
 
-  .mission-shell .action-row {
+  .mission-shell.detail-shell .action-row {
     gap: 6px;
-  }
-
-  .mission-shell .function-map {
-    gap: 6px;
-    padding: 8px;
-  }
-
-  .mission-shell .function-map-head {
-    align-items: center;
-  }
-
-  .mission-shell .function-map.empty {
-    min-height: 78px;
-  }
-
-  .mission-shell .function-grid {
-    gap: 7px;
-  }
-
-  .mission-shell .function-card {
-    grid-template-columns: auto minmax(62px, 0.5fr) minmax(0, 1fr);
-    gap: 5px 7px;
-    min-height: 48px;
-    align-items: center;
-    padding: 7px;
-  }
-
-  .mission-shell .function-icon {
-    width: 28px;
-    height: 28px;
-  }
-
-  .mission-shell .function-card strong {
-    grid-column: auto;
-  }
-
-  .mission-shell .function-card p,
-  .mission-shell .function-card small {
-    display: none;
   }
 
   .mission-shell .tab {
@@ -1850,6 +1965,14 @@ select:focus {
   .mission-shell .tab-panel-scroll {
     min-height: 0;
     overflow: auto;
+  }
+
+  .mission-shell.detail-shell .tab-panel-scroll {
+    min-height: 520px;
+  }
+
+  .mission-shell.detail-shell .tab-panel-scroll > .flow-panel.prominent {
+    min-height: 520px;
   }
 
   .mission-shell .overview-grid {
@@ -1946,6 +2069,16 @@ select:focus {
     padding: 11px;
   }
 
+  .mission-shell.detail-shell .flow-panel.prominent .flow-list {
+    max-height: calc(100dvh - 360px);
+    overflow: auto;
+  }
+
+  .mission-shell.detail-shell .trace-card pre,
+  .mission-shell.detail-shell .json-block {
+    max-height: 520px;
+  }
+
   .mission-shell .metric-tile,
   .mission-shell .message-card,
   .mission-shell .knowledge-card {
@@ -1988,17 +2121,8 @@ select:focus {
     font-size: 10px;
   }
 
-  .mission-shell .mission-hero {
+  .mission-shell.detail-shell .mission-hero {
     min-height: 88px;
-  }
-
-  .mission-shell .function-map-head p,
-  .mission-shell .function-card small {
-    display: none;
-  }
-
-  .mission-shell .function-card {
-    min-height: 52px;
   }
 
   .mission-shell .brief-item {
@@ -2263,7 +2387,6 @@ select:focus {
 @media (prefers-reduced-motion: no-preference) {
   .mission-hero,
   .panel,
-  .function-map,
   .dashboard-strip .metric {
     animation: riseIn 360ms cubic-bezier(0.16, 1, 0.3, 1) both;
   }
@@ -2315,26 +2438,19 @@ select:focus {
 }
 
 @media (max-width: 1160px) {
-  .function-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .dashboard-strip {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .system-bar {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .mission-home-grid,
+  .mission-detail-grid {
+    grid-template-columns: 1fr;
   }
 
-  .agent-fleet {
-    grid-column: 1 / -1;
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .system-bar .runtime-line {
-    border-bottom: 1px solid var(--line);
+  .detail-side-column {
+    position: static;
+    height: auto;
+    min-height: 0;
   }
 
   .mission-hero {
@@ -2360,7 +2476,8 @@ select:focus {
     justify-self: start;
   }
 
-  .control-grid,
+  .mission-home-grid,
+  .mission-detail-grid,
   .settings-layout,
   .tab-grid,
   .brief-grid,
@@ -2373,7 +2490,6 @@ select:focus {
     column-count: 1;
   }
 
-  .left-rail,
   .span-2 {
     grid-column: span 1;
   }
@@ -2410,7 +2526,6 @@ select:focus {
     margin-top: 10px;
   }
 
-  .function-grid,
   .form-grid,
   .action-row {
     grid-template-columns: 1fr;
@@ -2418,10 +2533,6 @@ select:focus {
 
   .dashboard-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .system-bar {
-    grid-template-columns: 1fr;
   }
 
   .settings-summary,
@@ -2433,10 +2544,6 @@ select:focus {
     border-right: 0;
   }
 
-  .system-bar .runtime-line {
-    border-right: 0;
-  }
-
   .metric {
     width: 100%;
     min-height: 74px;
@@ -2445,21 +2552,6 @@ select:focus {
 
   .metric strong {
     font-size: 17px;
-  }
-
-  .skill-picker {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    padding-bottom: 4px;
-    scrollbar-width: thin;
-  }
-
-  .chip {
-    flex: 0 0 auto;
-    max-width: 220px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .flow-round {
@@ -2477,5 +2569,23 @@ select:focus {
   .settings-savebar {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .skill-dialog {
+    width: min(100%, calc(100vw - 28px));
+  }
+
+  .skill-option {
+    grid-template-columns: 1fr;
+  }
+
+  .skill-option-check,
+  .skill-option p {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .skill-option small {
+    justify-self: start;
   }
 }

@@ -327,36 +327,37 @@ def build_tool_memory_prompt(
 ) -> str:
     """Build memory compression prompt for tool-use architecture."""
     return f"""\
-You are the MemoryAgent. Compress this round of tool activity into the mission memory.
+你是 MemoryAgent。你的任务是把本轮工具活动压缩成任务长期记忆。
 
-Rules:
-- Keep only information useful for later exploitation, deduplicated and compressed.
-- summary is a short paragraph covering current phase, key facts, and the main blocker.
-- findings contains only output-backed facts.
-- leads contains concrete hypotheses, routes, or next actions that can be verified next.
-- dead_ends explains failed routes and why they failed.
-- credentials contains only confirmed credentials/tokens.
-- topology records observed network/service relationships only when they matter.
-- Do not turn local sandbox actions into target facts.
-- If there are no new findings, preserve the useful existing memory.
-- Return strict JSON. The first character must be {{.
+规则：
+- 只保留后续利用、验证和复盘有价值的信息，去重并压缩。
+- 所有字段内容必须使用简体中文；字段名保持下方 JSON schema 的英文键名不变。
+- summary 是一个简短中文段落，覆盖当前阶段、关键事实和主要阻塞点。
+- findings 只记录有工具输出支撑的事实，不写主观猜测。
+- leads 记录下一步可验证的具体假设、路线、命令或验证动作。
+- dead_ends 说明失败路线以及失败原因，避免重复尝试。
+- credentials 只记录已确认的凭据、token 或可复用认证材料。
+- topology 只在重要时记录已观察到的网络、服务或依赖关系。
+- 不要把本地沙箱行为误写成目标事实。
+- 如果没有新增发现，保留已有记忆中仍有价值的内容。
+- 返回严格 JSON，第一字符必须是 {{。
 
-Mission:
+任务：
 {_json({"target": mission["target"], "goal": mission["goal"], "round_no": round_no})}
 
-Previous memory:
+上一版记忆：
 {_json(previous_memory)}
 
-Recent tool calls:
+最近工具调用：
 {_json(tool_call_log[-30:])}
 
-Return JSON:
+返回 JSON：
 {{
-  "summary": "current situation",
-  "findings": ["verified reusable fact"],
-  "leads": ["specific next hypothesis, route, command, or verification action"],
-  "dead_ends": ["failed route and concrete reason"],
-  "credentials": ["confirmed credential or token"],
+  "summary": "当前态势中文摘要",
+  "findings": ["已验证且可复用的中文事实"],
+  "leads": ["下一步可验证的中文假设、路线、命令或验证动作"],
+  "dead_ends": ["失败路线和具体原因"],
+  "credentials": ["已确认的凭据或 token"],
   "topology": ["10.0.1.1 -> 10.0.1.2 (MySQL:3306)"]
 }}
 """

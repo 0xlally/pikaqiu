@@ -119,6 +119,10 @@ def create_app(runtime: AppRuntime | None = None) -> Flask:
     def index():
         return send_from_directory(str(runtime.static_root), "index.html")
 
+    @app.route("/missions/<mission_id>")
+    def mission_page(mission_id: str):
+        return send_from_directory(str(runtime.static_root), "index.html")
+
     @app.route("/settings.html")
     def settings_page():
         return send_from_directory(str(runtime.static_root), "settings.html")

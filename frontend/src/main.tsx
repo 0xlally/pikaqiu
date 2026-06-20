@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import React, { useEffect, useRef, useState, useTransition } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Brain,
@@ -64,6 +64,10 @@ const tabs: { id: AppTab; label: string }[] = [
 const tabButtonId = (tab: AppTab) => `mission-tab-${tab}`;
 const tabPanelId = (tab: AppTab) => `mission-panel-${tab}`;
 
+function missionHref(id: string) {
+  return `/missions/${encodeURIComponent(id)}`;
+}
+
 const configFields = [
   { key: "mock", label: "Mock 模式", type: "checkbox", section: "运行模式" },
   { key: "llm_base_url", label: "主模型 API 地址", type: "text", section: "主模型" },
@@ -89,7 +93,10 @@ const configFields = [
 
 function App() {
   const isSettings = window.location.pathname.endsWith("/settings.html");
-  return isSettings ? <SettingsPage /> : <MissionControl />;
+  const missionMatch = window.location.pathname.match(/^\/missions\/([^/?#]+)/);
+  if (isSettings) return <SettingsPage />;
+  if (missionMatch) return <MissionDetailPage missionId={decodeURIComponent(missionMatch[1])} />;
+  return <MissionControl />;
 }
 
 function MissionControl() {
@@ -98,11 +105,7 @@ function MissionControl() {
   const [missions, setMissions] = useState<Mission[]>([]);
   const [experiments, setExperiments] = useState<ExperimentRecord[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
-  const [selectedId, setSelectedId] = useState<string>("");
-  const [detail, setDetail] = useState<MissionDetail | null>(null);
-  const [activeTab, setActiveTab] = useState<AppTab>("overview");
   const [loading, setLoading] = useState(true);
-  const [detailLoading, setDetailLoading] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -123,7 +126,6 @@ function MissionControl() {
         setMissions(missionData.missions || []);
         setExperiments(experimentData.records || []);
         setSkills(skillData.skills || []);
-        setSelectedId((current) => current || missionData.missions?.[0]?.id || "");
       } catch (err) {
         if (!cancelled) setError(readError(err));
       } finally {
@@ -146,7 +148,6 @@ function MissionControl() {
           setMissions(missionData.missions || []);
           setAgentSlots(missionData.agent_slots || []);
           setExperiments(experimentData.records || []);
-          setSelectedId((current) => current || missionData.missions?.[0]?.id || "");
         });
       } catch (err) {
         if (!disposed) setError(readError(err));
@@ -159,17 +160,121 @@ function MissionControl() {
     };
   }, []);
 
+  const runningCount = missions.filter((mission) => isActiveMission(mission)).length;
+  const activeAgentCount = agentSlots.filter((slot) => slot.status === "running").length;
+  const flagCount = missions.reduce((sum, mission) => sum + (mission.captured_flag_count || 0), 0);
+
+  async function refreshAll() {
+    const [missionData, experimentData] = await Promise.all([api.missions(), api.experiments()]);
+    setMissions(missionData.missions || []);
+    setAgentSlots(missionData.agent_slots || []);
+    setExperiments(experimentData.records || []);
+  }
+
+  async function handleCreated(id: string) {
+    setNotice("任务已创建，正在进入队列。");
+    await refreshAll();
+    window.location.href = missionHref(id);
+  }
+
+  return (
+    <div className="app-shell mission-shell">
+      <Atmosphere />
+      <Header bootstrap={bootstrap} active="missions" />
+      <main className="command-center">
+        <DashboardStrip
+          loading={loading || isPending}
+          model={bootstrap?.model}
+          runningCount={agentSlots.length ? activeAgentCount : runningCount}
+          flagCount={flagCount}
+          missionCount={missions.length}
+          knowledgeDocs={bootstrap?.knowledge?.total_docs || bootstrap?.knowledge?.total_chunks || 0}
+        />
+
+        {notice ? <InlineNotice tone="ok" message={notice} onClose={() => setNotice("")} /> : null}
+        {error ? <InlineNotice tone="bad" message={error} actionLabel="重新同步" onAction={refreshAll} onClose={() => setError("")} /> : null}
+
+        <section className="mission-home-grid">
+          <aside className="mission-home-fleet">
+            <AgentFleetPanel bootstrap={bootstrap} agentSlots={agentSlots} />
+          </aside>
+
+          <div className="mission-home-main">
+            <MissionList missions={missions} onSelect={(id) => window.location.assign(missionHref(id))} />
+          </div>
+
+          <aside className="mission-home-side">
+            <MissionLaunch
+              defaults={bootstrap?.defaults}
+              skills={skills}
+              hasMissions={missions.length > 0}
+              onCreated={handleCreated}
+              onError={setError}
+            />
+            <RuntimeOverviewPanel bootstrap={bootstrap} skills={skills} experiments={experiments} />
+          </aside>
+        </section>
+      </main>
+    </div>
+  );
+}
+
+function MissionDetailPage({ missionId }: { missionId: string }) {
+  const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
+  const [agentSlots, setAgentSlots] = useState<AgentSlot[]>([]);
+  const [missions, setMissions] = useState<Mission[]>([]);
+  const [experiments, setExperiments] = useState<ExperimentRecord[]>([]);
+  const [skills, setSkills] = useState<Skill[]>([]);
+  const [detail, setDetail] = useState<MissionDetail | null>(null);
+  const [activeTab, setActiveTab] = useState<AppTab>("timeline");
+  const [loading, setLoading] = useState(true);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+
   useEffect(() => {
-    if (!selectedId) {
-      setDetail(null);
-      return;
+    let cancelled = false;
+    async function boot() {
+      try {
+        const [bootData, missionData, experimentData, skillData] = await Promise.all([
+          api.bootstrap(),
+          api.missions(),
+          api.experiments(),
+          api.skills()
+        ]);
+        if (cancelled) return;
+        setBootstrap(bootData);
+        setAgentSlots(missionData.agent_slots || bootData.agent_slots || []);
+        setMissions(missionData.missions || []);
+        setExperiments(experimentData.records || []);
+        setSkills(skillData.skills || []);
+      } catch (err) {
+        if (!cancelled) setError(readError(err));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     }
+    boot();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     let disposed = false;
     async function loadDetail(showLoading: boolean) {
       if (showLoading) setDetailLoading(true);
       try {
-        const data = await api.missionDetail(selectedId);
-        if (!disposed) setDetail(data);
+        const [missionData, experimentData, nextDetail] = await Promise.all([
+          api.missions(),
+          api.experiments(),
+          api.missionDetail(missionId)
+        ]);
+        if (disposed) return;
+        setMissions(missionData.missions || []);
+        setAgentSlots(missionData.agent_slots || []);
+        setExperiments(experimentData.records || []);
+        setDetail(nextDetail);
       } catch (err) {
         if (!disposed) setError(readError(err));
       } finally {
@@ -182,44 +287,35 @@ function MissionControl() {
       disposed = true;
       window.clearInterval(timer);
     };
-  }, [selectedId]);
+  }, [missionId]);
 
-  const selectedMission = useMemo(
-    () => missions.find((mission) => mission.id === selectedId) || detail?.mission || null,
-    [missions, selectedId, detail]
-  );
-  const runningCount = missions.filter((mission) => isActiveMission(mission)).length;
-  const activeAgentCount = agentSlots.filter((slot) => slot.status === "running").length;
-  const flagCount = missions.reduce((sum, mission) => sum + (mission.captured_flag_count || 0), 0);
-
+  const mission = detail?.mission || missions.find((item) => item.id === missionId) || null;
   async function refreshAll() {
-    const [missionData, experimentData] = await Promise.all([api.missions(), api.experiments()]);
+    const [missionData, experimentData, nextDetail] = await Promise.all([
+      api.missions(),
+      api.experiments(),
+      api.missionDetail(missionId)
+    ]);
     setMissions(missionData.missions || []);
     setAgentSlots(missionData.agent_slots || []);
     setExperiments(experimentData.records || []);
-    if (selectedId) setDetail(await api.missionDetail(selectedId));
-  }
-
-  async function handleCreated(id: string) {
-    setSelectedId(id);
-    setNotice("任务已创建，正在进入队列。");
-    await refreshAll();
+    setDetail(nextDetail);
   }
 
   async function missionAction(action: "stop" | "resume" | "delete") {
-    if (!selectedMission) return;
+    if (!mission) return;
     setError("");
     try {
-      if (action === "stop") await api.stopMission(selectedMission.id);
-      if (action === "resume") await api.resumeMission(selectedMission.id);
+      if (action === "stop") await api.stopMission(mission.id);
+      if (action === "resume") await api.resumeMission(mission.id);
       if (action === "delete") {
-        const ok = window.confirm(`删除任务 ${selectedMission.name}？该操作不会停止运行中的任务。`);
+        const ok = window.confirm(`删除任务 ${mission.name}？该操作不会停止运行中的任务。`);
         if (!ok) return;
-        await api.deleteMission(selectedMission.id);
-        setSelectedId("");
-        setDetail(null);
+        await api.deleteMission(mission.id);
+        window.location.href = "/";
+        return;
       }
-      setNotice(action === "stop" ? "停止请求已发送。" : action === "resume" ? "任务已请求继续。" : "任务记录已删除。");
+      setNotice(action === "stop" ? "停止请求已发送。" : "任务已请求继续。");
       await refreshAll();
     } catch (err) {
       setError(readError(err));
@@ -242,78 +338,65 @@ function MissionControl() {
   }
 
   return (
-    <div className="app-shell mission-shell">
+    <div className="app-shell mission-shell detail-shell">
       <Atmosphere />
       <Header bootstrap={bootstrap} active="missions" />
-      <main className="command-center">
-        <DashboardStrip
-          loading={loading || isPending}
-          model={bootstrap?.model}
-          runningCount={agentSlots.length ? activeAgentCount : runningCount}
-          flagCount={flagCount}
-          missionCount={missions.length}
-          knowledgeDocs={bootstrap?.knowledge?.total_docs || bootstrap?.knowledge?.total_chunks || 0}
-        />
+      <main className="mission-detail-page">
+        <div className="detail-back-row">
+          <a className="ghost-button" href="/">
+            返回实例总览
+          </a>
+          <span>{detailLoading ? "同步中" : loading ? "加载中" : "自动刷新 · 3s"}</span>
+        </div>
 
         {notice ? <InlineNotice tone="ok" message={notice} onClose={() => setNotice("")} /> : null}
         {error ? <InlineNotice tone="bad" message={error} actionLabel="重新同步" onAction={refreshAll} onClose={() => setError("")} /> : null}
 
-        <section className="control-grid">
-          <aside className={missions.length ? "left-rail" : "left-rail empty-queue"}>
-            <MissionLaunch
-              defaults={bootstrap?.defaults}
-              skills={skills}
-              hasMissions={missions.length > 0}
-              onCreated={handleCreated}
-              onError={setError}
-            />
-            <MissionList missions={missions} selectedId={selectedId} onSelect={setSelectedId} />
-          </aside>
+        <section className="mission-detail-top">
+          <MissionDetailHeader
+            mission={mission}
+            detail={detail}
+            detailLoading={detailLoading}
+            onStop={() => void missionAction("stop")}
+            onResume={() => void missionAction("resume")}
+            onDelete={() => void missionAction("delete")}
+          />
 
-          <section className="workbench">
-            <SystemBar bootstrap={bootstrap} skills={skills} experiments={experiments} agentSlots={agentSlots} />
+          <div className="tabs" role="tablist" aria-label="任务视图">
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                id={tabButtonId(tab.id)}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === tab.id}
+                aria-controls={tabPanelId(tab.id)}
+                tabIndex={activeTab === tab.id ? 0 : -1}
+                className={activeTab === tab.id ? "tab active" : "tab"}
+                onClick={() => setActiveTab(tab.id)}
+                onKeyDown={(event) => handleTabKeyDown(event, tab.id)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </section>
 
-            <MissionDetailHeader
-              mission={selectedMission}
+        <section className="mission-detail-grid">
+          <div className="detail-content-column">
+            <MissionPane
+              tab={activeTab}
               detail={detail}
-              detailLoading={detailLoading}
-              onStop={() => missionAction("stop")}
-              onResume={() => missionAction("resume")}
-              onDelete={() => missionAction("delete")}
+              experiments={experiments}
+              onError={setError}
+              onNotice={setNotice}
+              onRefresh={refreshAll}
             />
-
-            <FunctionMap detail={detail} onOpenTab={setActiveTab} />
-
-            <div className="pane-region">
-              <div className="tabs" role="tablist" aria-label="任务视图">
-                {tabs.map((tab) => (
-                  <button
-                    key={tab.id}
-                    id={tabButtonId(tab.id)}
-                    type="button"
-                    role="tab"
-                    aria-selected={activeTab === tab.id}
-                    aria-controls={tabPanelId(tab.id)}
-                    tabIndex={activeTab === tab.id ? 0 : -1}
-                    className={activeTab === tab.id ? "tab active" : "tab"}
-                    onClick={() => setActiveTab(tab.id)}
-                    onKeyDown={(event) => handleTabKeyDown(event, tab.id)}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
-
-              <MissionPane
-                tab={activeTab}
-                detail={detail}
-                experiments={experiments}
-                onError={setError}
-                onNotice={setNotice}
-                onRefresh={refreshAll}
-              />
-            </div>
-          </section>
+          </div>
+          <aside className="detail-side-column">
+            <LiveAgentPanel agentSlots={agentSlots} missionId={missionId} />
+            <LiveSummaryPanel detail={detail} mission={mission} />
+          </aside>
         </section>
       </main>
     </div>
@@ -408,6 +491,7 @@ function MissionLaunch({
 }) {
   const [submitting, setSubmitting] = useState(false);
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
+  const [skillDialogOpen, setSkillDialogOpen] = useState(false);
   const [expanded, setExpanded] = useState(() => !hasMissions);
   const autoCollapsed = useRef(false);
 
@@ -422,20 +506,21 @@ function MissionLaunch({
     event.preventDefault();
     setSubmitting(true);
     onError("");
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     const payload = {
       name: String(form.get("name") || "Pentest"),
       target: String(form.get("target") || "").trim(),
       goal: String(form.get("goal") || "").trim(),
-      max_rounds: Number(form.get("max_rounds") || defaults?.max_rounds || 8),
-      max_commands: Number(form.get("max_commands") || defaults?.max_commands || 32),
+      max_rounds: Number(form.get("max_rounds") || defaults?.max_rounds || 4),
+      max_commands: Number(form.get("max_commands") || defaults?.max_commands || 64),
       command_timeout_sec: Number(form.get("command_timeout_sec") || defaults?.command_timeout_sec || 60),
       expected_flags: Number(form.get("expected_flags") || 1),
       skills: selectedSkills
     };
     try {
       const response = await api.createMission(payload);
-      event.currentTarget.reset();
+      formElement.reset();
       setSelectedSkills([]);
       await onCreated(response.mission_id);
     } catch (err) {
@@ -448,6 +533,10 @@ function MissionLaunch({
   function toggleSkill(id: string) {
     setSelectedSkills((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
   }
+
+  const selectedSkillNames = selectedSkills
+    .map((id) => skills.find((skill) => skill.id === id)?.name || id)
+    .join("、");
 
   return (
     <details className="panel launch-panel" open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
@@ -477,11 +566,11 @@ function MissionLaunch({
         <div className="form-grid">
           <label>
             最大轮数
-            <input name="max_rounds" type="number" min={1} max={200} defaultValue={defaults?.max_rounds || 8} />
+            <input name="max_rounds" type="number" min={1} max={200} defaultValue={defaults?.max_rounds || 4} />
           </label>
           <label>
             每轮命令
-            <input name="max_commands" type="number" min={1} max={500} defaultValue={defaults?.max_commands || 32} />
+            <input name="max_commands" type="number" min={1} max={500} defaultValue={defaults?.max_commands || 64} />
           </label>
           <label>
             超时秒数
@@ -499,18 +588,15 @@ function MissionLaunch({
           </label>
         </div>
         {skills.length ? (
-          <div className="skill-picker" aria-label="选择技能">
-            {skills.slice(0, 8).map((skill) => (
-              <button
-                key={skill.id}
-                type="button"
-                className={selectedSkills.includes(skill.id) ? "chip selected" : "chip"}
-                onClick={() => toggleSkill(skill.id)}
-                title={skill.description}
-              >
-                {skill.name || skill.id}
-              </button>
-            ))}
+          <div className="skill-select-summary">
+            <div>
+              <span>Skills</span>
+              <strong>{selectedSkills.length ? `${selectedSkills.length} 个已选择` : "默认自动判断"}</strong>
+              <p>{selectedSkills.length ? selectedSkillNames : "不手动指定时，主 Agent 会按任务目标自动选择可用 Skill。"}</p>
+            </div>
+            <button type="button" className="ghost-button slim" onClick={() => setSkillDialogOpen(true)}>
+              选择 Skill
+            </button>
           </div>
         ) : null}
         <button className="primary-button" type="submit" disabled={submitting}>
@@ -518,17 +604,88 @@ function MissionLaunch({
           {submitting ? "创建中" : "启动任务"}
         </button>
       </form>
+      {skillDialogOpen ? (
+        <SkillPickerDialog
+          skills={skills}
+          selectedSkills={selectedSkills}
+          onToggle={toggleSkill}
+          onClear={() => setSelectedSkills([])}
+          onClose={() => setSkillDialogOpen(false)}
+        />
+      ) : null}
     </details>
+  );
+}
+
+function SkillPickerDialog({
+  skills,
+  selectedSkills,
+  onToggle,
+  onClear,
+  onClose
+}: {
+  skills: Skill[];
+  selectedSkills: string[];
+  onToggle: (id: string) => void;
+  onClear: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        className="skill-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="skill-dialog-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="skill-dialog-head">
+          <div>
+            <h2 id="skill-dialog-title">选择任务 Skill</h2>
+            <p>可手动指定主 Agent 起步时加载的能力；留空则保持自动判断。</p>
+          </div>
+          <button type="button" className="ghost-button slim" onClick={onClose}>
+            关闭
+          </button>
+        </header>
+        <div className="skill-dialog-list">
+          {skills.map((skill) => {
+            const selected = selectedSkills.includes(skill.id);
+            const tags = skill.tags?.length ? skill.tags.slice(0, 4).join(" / ") : "未标注标签";
+            return (
+              <button
+                key={skill.id}
+                type="button"
+                className={selected ? "skill-option selected" : "skill-option"}
+                onClick={() => onToggle(skill.id)}
+                aria-pressed={selected}
+              >
+                <span className="skill-option-check">{selected ? "已选" : "可选"}</span>
+                <strong>{skill.name || skill.id}</strong>
+                <small>{tags}</small>
+                <p>{skill.description || "该 Skill 暂无描述。"}</p>
+              </button>
+            );
+          })}
+        </div>
+        <footer className="skill-dialog-actions">
+          <button type="button" className="ghost-button" onClick={onClear} disabled={!selectedSkills.length}>
+            清空选择
+          </button>
+          <button type="button" className="primary-button" onClick={onClose}>
+            确认选择 {selectedSkills.length ? `(${selectedSkills.length})` : ""}
+          </button>
+        </footer>
+      </section>
+    </div>
   );
 }
 
 function MissionList({
   missions,
-  selectedId,
   onSelect
 }: {
   missions: Mission[];
-  selectedId: string;
   onSelect: (id: string) => void;
 }) {
   return (
@@ -548,8 +705,7 @@ function MissionList({
             <button
               key={mission.id}
               type="button"
-              className={mission.id === selectedId ? "mission-card active" : "mission-card"}
-              aria-pressed={mission.id === selectedId}
+              className="mission-card"
               aria-label={`${mission.name}，状态 ${mission.status}，目标 ${mission.target}，${relativeTime(mission.updated_at)}${mission.captured_flag_count ? `，${mission.captured_flag_count} 个 flag` : ""}`}
               onClick={() => onSelect(mission.id)}
             >
@@ -561,6 +717,7 @@ function MissionList({
                 {relativeTime(mission.updated_at)}
                 {mission.captured_flag_count ? ` · ${mission.captured_flag_count} flag` : ""}
               </span>
+              <span className="mission-open-hint">打开实例详情</span>
             </button>
           ))
         ) : (
@@ -642,126 +799,14 @@ function MissionDetailHeader({
   );
 }
 
-function FunctionMap({
-  detail,
-  onOpenTab
-}: {
-  detail: MissionDetail | null;
-  onOpenTab: (tab: AppTab) => void;
-}) {
-  if (!detail) {
-    return (
-      <section className="function-map empty">
-        <div className="function-map-head">
-          <div>
-            <h2>一屏功能总览</h2>
-            <p>创建或选择任务后，这里会集中显示审核、记忆、证据、知识库和协作入口。</p>
-          </div>
-        </div>
-        <div className="function-grid placeholder-grid">
-          {tabs.slice(2).map((tab) => (
-            <button key={tab.id} type="button" className="function-card muted-card" disabled>
-              <span className="function-label">{tab.label}</span>
-              <strong>等待任务数据</strong>
-            </button>
-          ))}
-        </div>
-      </section>
-    );
-  }
-
-  const evidenceCount = detail.events.filter((event) =>
-    ["flag", "command", "knowledge", "error", "sandbox"].includes(event.type)
-  ).length;
-  const observer = detail.observer;
-  const latest = observer.latest_decision || {};
-  const modules: {
-    label: string;
-    title: string;
-    body: string;
-    meta: string;
-    icon: React.ReactNode;
-    tab: AppTab;
-    tone?: string;
-  }[] = [
-    {
-      label: "Observer",
-      title: observer.status || "idle",
-      body: compact(toText(latest.rationale || latest.guidance || "等待被动审核"), 92),
-      meta: `${observer.stats?.decisions || 0} 次审核`,
-      icon: <Circuitry />,
-      tab: "observer",
-      tone: observer.stats?.interrupts ? "warn" : "blue"
-    },
-    {
-      label: "Memory",
-      title: String(detail.memory.leads?.[0] || "暂无主线"),
-      body: compact(detail.memory.summary || "等待下一轮压缩", 92),
-      meta: formatTime(detail.mission.updated_at),
-      icon: <Brain />,
-      tab: "memory",
-      tone: "blue"
-    },
-    {
-      label: "Evidence",
-      title: `${evidenceCount} 条证据`,
-      body: detail.captured_flags.length ? compact(detail.captured_flags[0], 92) : "命令输出、知识命中、错误和 Flag 会进入证据仓。",
-      meta: `${detail.captured_flag_count} / ${detail.mission.expected_flags || 1} flag`,
-      icon: <Database />,
-      tab: "evidence",
-      tone: detail.captured_flag_count ? "ok" : "blue"
-    },
-    {
-      label: "Knowledge",
-      title: "RAG / FTS 检索",
-      body: `默认用目标 ${compact(detail.mission.target || "关键词", 64)} 发起离线知识库查询。`,
-      meta: "可搜索并重建索引",
-      icon: <MagnifyingGlass />,
-      tab: "knowledge",
-      tone: "blue"
-    }
-  ];
-
-  return (
-    <section className="function-map" aria-label="一屏功能总览">
-      <div className="function-map-head">
-        <div>
-          <h2>一屏功能总览</h2>
-          <p>核心能力全部收在当前任务下，深看再切换下方详情。</p>
-        </div>
-        <span>{detail.thread_alive ? "worker online" : "worker idle"}</span>
-      </div>
-      <div className="function-grid">
-        {modules.map((item) => (
-          <button
-            key={item.label}
-            type="button"
-            className={`function-card ${item.tone || "blue"}`}
-            aria-label={`打开${item.label}视图，${item.title}，${item.meta}`}
-            onClick={() => onOpenTab(item.tab)}
-          >
-            <span className="function-icon">{item.icon}</span>
-            <span className="function-label">{item.label}</span>
-            <strong>{item.title}</strong>
-            <p>{item.body}</p>
-            <small>{item.meta}</small>
-          </button>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function SystemBar({
+function RuntimeOverviewPanel({
   bootstrap,
   skills,
-  experiments,
-  agentSlots
+  experiments
 }: {
   bootstrap: Bootstrap | null;
   skills: Skill[];
   experiments: ExperimentRecord[];
-  agentSlots: AgentSlot[];
 }) {
   const knowledgeStatus = bootstrap?.knowledge?.rag?.available
     ? `${bootstrap.knowledge.rag.total_chunks || 0} chunks`
@@ -770,24 +815,62 @@ function SystemBar({
   const enabledSkills = Math.max(Number(bootstrap?.skills?.enabled || 0), loadedEnabledSkills);
   const totalSkills = Math.max(Number(bootstrap?.skills?.total || 0), skills.length);
   const success = experiments.filter((item) => item.outcome === "success").length;
-  const slots = agentSlots.length ? agentSlots : bootstrap?.agent_slots || [];
   return (
-    <section className="system-bar" aria-label="运行环境摘要">
-      <div className="agent-fleet">
-        {slots.map((slot) => (
-          <AgentSlotCard key={slot.agent_id || slot.slot} slot={slot} />
-        ))}
+    <section className="panel runtime-overview" aria-label="运行环境摘要">
+      <div className="panel-heading compact">
+        <span className="panel-icon">
+          <Database />
+        </span>
+        <div>
+          <h2>运行环境</h2>
+          <p>沙箱、知识库和 Skill 状态。</p>
+        </div>
       </div>
-      <RuntimeLine label="工作目录" value={bootstrap?.sandbox_workdir || "未加载"} />
-      <RuntimeLine label="知识库" value={knowledgeStatus} />
-      <RuntimeLine label="Skills" value={`${enabledSkills}/${totalSkills} enabled`} />
-      <RuntimeLine label="归档成功" value={`${success}/${experiments.length}`} />
+      <div className="runtime-overview-grid">
+        <RuntimeLine label="工作目录" value={bootstrap?.sandbox_workdir || "未加载"} />
+        <RuntimeLine label="知识库" value={knowledgeStatus} />
+        <RuntimeLine label="Skills" value={`${enabledSkills}/${totalSkills} enabled`} />
+        <RuntimeLine label="归档成功" value={`${success}/${experiments.length}`} />
+      </div>
     </section>
   );
 }
 
-function AgentSlotCard({ slot }: { slot: AgentSlot }) {
+function AgentFleetPanel({
+  bootstrap,
+  agentSlots,
+  currentMissionId
+}: {
+  bootstrap: Bootstrap | null;
+  agentSlots: AgentSlot[];
+  currentMissionId?: string;
+}) {
+  const slots = agentSlots.length ? agentSlots : bootstrap?.agent_slots || [];
+  return (
+    <section className="panel agent-fleet-panel" aria-label="Agent 槽位">
+      <div className="panel-heading compact">
+        <span className="panel-icon">
+          <Circuitry />
+        </span>
+        <div>
+          <h2>Agent 编队</h2>
+          <p>{slots.length ? `${slots.length} 个沙箱槽位` : "等待后端同步槽位"}</p>
+        </div>
+      </div>
+      <div className="agent-fleet-list">
+        {slots.map((slot) => (
+          <AgentSlotCard key={slot.agent_id || slot.slot} slot={slot} currentMissionId={currentMissionId} />
+        ))}
+        {!slots.length ? <EmptyState compact title="暂无 Agent 槽" body="启动后端后，这里会显示最多五个并行 Agent。" /> : null}
+      </div>
+    </section>
+  );
+}
+
+function AgentSlotCard({ slot, currentMissionId }: { slot: AgentSlot; currentMissionId?: string }) {
   const running = slot.status === "running";
+  const isCurrent = Boolean(currentMissionId && slot.mission_id === currentMissionId);
+  const linked = Boolean(slot.mission_id);
   const reason =
     slot.status_reason === "flag_captured"
       ? `空闲 · ${slot.captured_flag_count} flag`
@@ -796,17 +879,101 @@ function AgentSlotCard({ slot }: { slot: AgentSlot }) {
         : running
           ? "运行中"
           : "空闲";
-  const title = slot.mission_name || slot.container;
-  const meta = slot.target || slot.container;
-  return (
-    <article className={running ? "agent-slot running" : "agent-slot idle"}>
-      <span className="agent-index">A{slot.slot}</span>
-      <div>
-        <strong>{reason}</strong>
-        <small title={title}>{title}</small>
-        <em title={meta}>{meta}</em>
+  const title = slot.mission_name || "等待任务";
+  const target = slot.target || "暂无目标";
+  const container = slot.container || "未绑定沙箱";
+  const className = [
+    "agent-slot",
+    running ? "running" : "idle",
+    isCurrent ? "current" : "",
+    linked ? "linked" : ""
+  ].filter(Boolean).join(" ");
+  const body = (
+    <>
+      <div className="agent-slot-head">
+        <span className="agent-index">A{slot.slot}</span>
+        <span className={`status-badge ${running ? "live" : slot.captured_flag_count ? "ok" : "idle"}`}>{reason}</span>
       </div>
+      <div className="agent-slot-body">
+        <strong title={title}>{title}</strong>
+        <small title={target}>{target}</small>
+      </div>
+      <div className="agent-slot-foot">
+        <em title={container}>{container}</em>
+        <span>{slot.captured_flag_count || 0} flag</span>
+      </div>
+    </>
+  );
+  if (linked) {
+    return (
+      <a className={className} href={missionHref(slot.mission_id)} aria-current={isCurrent ? "page" : undefined}>
+        {body}
+      </a>
+    );
+  }
+  return (
+    <article className={className}>
+      {body}
     </article>
+  );
+}
+
+function LiveAgentPanel({ agentSlots, missionId }: { agentSlots: AgentSlot[]; missionId: string }) {
+  const current = agentSlots.find((slot) => slot.mission_id === missionId);
+  return (
+    <section className="panel live-agent-panel">
+      <div className="section-title">
+        <Circuitry />
+        <div>
+          <h2>当前 Agent</h2>
+          <p>{current ? `A${current.slot} · ${current.container}` : "尚未绑定运行槽位"}</p>
+        </div>
+      </div>
+      {current ? (
+        <div className="agent-large-card">
+          <span className={`status-badge ${current.status === "running" ? "live" : "idle"}`}>{current.status}</span>
+          <strong>A{current.slot}</strong>
+          <p>{current.status_reason || "等待状态更新"}</p>
+          <small>{current.target || current.container}</small>
+        </div>
+      ) : (
+        <EmptyState compact title="Agent 空闲或未启动" body="实例进入队列后会在这里显示绑定的沙箱和槽位。" />
+      )}
+    </section>
+  );
+}
+
+function LiveSummaryPanel({ detail, mission }: { detail: MissionDetail | null; mission: Mission | null }) {
+  const latest = detail?.observer?.latest_decision || {};
+  const latestEvents = detail?.events.slice(-3).reverse() || [];
+  return (
+    <section className="panel live-summary-panel">
+      <div className="section-title">
+        <ShieldCheck />
+        <div>
+          <h2>实时摘要</h2>
+          <p>{mission ? `${mission.status} · ${formatTime(mission.updated_at)}` : "等待实例数据"}</p>
+        </div>
+      </div>
+      <div className="brief-grid single">
+        <BriefItem label="Memory" value={detail?.memory.summary || "暂无记忆摘要。"} />
+        <BriefItem label="Observer" value={toText(latest.verdict || latest.rationale || "暂无审核结论")} />
+        <BriefItem label="Flag" value={`${detail?.captured_flag_count || 0} / ${mission?.expected_flags || 1}`} mono />
+      </div>
+      <div className="mini-event-stack">
+        {latestEvents.length ? (
+          latestEvents.map((event) => (
+            <article key={event.id} className="mini-event">
+              <span className="trace-type">{eventLabel(event.type)}</span>
+              <strong>{event.title || compact(event.command || event.content, 96)}</strong>
+              <small>R{event.round_no} · {formatTime(event.ended_at || event.started_at)}</small>
+            </article>
+          ))
+        ) : (
+          <p className="muted">暂无最近事件。</p>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -837,7 +1004,7 @@ function MissionPane({
   } else if (tab === "overview") {
     content = <OverviewTab detail={detail} experiments={experiments} onError={onError} onNotice={onNotice} onRefresh={onRefresh} />;
   } else if (tab === "timeline") {
-    content = <TimelineTab detail={detail} />;
+    content = <TimelineTab detail={detail} prominent />;
   } else if (tab === "observer") {
     content = <ObserverTab detail={detail} />;
   } else if (tab === "memory") {
@@ -936,15 +1103,17 @@ function OverviewTab({
   );
 }
 
-function TimelineTab({ detail }: { detail: MissionDetail }) {
+function TimelineTab({ detail, prominent }: { detail: MissionDetail; prominent?: boolean }) {
   const groups = groupFlow(detail.rounds, detail.events);
+  const eventCount = detail.events.length;
+  const roundCount = detail.rounds.length;
   return (
-    <section className="panel flow-panel">
+    <section className={prominent ? "panel flow-panel prominent" : "panel flow-panel"}>
       <div className="section-title">
         <Pulse />
         <div>
           <h2>执行时间线</h2>
-          <p>按 round 聚合模型决策、命令输出和系统事件。</p>
+          <p>按 round 聚合模型决策、命令输出和系统事件。{roundCount} 条模型记录，{eventCount} 条事件。</p>
         </div>
       </div>
       {groups.length ? (

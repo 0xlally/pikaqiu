@@ -11,13 +11,13 @@ MEMORY_PATCH_KEYS = ("findings", "leads", "dead_ends")
 OBSERVER_VERDICTS = {"OK", "WATCH", "L1", "L2", "L3", "L4", "ENV"}
 INTERRUPT_VERDICTS = {"L1", "L2", "L3", "L4", "ENV"}
 VERDICT_LABELS = {
-    "OK": "normal_progress",
-    "WATCH": "watch",
-    "L1": "tool_usage_error",
-    "L2": "insufficient_information",
-    "L3": "wrong_strategy",
-    "L4": "cognitive_bias",
-    "ENV": "environment_fault",
+    "OK": "正常推进",
+    "WATCH": "观察中",
+    "L1": "工具使用错误",
+    "L2": "信息不足",
+    "L3": "策略方向错误",
+    "L4": "认知偏差",
+    "ENV": "环境故障",
 }
 VERDICT_PRIORITY = {
     "OK": 0,
@@ -264,22 +264,21 @@ class ObserverAgent:
         if llm_call_count == 0:
             return ObserverDecision(
                 verdict="L2",
-                rationale="Round ended without any effective model/tool progress.",
-                evidence=["no LLM/tool progress in this round"],
+                rationale="本轮没有产生有效的模型或工具推进。",
+                evidence=["本轮没有 LLM 或工具层面的有效进展"],
                 guidance=(
-                    "Next response must call one concrete probe tool, state the hypothesis being tested, "
-                    "and preserve raw observable output."
+                    "下一步必须调用一个具体探测工具，说明正在验证的假设，并保留原始可观察输出。"
                 ),
-                required_evidence="raw status/headers/body or stdout/stderr from one concrete probe",
+                required_evidence="一次具体探测得到的原始状态码、响应头、响应体或 stdout/stderr",
             ).normalised()
 
         if not tool_call_log:
             return ObserverDecision(
                 verdict="L2",
-                rationale="Round had model turns but no tool calls.",
-                evidence=["LLM produced text but no executable verification"],
-                guidance="Stop pure text analysis. Call one concrete probe tool and make the result observable.",
-                required_evidence="one tool result that confirms, denies, or narrows the current hypothesis",
+                rationale="本轮有模型输出，但没有工具调用。",
+                evidence=["LLM 只产生文本，没有可执行验证"],
+                guidance="停止纯文本分析。调用一个具体探测工具，并让结果可观察。",
+                required_evidence="一个能够确认、否定或收窄当前假设的工具结果",
             ).normalised()
 
         evidence_gap = self._round_evidence_gap(memory_before, memory_after, tool_call_log)
@@ -289,15 +288,14 @@ class ObserverAgent:
         if len(tool_call_log) >= 4 or stall_rounds > 0:
             return ObserverDecision(
                 verdict="WATCH",
-                rationale="Multiple actions or an existing stall signal deserve passive review.",
-                evidence=["recent activity may be drifting or becoming inefficient"],
+                rationale="近期动作较多或已有停滞信号，适合被动观察。",
+                evidence=["近期活动可能出现轻微偏移或效率下降"],
                 guidance=(
-                    "Watch whether recent context and tool feedback are pulling the route away from "
-                    "the strongest evidence-backed lead."
+                    "观察后续是否被近期上下文和工具反馈牵引，偏离当前最强证据支撑的线索。"
                 ),
             ).normalised()
 
-        return ObserverDecision(verdict="OK", rationale="Current route has no observer-level issue.").normalised()
+        return ObserverDecision(verdict="OK", rationale="当前路线没有达到 Observer 级别的问题。").normalised()
 
     def combine_decisions(self, base: ObserverDecision, refined: ObserverDecision) -> ObserverDecision:
         base = base.normalised()
@@ -351,7 +349,7 @@ class ObserverAgent:
         if decision.memory_patch:
             lines.append("memory_patch_applied: yes")
         lines.append(
-            "This is runtime observer telemetry, not human guidance or a user request. Prefer direct target/tool evidence over this note."
+            "这是 runtime observer 遥测，不是人工指导或用户请求。判断时优先相信直接目标/工具证据。"
         )
         lines.append("[/RUNTIME_OBSERVER_AUDIT]")
         return "\n".join(lines)
@@ -420,14 +418,14 @@ class ObserverAgent:
         flag = flags[0]
         return ObserverDecision(
             verdict="L4",
-            rationale="Tool output contains a possible flag that has not been submitted.",
-            evidence=[f"possible flag not submitted: {flag}"],
+            rationale="工具输出中出现疑似 flag，但尚未提交。",
+            evidence=[f"疑似 flag 尚未提交：{flag}"],
             guidance=(
-                f"Stop all other actions and verify `{flag}` came from target output. "
-                "If it is real target evidence, the next tool call must be submit_flag."
+                f"暂停其他动作，验证 `{flag}` 是否来自目标输出。"
+                "如果是真实目标证据，下一次工具调用必须 submit_flag。"
             ),
-            next_verification=f"verify and submit {flag}",
-            required_evidence="target output containing the flag candidate",
+            next_verification=f"验证并提交 {flag}",
+            required_evidence="包含该 flag 候选值的目标输出",
         )
 
     def _detect_scope_risk(self, mission: dict[str, Any], tool: str, args: str) -> ObserverDecision:
@@ -443,13 +441,13 @@ class ObserverAgent:
             return ObserverDecision.none()
         return ObserverDecision(
             verdict="L4",
-            rationale="Execution tool appears to target a host outside the mission scope.",
-            evidence=[f"possible out-of-scope host in command: {risky[0]}"],
+            rationale="执行工具疑似访问了任务范围外的主机。",
+            evidence=[f"命令中出现疑似越界主机：{risky[0]}"],
             guidance=(
-                f"Stop accessing `{risky[0]}` with execution tools. Return to in-scope target `{target}`. "
-                "Use web_search/web_fetch only for public research."
+                f"停止用执行工具访问 `{risky[0]}`。回到范围内目标 `{target}`。"
+                "公开资料查询只能使用 web_search/web_fetch。"
             ),
-            required_evidence="next execution must target the declared mission scope",
+            required_evidence="下一次执行必须指向声明的任务范围",
         )
 
     def _detect_skill_tool_issue(self, recent: list[dict[str, Any]]) -> ObserverDecision:
@@ -462,15 +460,14 @@ class ObserverAgent:
             return ObserverDecision.none()
         return ObserverDecision(
             verdict="L1",
-            rationale="Skill tool call failed or returned no usable skill match.",
-            evidence=[f"{tool} produced a skill lookup/activation error"],
+            rationale="Skill 工具调用失败，或没有返回可用 skill 匹配。",
+            evidence=[f"{tool} 产生 skill 查找/激活错误"],
             guidance=(
-                "Stop repeating the failed skill action. Inspect the skill tool result, then either call "
-                "skill_search with a more specific evidence-based query or activate exactly one valid skill id "
-                "returned by skill_search. If no skill matches, return to normal tools and verify the hypothesis."
+                "停止重复失败的 skill 动作。先检查 skill 工具结果；然后用更具体、基于证据的查询调用 "
+                "skill_search，或只激活 skill_search 返回的一个有效 skill id。若无匹配，回到普通工具验证假设。"
             ),
-            skill_signal="skill_tool_issue: use returned skill ids only; do not invent skill ids",
-            required_evidence="the next skill action must show the returned skill id or a revised evidence-based query",
+            skill_signal="skill_tool_issue：只能使用返回的 skill id，不要编造 skill id",
+            required_evidence="下一次 skill 动作必须展示返回的 skill id，或展示修订后的基于证据的查询",
         )
 
     def _detect_low_evidence_execution(self, recent: list[dict[str, Any]]) -> ObserverDecision:
@@ -483,13 +480,12 @@ class ObserverAgent:
         tools = ", ".join(str(row.get("tool", "")) for row in weak_recent)
         return ObserverDecision(
             verdict="L2",
-            rationale="Recent execution results lack concrete observable evidence.",
-            evidence=[f"last 2 execution results are low-evidence ({tools})"],
+            rationale="近期执行结果缺少具体可观察证据。",
+            evidence=[f"最近 2 次执行结果证据强度不足（{tools}）"],
             guidance=(
-                "Do not trust summarized success or vague output. Next step must state the hypothesis, run one precise "
-                "verification probe, and preserve raw status/headers/body or stdout/stderr."
+                "不要相信概括式成功或模糊输出。下一步必须说明假设，执行一次精确验证，并保留原始状态码、响应头、响应体或 stdout/stderr。"
             ),
-            required_evidence="raw status/headers/body or stdout/stderr that confirms, denies, or narrows the hypothesis",
+            required_evidence="能确认、否定或收窄假设的原始状态码、响应头、响应体或 stdout/stderr",
         )
 
     def _round_evidence_gap(
@@ -507,16 +503,15 @@ class ObserverAgent:
             return ObserverDecision.none()
         return ObserverDecision(
             verdict="L2",
-            rationale="Round executed tools but did not add trustworthy route evidence to memory.",
+            rationale="本轮执行了工具，但没有向记忆增加可信路线证据。",
             evidence=[
-                "findings/leads did not change",
-                "recent outputs do not provide enough concrete evidence for route trust",
+                "findings/leads 没有变化",
+                "近期输出不足以为当前路线提供具体证据",
             ],
             guidance=(
-                "Before continuing, close the evidence gap: identify the current hypothesis, run the smallest verification "
-                "that can confirm/deny it, and update findings/leads with the raw observable result or a dead end."
+                "继续前先补齐证据缺口：明确当前假设，运行能确认/否定它的最小验证，并用原始可观察结果更新 findings/leads 或 dead_ends。"
             ),
-            required_evidence="memory must record the raw observable result or a reliable dead end",
+            required_evidence="记忆必须记录原始可观察结果，或一个可靠 dead end",
         )
 
     def _is_evidence_audit_exempt(self, row: dict[str, Any]) -> bool:
@@ -562,13 +557,12 @@ class ObserverAgent:
             return ObserverDecision.none()
         return ObserverDecision(
             verdict="L4",
-            rationale="Main agent repeated the same tool/input without new evidence.",
-            evidence=["same tool and similar parameters repeated at least 3 times"],
+            rationale="主 agent 重复了同类工具/输入，但没有获得新证据。",
+            evidence=["同一工具和相似参数至少重复 3 次"],
             guidance=(
-                "Stop repeating the same tool/input. Next action must change the hypothesis: narrow the target, "
-                "change the input point, inspect raw response/status, or return to the most concrete lead."
+                "停止重复同一工具/输入。下一步必须改变假设：收窄目标、改变输入点、检查原始响应/状态，或回到最具体线索。"
             ),
-            required_evidence="new raw evidence from a changed hypothesis or input point",
+            required_evidence="来自已改变假设或输入点的新原始证据",
         )
 
     def _detect_failure_loop(self, recent: list[dict[str, Any]]) -> ObserverDecision:
@@ -582,13 +576,12 @@ class ObserverAgent:
             return ObserverDecision.none()
         return ObserverDecision(
             verdict="ENV",
-            rationale="Recent tools look blocked by failure, empty output, or setup errors.",
-            evidence=["last 3 tool results look like failures, empty responses, or setup errors"],
+            rationale="近期工具疑似被失败、空输出或环境配置错误阻塞。",
+            evidence=["最近 3 次工具结果表现为失败、空响应或配置错误"],
             guidance=(
-                "Stop stacking payloads on a failing path. Next step must print raw status, headers/body or stderr, "
-                "identify the failure cause, and run one smaller verification probe before continuing."
+                "停止在失败路径上叠 payload。下一步必须打印原始状态、响应头/响应体或 stderr，定位失败原因，再运行一个更小的验证探针。"
             ),
-            required_evidence="raw failure details and one smaller environment/target reachability check",
+            required_evidence="原始失败细节，以及一个更小的环境/目标可达性检查",
         )
 
     def _detect_local_script_error_loop(self, recent: list[dict[str, Any]]) -> ObserverDecision:
@@ -604,13 +597,12 @@ class ObserverAgent:
             return ObserverDecision.none()
         return ObserverDecision(
             verdict="L1",
-            rationale="Local script or shell quoting errors repeated before producing target evidence.",
-            evidence=["repeated local SyntaxError/quoting errors"],
+            rationale="本地脚本或 shell 引号错误反复出现，尚未产生目标证据。",
+            evidence=["反复出现本地 SyntaxError/引号错误"],
             guidance=(
-                "Stop retrying malformed inline code. Use a minimal Python heredoc or save a short script, "
-                "then print raw status/stdout/stderr from one targeted verification."
+                "停止重试畸形内联代码。使用最小 Python heredoc 或保存短脚本，再从一次定向验证中打印原始状态/stdout/stderr。"
             ),
-            required_evidence="successful local script execution plus raw target/tool output",
+            required_evidence="本地脚本成功执行，以及原始目标/工具输出",
         )
 
     def audit_give_up(
@@ -625,7 +617,7 @@ class ObserverAgent:
         if captured_flags:
             return ObserverDecision(
                 verdict="OK",
-                rationale="Stop is acceptable because at least one flag has already been captured.",
+                rationale="已捕获至少一个 flag，停止请求可以接受。",
                 observer_enforcement_state="allow_stop",
             ).normalised()
 
@@ -649,23 +641,22 @@ class ObserverAgent:
         if has_concrete and has_boundary:
             return ObserverDecision(
                 verdict="OK",
-                rationale="Stop is acceptable: evidence and a failure boundary are recorded.",
-                failure_boundary=str(memory.get("failure_boundary") or (dead_ends[-1] if dead_ends else "documented boundary")),
+                rationale="已有证据和失败边界记录，停止请求可以接受。",
+                failure_boundary=str(memory.get("failure_boundary") or (dead_ends[-1] if dead_ends else "已记录边界")),
                 observer_enforcement_state="allow_stop",
             ).normalised()
 
         lead = self.last_good_lead(memory) or str(mission.get("target") or "current target")
         return ObserverDecision(
             verdict="L2",
-            rationale="Give-up request lacks enough reproducible evidence or an explicit failure boundary.",
-            evidence=["give_up requested before enough evidence was recorded"],
+            rationale="give_up 请求缺少足够可复现证据或明确失败边界。",
+            evidence=["在记录足够证据前请求 give_up"],
             guidance=(
-                "Do not stop yet. Run one targeted verification tied to the strongest current lead, preserve raw output, "
-                "or call give_up again with failure_boundary and required_evidence."
+                "暂时不要停止。围绕当前最强线索运行一次定向验证并保留原始输出；或携带 failure_boundary 和 required_evidence 再次调用 give_up。"
             ),
             next_verification=lead,
-            failure_boundary="missing_evidence",
-            required_evidence="raw status/headers/body or stdout/stderr proving the current lead is exhausted",
+            failure_boundary="缺少证据",
+            required_evidence="证明当前线索已耗尽的原始状态码、响应头、响应体或 stdout/stderr",
             observer_enforcement_state="blocked",
         ).normalised()
 
@@ -686,7 +677,7 @@ class ObserverAgent:
         if _route_memory_changed(memory_before, memory_after) or any(self._has_concrete_evidence(row) for row in calls):
             return ObserverDecision(
                 verdict="OK",
-                rationale="Pending Observer guidance appears addressed by new evidence or memory changes.",
+                rationale="待处理 Observer 建议已被新证据或记忆变化覆盖。",
                 observer_enforcement_state="resolved",
             ).normalised()
 
@@ -697,12 +688,12 @@ class ObserverAgent:
 
         return ObserverDecision(
             verdict="L3",
-            rationale="Main agent moved on before resolving the pending Observer guidance.",
-            evidence=["pending Observer guidance was not resolved by new evidence"],
+            rationale="主 agent 在解决待处理 Observer 建议前改变了方向。",
+            evidence=["待处理 Observer 建议没有被新证据解决"],
             guidance=(
                 pending.next_verification
                 or pending.guidance
-                or "Resolve the previous Observer verification before changing direction."
+                or "改变方向前先解决上一条 Observer 验证要求。"
             ),
             next_verification=pending.next_verification,
             required_evidence=pending.required_evidence,

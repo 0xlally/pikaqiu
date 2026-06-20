@@ -66,7 +66,7 @@ def test_observer_injection_is_runtime_telemetry() -> None:
 
     assert "[RUNTIME_OBSERVER_AUDIT source=observer_agent not_user_request]" in text
     assert "[/RUNTIME_OBSERVER_AUDIT]" in text
-    assert "not human guidance or a user request" in text
+    assert "不是人工指导或用户请求" in text
     assert "verdict=L4" in text
 
 

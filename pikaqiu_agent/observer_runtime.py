@@ -338,6 +338,10 @@ class ObserverRuntime:
             "memory_patch object with only findings/leads/dead_ends arrays; skill_signal string; "
             "experience_refs array; primary_hypothesis string; failure_boundary string; blocked_prerequisite string; "
             "observer_enforcement_state string; agent_override_reason string.\n\n"
+            "Output language rule: JSON keys, tool names, and verdict enum values must stay in English, "
+            "but every natural-language value in rationale, evidence, guidance, next_verification, "
+            "required_evidence, memory_patch, skill_signal, primary_hypothesis, failure_boundary, "
+            "blocked_prerequisite, and agent_override_reason must be Simplified Chinese.\n\n"
             "Verdict meanings: OK normal progress, no correction. WATCH possible context/tool-feedback drift, low efficiency, "
             "weak evidence, or mild repetition, but no interrupt. L1 tool usage error: bad args, wrong tool, path/encoding/"
             "request construction problem; prefer self-correction. L2 insufficient information: missing reconnaissance, "
@@ -400,7 +404,7 @@ class ObserverRuntime:
             "verdict=OK. If evidence is weak or strategy might drift but the failure is not clear, "
             "call observer_finish with verdict=WATCH. Use L1/L2/L3/L4/ENV only when the next main-agent action should change immediately. "
             "Never output a route because a technology name was spotted; output only the evidence gap and the next "
-            "verification needed to close it.\n\n"
+            "verification needed to close it. Natural-language values in observer_finish args must be Simplified Chinese.\n\n"
             "Choose exactly one tool now. If enough evidence exists, call observer_finish."
         )
 
@@ -524,7 +528,7 @@ class ObserverRuntime:
         skill_signal = str(payload.get("skill_signal") or fallback.skill_signal)
         if used_skills and not skill_signal:
             skill_signal = (
-                f"activate_skill: {used_skills[-1]} because Observer loaded it as relevant to the current evidence"
+                f"建议 activate_skill({used_skills[-1]})，因为 Observer 判断该 skill 与当前证据相关"
             )
         decision = ObserverDecision(
             verdict=str(payload.get("verdict") or payload.get("conclusion") or fallback.verdict),
@@ -560,7 +564,7 @@ class ObserverRuntime:
         else:
             decision = ObserverDecision(
                 verdict="OK",
-                rationale=reason or "Observer runtime did not produce an interrupting correction.",
+                rationale=reason or "Observer runtime 未产生需要打断的纠偏结论。",
             ).normalised()
         decision.experience_refs = list(dict.fromkeys(decision.experience_refs + used_experience))
         return decision.normalised()
