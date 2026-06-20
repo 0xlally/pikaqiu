@@ -57,7 +57,6 @@ const tabs: { id: AppTab; label: string }[] = [
   { id: "timeline", label: "时间线" },
   { id: "observer", label: "Observer" },
   { id: "memory", label: "记忆" },
-  { id: "evidence", label: "证据" },
   { id: "knowledge", label: "知识库" }
 ];
 
@@ -754,8 +753,12 @@ function MissionDetailHeader({
       </section>
     );
   }
-  const mainRounds = detail?.rounds.filter((round) => round.worker_role === "main").length || 0;
-  const progress = mission.status === "done" ? 100 : percentage(mainRounds, mission.max_rounds);
+  const currentRound = Math.max(
+    0,
+    ...(detail?.rounds.map((round) => round.round_no) || []),
+    ...(detail?.events.map((event) => event.round_no).filter((roundNo) => roundNo > 0) || [])
+  );
+  const progress = mission.status === "done" ? 100 : percentage(currentRound, mission.max_rounds);
   const active = isActiveMission(mission, detail?.thread_alive);
   return (
     <section className="mission-hero">
@@ -773,7 +776,7 @@ function MissionDetailHeader({
         <div className="command-copy">
           <span className={`status-badge ${statusTone(mission.status)}`}>{mission.status}</span>
           <strong>
-            R{String(mainRounds).padStart(2, "0")} / {mission.max_rounds}
+            R{String(currentRound).padStart(2, "0")} / {mission.max_rounds}
           </strong>
           <div className="progress-line" aria-label={`任务进度 ${progress}%`}>
             <span style={{ width: `${progress}%` }} />
@@ -1009,8 +1012,6 @@ function MissionPane({
     content = <ObserverTab detail={detail} />;
   } else if (tab === "memory") {
     content = <MemoryTab detail={detail} />;
-  } else if (tab === "evidence") {
-    content = <EvidenceTab detail={detail} />;
   } else {
     content = <KnowledgeTab mission={detail.mission} onError={onError} onNotice={onNotice} />;
   }
@@ -1244,24 +1245,6 @@ function MemoryTab({ detail }: { detail: MissionDetail }) {
         </section>
       ))}
     </div>
-  );
-}
-
-function EvidenceTab({ detail }: { detail: MissionDetail }) {
-  const evidence = detail.events.filter((event) =>
-    ["flag", "command", "knowledge", "error", "sandbox"].includes(event.type)
-  );
-  return (
-    <section className="panel collaboration-panel">
-      <div className="section-title">
-        <Database />
-        <div>
-          <h2>证据仓</h2>
-          <p>聚合命令输出、知识库命中、错误和 Flag。</p>
-        </div>
-      </div>
-      {evidence.length ? <EventStream events={evidence.slice().reverse()} /> : <EmptyState title="暂无证据" body="关键输出会在任务运行后自动进入这里。" large />}
-    </section>
   );
 }
 

@@ -242,4 +242,4 @@ export type ConfigSaveResponse = {
   errors?: Record<string, string>;
 };
 
-export type AppTab = "overview" | "timeline" | "observer" | "memory" | "evidence" | "knowledge";
+export type AppTab = "overview" | "timeline" | "observer" | "memory" | "knowledge";
