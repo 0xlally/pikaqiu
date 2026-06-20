@@ -26,17 +26,16 @@ def experience_craft_root(workspace_root: Path) -> Path:
 
 
 def build_experience_query(mission: dict[str, Any], memory: dict[str, Any]) -> str:
-    idea = memory.get("idea_board") if isinstance(memory.get("idea_board"), dict) else {}
-    board = memory.get("memory_board") if isinstance(memory.get("memory_board"), dict) else {}
     pieces = [
         mission.get("target", ""),
         mission.get("goal", ""),
         " ".join(str(item) for item in mission.get("domains", [])),
-        idea.get("active_direction", ""),
-        idea.get("primary_hypothesis", ""),
-        idea.get("risk_or_blocker", ""),
-        " ".join(str(item) for item in board.get("facts", [])[:6]),
-        " ".join(str(item) for item in board.get("constraints", [])[:4]),
+        memory.get("highest_value_lead", ""),
+        memory.get("blocked_reason", ""),
+        memory.get("next_one_command", ""),
+        " ".join(str(item) for item in memory.get("findings", [])[:6]),
+        " ".join(str(item) for item in memory.get("leads", [])[:6]),
+        " ".join(str(item) for item in memory.get("credentials", [])[:4]),
     ]
     return " ".join(str(piece) for piece in pieces if str(piece).strip())
 

@@ -121,18 +121,9 @@ export type MemoryState = {
   next_focus: unknown[];
   nodes: Record<string, unknown>;
   topology: unknown[];
-  idea_board: Record<string, unknown>;
-  memory_board: Record<string, unknown>;
   highest_value_lead: string;
   blocked_reason: string;
   next_one_command: string;
-  primary_hypothesis: string;
-  next_verification: string;
-  failure_boundary: string;
-  blocked_prerequisite: string;
-  required_next_evidence: string;
-  observer_enforcement_state: string;
-  agent_override_reason: string;
   updated_at: string;
 };
 

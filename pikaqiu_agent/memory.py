@@ -142,167 +142,6 @@ def smart_trim(items: list[str], max_count: int) -> list[str]:
 
 # ── Long-term memory retrieval ────────────────────────────────────────
 
-def normalize_shared_memory_state(memory: dict[str, Any]) -> dict[str, Any]:
-    """Normalize the two-board memory model and rebuild legacy projections."""
-    if not isinstance(memory, dict):
-        memory = {}
-    result = dict(memory)
-    legacy_next_one_command = str(result.get("next_one_command") or "").strip()
-    legacy_next_verification = str(result.get("next_verification") or "").strip()
-    raw_idea_board = result.get("idea_board") if isinstance(result.get("idea_board"), dict) else {}
-    explicit_board_next = bool(
-        str(raw_idea_board.get("next_verification") or raw_idea_board.get("next_one_command") or "").strip()
-        or _as_str_list(raw_idea_board.get("next_actions"))
-    )
-
-    idea_board = _normalize_idea_board(result.get("idea_board"), result)
-    memory_board = _normalize_memory_board(result.get("memory_board"), result)
-
-    result["idea_board"] = idea_board
-    result["memory_board"] = memory_board
-
-    result["findings"] = smart_trim(memory_board.get("facts", []), max_count=20)
-    result["leads"] = smart_trim(idea_board.get("candidate_directions", []), max_count=12)
-    result["dead_ends"] = smart_trim(memory_board.get("failed_attempts", []), max_count=12)
-    result["credentials"] = _dedupe(memory_board.get("credentials", []))[:16]
-    result["next_focus"] = _dedupe(idea_board.get("next_actions", []))[:8]
-    result["nex_focus"] = result["next_focus"]
-    result["nodes"] = memory_board.get("nodes", {})
-    result["topology"] = memory_board.get("topology", [])
-
-    projected_next = idea_board.get("next_verification", "")
-    result["highest_value_lead"] = idea_board.get("active_direction", "")
-    result["blocked_reason"] = idea_board.get("risk_or_blocker", "")
-    if explicit_board_next and projected_next and projected_next != legacy_next_verification:
-        result["next_one_command"] = projected_next
-    else:
-        result["next_one_command"] = legacy_next_one_command or projected_next
-    result["primary_hypothesis"] = idea_board.get("primary_hypothesis", "")
-    result["next_verification"] = projected_next if explicit_board_next else (legacy_next_verification or projected_next)
-    result["failure_boundary"] = idea_board.get("failure_boundary", "")
-    result["blocked_prerequisite"] = idea_board.get("blocked_prerequisite", "")
-    result["required_next_evidence"] = idea_board.get("required_next_evidence", "")
-    return result
-
-
-def _first_str(*values: Any) -> str:
-    for value in values:
-        text = str(value or "").strip()
-        if text:
-            return text
-    return ""
-
-
-def _normalize_idea_board(board: Any, legacy: dict[str, Any]) -> dict[str, Any]:
-    if not isinstance(board, dict):
-        board = {}
-
-    candidate_directions = _dedupe(
-        _as_str_list(board.get("candidate_directions"))
-        + _as_str_list(board.get("leads"))
-        + _as_str_list(legacy.get("leads"))
-    )
-    next_actions = _dedupe(
-        _as_str_list(board.get("next_actions"))
-        + _as_str_list(board.get("next_focus"))
-        + _as_str_list(legacy.get("next_focus"))
-    )
-    abandoned = _dedupe(
-        _as_str_list(board.get("abandoned"))
-        + _as_str_list(board.get("dead_ends"))
-        + _as_str_list(legacy.get("dead_ends"))
-    )
-
-    normalized = {
-        "active_direction": _first_str(
-            board.get("active_direction"),
-            board.get("highest_value_lead"),
-            legacy.get("highest_value_lead"),
-            candidate_directions[0] if candidate_directions else "",
-        ),
-        "primary_hypothesis": _first_str(
-            board.get("primary_hypothesis"),
-            legacy.get("primary_hypothesis"),
-        ),
-        "next_verification": _first_str(
-            board.get("next_verification"),
-            board.get("next_one_command"),
-            legacy.get("next_verification"),
-            legacy.get("next_one_command"),
-            next_actions[0] if next_actions else "",
-        ),
-        "next_actions": smart_trim(next_actions, max_count=8),
-        "candidate_directions": smart_trim(candidate_directions, max_count=12),
-        "risk_or_blocker": _first_str(
-            board.get("risk_or_blocker"),
-            board.get("blocked_reason"),
-            legacy.get("blocked_reason"),
-        ),
-        "failure_boundary": _first_str(
-            board.get("failure_boundary"),
-            legacy.get("failure_boundary"),
-        ),
-        "blocked_prerequisite": _first_str(
-            board.get("blocked_prerequisite"),
-            legacy.get("blocked_prerequisite"),
-        ),
-        "required_next_evidence": _first_str(
-            board.get("required_next_evidence"),
-            legacy.get("required_next_evidence"),
-        ),
-        "abandoned": smart_trim(abandoned, max_count=12),
-    }
-    return _drop_empty_board_fields(normalized)
-
-
-def _normalize_memory_board(board: Any, legacy: dict[str, Any]) -> dict[str, Any]:
-    if not isinstance(board, dict):
-        board = {}
-
-    nodes = _normalize_nodes(board.get("nodes", legacy.get("nodes", {})), legacy.get("nodes", {}))
-    topology = _dedupe(
-        _as_str_list(board.get("topology"))
-        + _as_str_list(legacy.get("topology"))
-    )[:20]
-
-    normalized = {
-        "facts": smart_trim(
-            _dedupe(
-                _as_str_list(board.get("facts"))
-                + _as_str_list(board.get("findings"))
-                + _as_str_list(legacy.get("findings"))
-            ),
-            max_count=24,
-        ),
-        "evidence": smart_trim(_dedupe(_as_str_list(board.get("evidence"))), max_count=16),
-        "constraints": smart_trim(_dedupe(_as_str_list(board.get("constraints"))), max_count=12),
-        "credentials": _dedupe(
-            _as_str_list(board.get("credentials"))
-            + _as_str_list(legacy.get("credentials"))
-        )[:16],
-        "failed_attempts": smart_trim(
-            _dedupe(
-                _as_str_list(board.get("failed_attempts"))
-                + _as_str_list(board.get("dead_ends"))
-                + _as_str_list(legacy.get("dead_ends"))
-            ),
-            max_count=16,
-        ),
-        "nodes": nodes,
-        "topology": topology,
-    }
-    if nodes:
-        validation_memory = dict(legacy)
-        validation_memory["findings"] = normalized.get("facts", [])
-        validation_memory["credentials"] = normalized.get("credentials", [])
-        _validate_nodes(nodes, validation_memory)
-    return _drop_empty_board_fields(normalized)
-
-
-def _drop_empty_board_fields(board: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in board.items() if value not in ("", [], {})}
-
-
 def retrieve_forgotten_context(
     store,
     mission_id: str,
@@ -406,8 +245,6 @@ def normalize_memory_enhanced(
 
     result = {
         "summary": str(payload.get("summary") or fallback.get("summary", "")),
-        "idea_board": payload.get("idea_board", fallback.get("idea_board", {})),
-        "memory_board": payload.get("memory_board", fallback.get("memory_board", {})),
         "findings": _dedupe(_as_str_list(payload.get("findings", fallback.get("findings", [])))),
         "leads": _dedupe(_as_str_list(payload.get("leads", fallback.get("leads", [])))),
         "dead_ends": _dedupe(
@@ -444,44 +281,6 @@ def normalize_memory_enhanced(
             or updates.get("next_one_command")
             or fallback.get("next_one_command", "")
         ).strip(),
-        "primary_hypothesis": str(
-            payload.get("primary_hypothesis")
-            or updates.get("primary_hypothesis")
-            or fallback.get("primary_hypothesis", "")
-        ).strip(),
-        "next_verification": str(
-            payload.get("next_verification")
-            or updates.get("next_verification")
-            or fallback.get("next_verification", "")
-            or payload.get("next_one_command")
-            or updates.get("next_one_command")
-            or fallback.get("next_one_command", "")
-        ).strip(),
-        "failure_boundary": str(
-            payload.get("failure_boundary")
-            or updates.get("failure_boundary")
-            or fallback.get("failure_boundary", "")
-        ).strip(),
-        "blocked_prerequisite": str(
-            payload.get("blocked_prerequisite")
-            or updates.get("blocked_prerequisite")
-            or fallback.get("blocked_prerequisite", "")
-        ).strip(),
-        "required_next_evidence": str(
-            payload.get("required_next_evidence")
-            or updates.get("required_next_evidence")
-            or fallback.get("required_next_evidence", "")
-        ).strip(),
-        "observer_enforcement_state": str(
-            payload.get("observer_enforcement_state")
-            or updates.get("observer_enforcement_state")
-            or fallback.get("observer_enforcement_state", "")
-        ).strip(),
-        "agent_override_reason": str(
-            payload.get("agent_override_reason")
-            or updates.get("agent_override_reason")
-            or fallback.get("agent_override_reason", "")
-        ).strip(),
     }
     
     # Smart trimming with importance scoring
@@ -496,9 +295,6 @@ def normalize_memory_enhanced(
     )
     if nodes:
         result["nodes"] = nodes
-        memory_board = dict(result.get("memory_board") or {})
-        memory_board["nodes"] = nodes
-        result["memory_board"] = memory_board
 
     # Topology: deduplicated list of network connections
     topology = _dedupe(
@@ -506,15 +302,12 @@ def normalize_memory_enhanced(
     )
     if topology:
         result["topology"] = topology
-        memory_board = dict(result.get("memory_board") or {})
-        memory_board["topology"] = topology
-        result["memory_board"] = memory_board
 
     # Node status validation: soft consistency check to prevent memory hallucination
     if nodes:
         _validate_nodes(nodes, result)
 
-    return normalize_shared_memory_state(result)
+    return result
 
 
 def _validate_nodes(nodes: dict[str, dict[str, Any]], memory: dict[str, Any]) -> None:

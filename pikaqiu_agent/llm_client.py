@@ -330,7 +330,7 @@ class LLMClient:
     ) -> LLMResult:
         if any(
             key in result.payload
-            for key in ("summary", "idea_board", "memory_board", "findings", "leads", "dead_ends", "next_focus")
+            for key in ("summary", "findings", "leads", "dead_ends", "next_focus")
         ):
             return result
 

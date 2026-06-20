@@ -681,31 +681,8 @@ class ObserverRuntime:
         }
 
     def _memory_view(self, memory: dict[str, Any]) -> dict[str, Any]:
-        idea_board = memory.get("idea_board") if isinstance(memory.get("idea_board"), dict) else {}
-        memory_board = memory.get("memory_board") if isinstance(memory.get("memory_board"), dict) else {}
         return {
             "summary": memory.get("summary", ""),
-            "idea_board": {
-                "active_direction": idea_board.get("active_direction", ""),
-                "primary_hypothesis": idea_board.get("primary_hypothesis", ""),
-                "next_verification": idea_board.get("next_verification", ""),
-                "next_actions": _as_list(idea_board.get("next_actions", []))[-6:],
-                "candidate_directions": _as_list(idea_board.get("candidate_directions", []))[-6:],
-                "risk_or_blocker": idea_board.get("risk_or_blocker", ""),
-                "failure_boundary": idea_board.get("failure_boundary", ""),
-                "blocked_prerequisite": idea_board.get("blocked_prerequisite", ""),
-                "required_next_evidence": idea_board.get("required_next_evidence", ""),
-                "abandoned": _as_list(idea_board.get("abandoned", []))[-6:],
-            },
-            "memory_board": {
-                "facts": _as_list(memory_board.get("facts", []))[-12:],
-                "evidence": _as_list(memory_board.get("evidence", []))[-8:],
-                "constraints": _as_list(memory_board.get("constraints", []))[-8:],
-                "credentials": _as_list(memory_board.get("credentials", []))[-4:],
-                "failed_attempts": _as_list(memory_board.get("failed_attempts", []))[-8:],
-                "nodes": memory_board.get("nodes", {}),
-                "topology": _as_list(memory_board.get("topology", []))[-10:],
-            },
             "findings": memory.get("findings", [])[-12:],
             "leads": memory.get("leads", [])[-12:],
             "dead_ends": memory.get("dead_ends", [])[-8:],
@@ -714,13 +691,8 @@ class ObserverRuntime:
             "highest_value_lead": memory.get("highest_value_lead", ""),
             "blocked_reason": memory.get("blocked_reason", ""),
             "next_one_command": memory.get("next_one_command", ""),
-            "primary_hypothesis": memory.get("primary_hypothesis", ""),
-            "next_verification": memory.get("next_verification", ""),
-            "failure_boundary": memory.get("failure_boundary", ""),
-            "blocked_prerequisite": memory.get("blocked_prerequisite", ""),
-            "required_next_evidence": memory.get("required_next_evidence", ""),
-            "observer_enforcement_state": memory.get("observer_enforcement_state", ""),
-            "agent_override_reason": memory.get("agent_override_reason", ""),
+            "nodes": memory.get("nodes", {}),
+            "topology": _as_list(memory.get("topology", []))[-10:],
         }
 
     def _tool_call_views(

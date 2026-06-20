@@ -695,8 +695,8 @@ function FunctionMap({
     },
     {
       label: "Memory",
-      title: detail.memory.highest_value_lead || detail.memory.primary_hypothesis || "暂无主线",
-      body: compact(detail.memory.next_one_command || detail.memory.next_verification || detail.memory.summary || "等待下一轮压缩", 92),
+      title: detail.memory.highest_value_lead || "暂无主线",
+      body: compact(detail.memory.next_one_command || detail.memory.summary || "等待下一轮压缩", 92),
       meta: formatTime(detail.memory.updated_at),
       icon: <Brain />,
       tab: "memory",
@@ -1069,10 +1069,9 @@ function MemoryTab({ detail }: { detail: MissionDetail }) {
           <p>{memory.summary || "暂无记忆摘要。"}</p>
         </div>
         <div className="brief-grid">
-          <BriefItem label="当前假设" value={memory.primary_hypothesis || "暂无"} />
-          <BriefItem label="下一步验证" value={memory.next_verification || "暂无"} />
-          <BriefItem label="失败边界" value={memory.failure_boundary || "暂无"} />
-          <BriefItem label="需要证据" value={memory.required_next_evidence || "暂无"} />
+          <BriefItem label="最高价值线索" value={memory.highest_value_lead || "暂无"} />
+          <BriefItem label="当前阻塞" value={memory.blocked_reason || "暂无"} />
+          <BriefItem label="下一条命令" value={memory.next_one_command || "暂无"} />
         </div>
       </section>
       {groups.map(([label, value]) => (

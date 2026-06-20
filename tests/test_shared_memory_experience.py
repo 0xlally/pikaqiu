@@ -115,19 +115,16 @@ class SharedMemoryExperienceTests(unittest.TestCase):
             self.assertFalse(experience.distilled_experience_root(root).exists())
             self.assertEqual(experience.search_experience(root, "not reproduced payload", limit=5), [])
 
-    def test_volatile_context_orders_boards_and_injects_experience_hints(self):
+    def test_volatile_context_uses_single_layer_memory_and_injects_experience_hints(self):
         memory = {
-            "idea_board": {
-                "active_direction": "verify upload parser",
-                "primary_hypothesis": "polyglot payload reaches parser",
-                "next_verification": "curl -F file=@polyglot.jpg http://x/upload",
-                "failure_boundary": "upload rejects all image types",
-            },
-            "memory_board": {
-                "facts": ["upload endpoint exists"],
-                "evidence": ["GET /upload returned 200"],
-                "failed_attempts": ["directory brute force timed out"],
-            },
+            "summary": "upload endpoint exists; parser behavior is unknown",
+            "findings": ["upload endpoint exists"],
+            "leads": ["try polyglot payload"],
+            "dead_ends": ["directory brute force timed out"],
+            "next_focus": ["curl -F file=@polyglot.jpg http://x/upload"],
+            "highest_value_lead": "verify upload parser",
+            "blocked_reason": "need upload response body",
+            "next_one_command": "curl -F file=@polyglot.jpg http://x/upload",
         }
         hints = "## Distilled Experience Hints\n- [distilled] .pikaqiu_agent/experience_distilled/a.md: upload parser"
 
@@ -139,14 +136,13 @@ class SharedMemoryExperienceTests(unittest.TestCase):
             experience_hints=hints,
         )
 
-        self.assertLess(context.index("Idea Board"), context.index("Memory Board"))
-        self.assertLess(context.index("Memory Board"), context.index("Distilled Experience Hints"))
-        self.assertIn("next_verification: curl -F file=@polyglot.jpg http://x/upload", context)
-        self.assertIn("failure_boundary: upload rejects all image types", context)
+        self.assertLess(context.index("Current Memory"), context.index("Distilled Experience Hints"))
+        self.assertIn("verify upload parser", context)
+        self.assertIn("curl -F file=@polyglot.jpg http://x/upload", context)
         self.assertIn("upload endpoint exists", context)
         self.assertNotIn("tool_call_log", context)
 
-    def test_observer_runtime_memory_view_exposes_two_boards(self):
+    def test_observer_runtime_memory_view_exposes_single_layer_memory(self):
         try:
             from pikaqiu_agent.observer_runtime import ObserverRuntime
         except ModuleNotFoundError as exc:
@@ -155,23 +151,37 @@ class SharedMemoryExperienceTests(unittest.TestCase):
         runtime = object.__new__(ObserverRuntime)
         view = runtime._memory_view(
             {
-                "idea_board": {
-                    "active_direction": "probe admin",
-                    "next_actions": ["curl -i http://x/admin"],
-                },
-                "memory_board": {
-                    "facts": ["admin route exists"],
-                    "evidence": ["HTTP 401 from /admin"],
-                    "credentials": ["admin:admin"],
-                },
+                "summary": "admin route exists",
+                "findings": ["admin route exists"],
+                "leads": ["probe admin"],
+                "next_focus": ["curl -i http://x/admin"],
+                "credentials": ["admin:admin"],
+                "highest_value_lead": "probe admin",
+                "blocked_reason": "need auth response",
+                "next_one_command": "curl -i http://x/admin",
             }
         )
 
-        self.assertEqual(view["idea_board"]["active_direction"], "probe admin")
-        self.assertEqual(view["idea_board"]["next_actions"], ["curl -i http://x/admin"])
-        self.assertEqual(view["memory_board"]["facts"], ["admin route exists"])
-        self.assertEqual(view["memory_board"]["evidence"], ["HTTP 401 from /admin"])
-        self.assertEqual(view["memory_board"]["credentials"], ["admin:admin"])
+        self.assertEqual(view["highest_value_lead"], "probe admin")
+        self.assertEqual(view["next_focus"], ["curl -i http://x/admin"])
+        self.assertEqual(view["findings"], ["admin route exists"])
+        self.assertEqual(view["credentials"], ["admin:admin"])
+        self.assertEqual(
+            set(view),
+            {
+                "summary",
+                "findings",
+                "leads",
+                "dead_ends",
+                "next_focus",
+                "credentials",
+                "highest_value_lead",
+                "blocked_reason",
+                "next_one_command",
+                "nodes",
+                "topology",
+            },
+        )
 
 
 if __name__ == "__main__":

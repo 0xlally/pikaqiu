@@ -31,8 +31,6 @@ def _build_memory_section(memory: dict[str, Any]) -> str:
     """Build the memory section text from memory dict."""
     if not (
         memory.get("summary")
-        or memory.get("idea_board")
-        or memory.get("memory_board")
         or memory.get("findings")
         or memory.get("credentials")
     ):
@@ -75,76 +73,6 @@ def _build_memory_section(memory: dict[str, Any]) -> str:
     if memory.get("topology"):
         topo_str = " | ".join(memory["topology"][:10])
         parts.append(f"**🗺️ 网络拓扑**: {topo_str}")
-    return "\n\n".join(parts)
-
-
-def _build_memory_section_v2(memory: dict[str, Any]) -> str:
-    """Build the low-noise two-board memory section for the solver."""
-    if not isinstance(memory, dict):
-        return ""
-
-    parts: list[str] = []
-    idea = memory.get("idea_board") if isinstance(memory.get("idea_board"), dict) else {}
-    board = memory.get("memory_board") if isinstance(memory.get("memory_board"), dict) else {}
-
-    if memory.get("summary"):
-        parts.append(f"**Situation summary**: {memory['summary']}")
-
-    if idea:
-        lines = ["**Idea Board**:"]
-        for label, key in (
-            ("active_direction", "active_direction"),
-            ("primary_hypothesis", "primary_hypothesis"),
-            ("next_verification", "next_verification"),
-            ("risk_or_blocker", "risk_or_blocker"),
-            ("failure_boundary", "failure_boundary"),
-            ("blocked_prerequisite", "blocked_prerequisite"),
-            ("required_next_evidence", "required_next_evidence"),
-        ):
-            if idea.get(key):
-                lines.append(f"- {label}: {idea[key]}")
-        if idea.get("next_actions"):
-            lines.append("- next_actions: " + " | ".join(str(x) for x in idea["next_actions"][:6]))
-        if idea.get("candidate_directions"):
-            lines.append(
-                "- candidate_directions: "
-                + " | ".join(str(x) for x in idea["candidate_directions"][:6])
-            )
-        if idea.get("abandoned"):
-            lines.append("- abandoned: " + " | ".join(str(x) for x in idea["abandoned"][:6]))
-        parts.append("\n".join(lines))
-
-    if board:
-        lines = ["**Memory Board**:"]
-        if board.get("facts"):
-            lines.append("facts:\n" + "\n".join(f"- {x}" for x in board["facts"][:12]))
-        if board.get("evidence"):
-            lines.append("evidence:\n" + "\n".join(f"- {x}" for x in board["evidence"][:8]))
-        if board.get("constraints"):
-            lines.append("constraints: " + " | ".join(str(x) for x in board["constraints"][:8]))
-        if board.get("credentials"):
-            lines.append("credentials: " + " | ".join(str(x) for x in board["credentials"][:6]))
-        if board.get("failed_attempts"):
-            lines.append(
-                "failed_attempts: " + " | ".join(str(x) for x in board["failed_attempts"][:8])
-            )
-        parts.append("\n".join(lines))
-
-    if memory.get("nodes"):
-        node_lines = ["**Nodes**:"]
-        for ip, node in memory["nodes"].items():
-            role = node.get("role", "unknown")
-            access = node.get("access_level", "none")
-            flags = node.get("flags_found", [])
-            suffix = f" flags={', '.join(flags)}" if flags else ""
-            node_lines.append(f"- {ip} ({role}) access={access}{suffix}")
-        parts.append("\n".join(node_lines))
-
-    if memory.get("topology"):
-        parts.append("**Topology**: " + " | ".join(str(x) for x in memory["topology"][:10]))
-
-    if not parts:
-        return _build_memory_section(memory)
     return "\n\n".join(parts)
 
 
@@ -224,50 +152,9 @@ def build_volatile_context(
     memory: dict[str, Any],
     captured_flags: list[str] | None = None,
     expected_flags: int = 1,
-) -> str:
-    """Build volatile context that changes per round (memory, flag progress).
-
-    This is separated from the stable system prompt so that the system prompt
-    prefix remains identical across iterations, enabling API-level prompt caching.
-    """
-    parts = []
-
-    # Round and flag progress
-    parts.append(f"## 当前状态\n- **当前轮次**: Round {round_no}")
-    flags = captured_flags or []
-    if expected_flags > 1:
-        if flags:
-            flag_list = ", ".join(flags)
-            remaining = max(0, expected_flags - len(flags))
-            parts.append(
-                f"⚠️ **多flag任务**: 本题共需找到 {expected_flags} 个flag。\n"
-                f"   ✅ **已找到 {len(flags)}/{expected_flags}**: {flag_list}\n"
-                f"   还需找到 **{remaining}** 个flag，继续深入渗透！\n"
-                "   多flag往往意味着多个攻击点或多层渗透（如内网横向移动、权限提升后获取更多敏感数据）。"
-            )
-        else:
-            parts.append(
-                f"⚠️ **多flag任务**: 本题共需找到 {expected_flags} 个flag。"
-                "找到一个后**不要停下**，继续深入渗透寻找其余flag。\n"
-                "   多flag往往意味着多个攻击点或多层渗透（如内网横向移动、权限提升后获取更多敏感数据）。"
-            )
-
-    # Memory
-    memory_section = _build_memory_section(memory)
-    parts.append(f"## 当前记忆\n{memory_section if memory_section else '（首轮，无历史记忆）'}")
-
-    return "\n\n".join(parts)
-
-
-def build_volatile_context(
-    *,
-    round_no: int,
-    memory: dict[str, Any],
-    captured_flags: list[str] | None = None,
-    expected_flags: int = 1,
     experience_hints: str = "",
 ) -> str:
-    """Build low-noise volatile context from Idea/Memory boards plus hints."""
+    """Build volatile context from the single-layer mission memory plus hints."""
     parts = [f"## Current State\n- Round: {round_no}"]
     flags = captured_flags or []
     if expected_flags > 1:
@@ -280,9 +167,9 @@ def build_volatile_context(
         else:
             parts.append(f"- Flags: 0/{expected_flags} captured; continue after the first flag.")
 
-    memory_section = _build_memory_section_v2(memory)
+    memory_section = _build_memory_section(memory)
     parts.append(
-        "## Shared Memory\n"
+        "## Current Memory\n"
         + (memory_section if memory_section else "(first round; no shared memory yet)")
     )
     if experience_hints.strip():
@@ -457,97 +344,35 @@ def build_tool_memory_prompt(
     tool_call_log: list[dict[str, Any]],
 ) -> str:
     """Build memory compression prompt for tool-use architecture."""
-    node_hint = ("- **多节点支持**: 如果发现了多个主机/IP/服务，用 nodes 按 IP/主机名分组记录（可选）\n"
-                 "- **拓扑发现**: 如果发现了网络连接关系，记录到 topology（可选）")
-    node_note = "注意: nodes 和 topology 仅在多目标/内网渗透时使用，单目标可省略。"
+    node_hint = (
+        "- Record nodes by IP/hostname when multiple hosts or services matter (optional).\n"
+        "- Record topology only when network relationships are observed (optional)."
+    )
+    node_note = "Use nodes/topology for multi-target or internal-network tasks only; omit them for simple single-target tasks."
 
     return f"""\
-你是 memory agent，把本轮工具调用历史压缩成结构化记忆。
-
-要求：
-- 只保留对后续渗透有用的信息，去重、压缩。
-- summary 用短段落总结"当前阶段 + 关键事实 + 最大阻塞点"。
-- findings 只放已被输出证实的事实。
-- leads 只放下一步可验证的具体假设。
-- dead_ends 写清失败路径和原因。
-- credentials 只记录已确认的凭据。
-- 注意，你需要区分一个发现是幻觉还是真实发现，不要在记忆里误导后续轮次。例如有些命令是本地执行成功，不要写成成功执行，而是写明是本地操作，或者丢弃这种不重要的线索。
-- 如果没有新的发现，那么保持findings等不变
-{node_hint}
-- 输出严格 JSON，第一字符必须是 {{。
-
-任务:
-{_json({"target": mission["target"], "goal": mission["goal"], "round_no": round_no})}
-
-旧记忆:
-{_json(previous_memory)}
-
-本轮工具调用摘要 (最近 {len(tool_call_log)} 条):
-{_json(tool_call_log[-30:])}
-
-返回 JSON:
-{{
-  "summary": "当前态势",
-  "findings": ["..."],
-  "leads": ["..."],
-  "dead_ends": ["..."],
-  "credentials": ["..."],
-  "next_focus": ["..."],
-  "highest_value_lead": "the single most valuable verified lead to close next",
-  "blocked_reason": "what currently prevents flag capture, if known",
-  "next_one_command": "one concrete next verification command or empty string",
-  "primary_hypothesis": "current evidence-backed hypothesis being tested, or empty string",
-  "next_verification": "the exact next evidence-producing verification, or empty string",
-  "failure_boundary": "missing_evidence | missing_tool | unanswered_hypothesis | hypothesis_disproved | stale_plan | execution_quality | external_limit | empty string",
-  "blocked_prerequisite": "what prerequisite blocks progress, if proven",
-  "required_next_evidence": "raw evidence needed before stopping or switching route",
-  "observer_enforcement_state": "pending | blocked | allow_stop | override | resolved | empty string",
-  "agent_override_reason": "why the main agent overrode Observer steer, if applicable",
-  "nodes": {{
-    "IP/主机名": {{
-      "role": "角色 (Web Server/DB/etc.)",
-      "access_level": "none/recon/user/root/rce_root",
-      "findings": ["该节点发现"],
-      "credentials": ["该节点凭据"],
-            "flags_found": ["flag"],
-      "next_steps": ["下一步"]
-    }}
-  }},
-  "topology": ["10.0.1.1 -> 10.0.1.2 (MySQL:3306)"]
-}}
-
-{node_note}
-"""
-
-
-def build_tool_memory_prompt(
-    *,
-    mission: dict[str, Any],
-    previous_memory: dict[str, Any],
-    round_no: int,
-    tool_call_log: list[dict[str, Any]],
-) -> str:
-    """Build the two-board MemoryAgent compression prompt."""
-    return f"""\
-You are the MemoryAgent. Compress this round into two shared state boards.
+You are the MemoryAgent. Compress this round of tool activity into the mission memory.
 
 Rules:
-- Idea Board is the decision board: current best direction, active hypothesis, next verification, blocker, failure boundary, and abandoned routes.
-- Memory Board is the durable fact board: verified facts, evidence, credentials, constraints, failed attempts, nodes, and topology.
-- Do not mix process logs into either board. Preserve only reusable signal.
+- Keep only information useful for later exploitation, deduplicated and compressed.
+- summary is a short paragraph covering current phase, key facts, and the main blocker.
+- findings contains only output-backed facts.
+- leads contains concrete hypotheses or routes that can be verified next.
+- dead_ends explains failed routes and why they failed.
+- credentials contains only confirmed credentials/tokens.
+- next_focus lists small concrete follow-up actions.
+- highest_value_lead is the one best route to close next.
+- blocked_reason explains what currently prevents flag capture, if known.
+- next_one_command is one exact next evidence-producing command/check, or empty.
 - Do not turn local sandbox actions into target facts.
-- Legacy fields are compatibility projections and must stay consistent with the boards:
-  findings = memory_board.facts
-  leads = idea_board.candidate_directions
-  dead_ends = memory_board.failed_attempts
-  credentials = memory_board.credentials
-  next_focus = idea_board.next_actions
+- If there are no new findings, preserve the useful existing memory.
+{node_hint}
 - Return strict JSON. The first character must be {{.
 
 Mission:
 {_json({"target": mission["target"], "goal": mission["goal"], "round_no": round_no})}
 
-Previous shared memory:
+Previous memory:
 {_json(previous_memory)}
 
 Recent tool calls:
@@ -555,42 +380,29 @@ Recent tool calls:
 
 Return JSON:
 {{
-  "summary": "short situation summary",
-  "idea_board": {{
-    "active_direction": "single best direction to push now",
-    "primary_hypothesis": "current evidence-backed hypothesis",
-    "next_verification": "one exact next evidence-producing command or check",
-    "next_actions": ["small concrete follow-up checks"],
-    "candidate_directions": ["other plausible routes still worth keeping"],
-    "risk_or_blocker": "current blocker or risk",
-    "failure_boundary": "missing_evidence | missing_tool | unanswered_hypothesis | hypothesis_disproved | stale_plan | execution_quality | external_limit | empty string",
-    "blocked_prerequisite": "proven prerequisite blocking progress",
-    "required_next_evidence": "raw evidence needed before stopping or switching route",
-    "abandoned": ["routes not to repeat and why"]
+  "summary": "current situation",
+  "findings": ["verified reusable fact"],
+  "leads": ["specific next hypothesis or route"],
+  "dead_ends": ["failed route and concrete reason"],
+  "credentials": ["confirmed credential or token"],
+  "next_focus": ["small concrete follow-up check"],
+  "highest_value_lead": "single most valuable verified lead to close next",
+  "blocked_reason": "what currently prevents flag capture, if known",
+  "next_one_command": "one concrete next verification command or empty string",
+  "nodes": {{
+    "IP/hostname": {{
+      "role": "Web Server/DB/etc.",
+      "access_level": "none/recon/user/root/rce_root",
+      "findings": ["node-specific finding"],
+      "credentials": ["node-specific credential"],
+      "flags_found": ["flag"],
+      "next_steps": ["next step"]
+    }}
   }},
-  "memory_board": {{
-    "facts": ["verified reusable facts only"],
-    "evidence": ["compact source-backed evidence snippets"],
-    "constraints": ["scope/runtime/tool constraints"],
-    "credentials": ["confirmed credentials/tokens"],
-    "failed_attempts": ["failed paths and concrete reason"],
-    "nodes": {{}},
-    "topology": []
-  }},
-  "findings": ["same as memory_board.facts"],
-  "leads": ["same as idea_board.candidate_directions"],
-  "dead_ends": ["same as memory_board.failed_attempts"],
-  "credentials": ["same as memory_board.credentials"],
-  "next_focus": ["same as idea_board.next_actions"],
-  "highest_value_lead": "same as idea_board.active_direction",
-  "blocked_reason": "same as idea_board.risk_or_blocker",
-  "next_one_command": "same as idea_board.next_verification",
-  "primary_hypothesis": "same as idea_board.primary_hypothesis",
-  "next_verification": "same as idea_board.next_verification",
-  "failure_boundary": "same as idea_board.failure_boundary",
-  "blocked_prerequisite": "same as idea_board.blocked_prerequisite",
-  "required_next_evidence": "same as idea_board.required_next_evidence"
+  "topology": ["10.0.1.1 -> 10.0.1.2 (MySQL:3306)"]
 }}
+
+{node_note}
 """
 
 
