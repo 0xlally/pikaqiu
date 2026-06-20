@@ -1549,11 +1549,314 @@ select:focus {
   padding: 12px;
 }
 
-.message-card > div {
+.message-card:not(.observer-message-card) > div {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
+}
+
+.observer-message-card {
+  display: grid;
+  gap: 12px;
+  overflow: hidden;
+  background:
+    linear-gradient(135deg, rgb(23 104 229 / 0.06), transparent 42%),
+    var(--surface-2);
+}
+
+.observer-message-card.observation {
+  border-color: rgb(23 104 229 / 0.3);
+}
+
+.observer-message-card.ok {
+  border-color: rgb(32 121 77 / 0.34);
+}
+
+.observer-message-card.watch,
+.observer-message-card.env {
+  border-color: rgb(139 76 11 / 0.34);
+}
+
+.observer-message-card.interrupt {
+  border-color: rgb(194 65 75 / 0.34);
+}
+
+.observer-message-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+}
+
+.observer-message-head > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.observer-message-head strong {
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.observer-observation,
+.observer-decision,
+.observer-tool-panel,
+.observer-event-body {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.observer-event-body {
+  border-top: 1px solid var(--line);
+  padding: 12px;
+}
+
+.observer-focus-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.observer-mini-stat,
+.observer-info,
+.observer-call,
+.observer-list-block,
+.observer-memory-patch,
+.observer-raw {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: rgb(255 255 255 / 0.76);
+}
+
+.observer-mini-stat {
+  display: grid;
+  gap: 4px;
+  padding: 9px;
+}
+
+.observer-mini-stat span,
+.observer-info span,
+.observer-call-list > span,
+.observer-list-block > span,
+.observer-memory-patch > span {
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.observer-mini-stat strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.observer-mini-stat.ok {
+  background: var(--ok-soft);
+}
+
+.observer-mini-stat.watch,
+.observer-mini-stat.env {
+  background: var(--warn-soft);
+}
+
+.observer-mini-stat.interrupt {
+  background: var(--danger-soft);
+}
+
+.observer-summary-grid,
+.observer-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.observer-info {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px;
+}
+
+.observer-info p {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.52;
+}
+
+.observer-info.mono p {
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+}
+
+.observer-verdict-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #ffffff;
+  padding: 10px;
+}
+
+.observer-verdict-row p {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.observer-verdict {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 6px 9px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.observer-verdict.ok {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.observer-verdict.watch,
+.observer-verdict.env {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.observer-verdict.interrupt {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.observer-call-list {
+  display: grid;
+  gap: 7px;
+}
+
+.observer-call {
+  display: grid;
+  gap: 6px;
+  padding: 9px;
+}
+
+.observer-call div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.observer-call strong {
+  color: var(--accent-strong);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.observer-call em {
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-style: normal;
+}
+
+.observer-call code {
+  display: block;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.observer-call p,
+.observer-fallback-text {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.observer-list-block,
+.observer-memory-patch {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.observer-list-block ul,
+.observer-memory-patch ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.observer-list-block li,
+.observer-memory-patch li {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.observer-memory-patch section {
+  display: grid;
+  gap: 5px;
+}
+
+.observer-memory-patch strong {
+  color: var(--accent-strong);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.observer-ref-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.observer-ref-row code {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--accent-strong);
+  padding: 4px 7px;
+  font-size: 10px;
+}
+
+.observer-raw {
+  overflow: hidden;
+}
+
+.observer-raw summary {
+  cursor: pointer;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 8px 10px;
+}
+
+.observer-raw pre {
+  max-height: 260px;
+  overflow: auto;
+  margin: 0;
+  border-top: 1px solid var(--line);
+  background: #0d1624;
+  color: #e8f1ff;
+  padding: 11px;
+  font-size: 11px;
+  line-height: 1.55;
 }
 
 .message-card small,
@@ -2019,6 +2322,15 @@ select:focus {
   .mission-shell .decision-board {
     gap: 8px;
     padding: 0 12px 12px;
+  }
+
+  .mission-shell .observer-focus-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mission-shell .observer-summary-grid,
+  .mission-shell .observer-detail-grid {
+    grid-template-columns: 1fr;
   }
 
   .mission-shell .brief-item {
@@ -2563,6 +2875,12 @@ select:focus {
   }
 
   .trace-card summary {
+    grid-template-columns: 1fr;
+  }
+
+  .observer-message-head,
+  .observer-verdict-row,
+  .observer-focus-strip {
     grid-template-columns: 1fr;
   }
 

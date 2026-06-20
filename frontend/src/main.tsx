@@ -34,6 +34,7 @@ import type {
   KnowledgeItem,
   Mission,
   MissionDetail,
+  ObserverMessage,
   Skill
 } from "./types";
 import {
@@ -63,8 +64,172 @@ const tabs: { id: AppTab; label: string }[] = [
 const tabButtonId = (tab: AppTab) => `mission-tab-${tab}`;
 const tabPanelId = (tab: AppTab) => `mission-panel-${tab}`;
 
+type ObserverDecisionView = Record<string, unknown>;
+type ObserverObservationView = Record<string, unknown>;
+
+const OBSERVER_DECISION_LABELS: Record<string, string> = {
+  OK: "正常推进",
+  WATCH: "观察",
+  L1: "工具错误",
+  L2: "证据不足",
+  L3: "方向偏离",
+  L4: "重复/偏差",
+  ENV: "环境问题"
+};
+
 function missionHref(id: string) {
   return `/missions/${encodeURIComponent(id)}`;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function asStringList(value: unknown): string[] {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.map((item) => compact(item, 220)).filter(Boolean);
+  if (typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([key, item]) => `${key}: ${compact(item, 180)}`)
+      .filter(Boolean);
+  }
+  const text = toText(value).trim();
+  return text ? [text] : [];
+}
+
+function parseJsonObject(text: string): Record<string, unknown> {
+  if (!text.trim()) return {};
+  try {
+    const parsed = JSON.parse(text);
+    return asRecord(parsed);
+  } catch {
+    return {};
+  }
+}
+
+function readJsonStringField(text: string, key: string): string {
+  const match = text.match(new RegExp(`"${key}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`));
+  if (!match) return "";
+  try {
+    return JSON.parse(`"${match[1]}"`);
+  } catch {
+    return match[1].replace(/\\"/g, '"');
+  }
+}
+
+function readJsonNumberField(text: string, key: string): number | undefined {
+  const match = text.match(new RegExp(`"${key}"\\s*:\\s*(-?\\d+)`));
+  return match ? Number(match[1]) : undefined;
+}
+
+function parseTruncatedObservation(text: string): ObserverObservationView {
+  if (!text.trim().startsWith("{")) return {};
+  const mission = {
+    target: readJsonStringField(text, "target"),
+    goal: readJsonStringField(text, "goal"),
+    scope: readJsonStringField(text, "scope"),
+    status: readJsonStringField(text, "status")
+  };
+  const observation: ObserverObservationView = {
+    phase: readJsonStringField(text, "phase")
+  };
+  const llmCallCount = readJsonNumberField(text, "llm_call_count");
+  const stallRounds = readJsonNumberField(text, "stall_rounds");
+  if (Object.values(mission).some(Boolean)) observation.mission = mission;
+  if (llmCallCount !== undefined) observation.llm_call_count = llmCallCount;
+  if (stallRounds !== undefined) observation.stall_rounds = stallRounds;
+  return observation;
+}
+
+function observerDecisionFromMetadata(metadata: Record<string, unknown>, content = ""): ObserverDecisionView {
+  const direct = asRecord(metadata.decision);
+  if (Object.keys(direct).length) return direct;
+  const observer = asRecord(metadata.observer);
+  if (Object.keys(observer).length) return observer;
+  return parseJsonObject(content);
+}
+
+function observerObservationFromMessage(message: ObserverMessage): ObserverObservationView {
+  const metadata = asRecord(message.metadata);
+  const parsed = parseJsonObject(message.content || "");
+  const observation = Object.keys(parsed).length
+    ? parsed
+    : parseTruncatedObservation(message.content || "");
+  const storedObservation = asRecord(metadata.observation);
+  const merged = Object.keys(observation).length ? observation : storedObservation;
+  if (!merged.phase && metadata.phase) merged.phase = metadata.phase;
+  if (!Object.keys(asRecord(merged.rule_observation)).length && metadata.rule_decision) {
+    merged.rule_observation = metadata.rule_decision;
+  }
+  return merged;
+}
+
+function observerVerdictLabel(verdict: unknown): string {
+  const value = String(verdict || "OK").toUpperCase();
+  const label = OBSERVER_DECISION_LABELS[value] || value;
+  return value === label ? value : `${value} · ${label}`;
+}
+
+function observerVerdictClass(verdict: unknown): string {
+  const value = String(verdict || "OK").toUpperCase();
+  if (value === "OK") return "ok";
+  if (value === "WATCH") return "watch";
+  if (value === "ENV") return "env";
+  if (value.startsWith("L")) return "interrupt";
+  return "neutral";
+}
+
+function observerMessageTone(message: ObserverMessage): string {
+  if (message.type === "decision") {
+    return observerVerdictClass(observerDecisionFromMetadata(asRecord(message.metadata), message.content).verdict);
+  }
+  if (message.type === "observation") return "observation";
+  if (message.type === "tool") return "tool";
+  if (message.type === "think") return "think";
+  return "neutral";
+}
+
+function observerPrimaryText(decision: ObserverDecisionView): string {
+  return toText(
+    decision.guidance ||
+      decision.next_verification ||
+      decision.rationale ||
+      decision.primary_hypothesis ||
+      "暂无纠偏建议"
+  );
+}
+
+function observerDecisionItems(decision: ObserverDecisionView): [string, unknown][] {
+  const items: [string, unknown][] = [
+    ["判断理由", decision.rationale],
+    ["下一步验证", decision.next_verification],
+    ["需要补齐", decision.required_evidence],
+    ["主假设", decision.primary_hypothesis],
+    ["阻塞前提", decision.blocked_prerequisite],
+    ["Skill 信号", decision.skill_signal]
+  ];
+  return items.filter(([, value]) => toText(value).trim());
+}
+
+function observerMemoryPatchItems(value: unknown): { key: string; items: string[] }[] {
+  return Object.entries(asRecord(value))
+    .map(([key, item]) => ({ key, items: asStringList(item) }))
+    .filter((group) => group.items.length);
+}
+
+function observerToolCallItems(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value) ? value.map(asRecord).filter((item) => Object.keys(item).length) : [];
+}
+
+function observerMemorySummary(value: unknown): string {
+  const memory = asRecord(value);
+  const summary = toText(memory.summary || "").trim();
+  const findings = asStringList(memory.findings);
+  const leads = asStringList(memory.leads);
+  if (summary) return compact(summary, 220);
+  if (findings.length) return compact(findings[0], 220);
+  if (leads.length) return compact(leads[0], 220);
+  return "暂无稳定摘要";
 }
 
 const configFields = [
@@ -1190,21 +1355,7 @@ function ObserverTab({ detail }: { detail: MissionDetail }) {
         {messages.length ? (
           <div className="message-stack">
             {messages.slice().reverse().map((message) => (
-              <article className="message-card" key={message.id}>
-                <div>
-                  <span className="trace-type">
-                    {message.type}
-                    {typeof message.metadata?.decision === "object" && message.metadata.decision
-                      ? ` · ${toText((message.metadata.decision as Record<string, unknown>).verdict || "")}`
-                      : ""}
-                  </span>
-                  <strong>{message.title || "observer message"}</strong>
-                </div>
-                <p>{message.content || compact(message.metadata, 260)}</p>
-                <small>
-                  R{message.round_no} · {formatTime(message.created_at)}
-                </small>
-              </article>
+              <ObserverMessageCard message={message} key={message.id} />
             ))}
           </div>
         ) : (
@@ -1822,7 +1973,245 @@ function EventStream({ events }: { events: Event[] }) {
   );
 }
 
+function ObserverMessageCard({ message }: { message: ObserverMessage }) {
+  const tone = observerMessageTone(message);
+  const metadata = asRecord(message.metadata);
+  const decision = observerDecisionFromMetadata(metadata, message.content);
+  const observation = observerObservationFromMessage(message);
+  const phase = toText(metadata.phase || observation.phase || "");
+  return (
+    <article className={`message-card observer-message-card ${tone}`}>
+      <div className="observer-message-head">
+        <span className="trace-type">{message.type}</span>
+        <div>
+          <strong>{message.title || "Observer message"}</strong>
+          <small>
+            R{message.round_no} · {phase ? `${phase} · ` : ""}{formatTime(message.created_at)}
+          </small>
+        </div>
+      </div>
+      {message.type === "observation" ? (
+        <ObserverObservationPanel observation={observation} raw={message.content} />
+      ) : message.type === "decision" ? (
+        <ObserverDecisionPanel decision={decision} raw={message.content} metadata={metadata} />
+      ) : (
+        <ObserverToolPanel message={message} />
+      )}
+    </article>
+  );
+}
+
+function ObserverEventBody({ event }: { event: Event }) {
+  const metadata = asRecord(event.metadata);
+  const decision = observerDecisionFromMetadata(metadata, event.content);
+  const patch = asRecord(metadata.observer_memory_patch);
+  if (Object.keys(decision).length) {
+    return (
+      <div className="observer-event-body">
+        <ObserverDecisionPanel decision={decision} raw={event.content} metadata={metadata} compactView />
+      </div>
+    );
+  }
+  if (Object.keys(patch).length) {
+    return (
+      <div className="observer-event-body">
+        <ObserverMemoryPatch patch={patch} />
+        <ObserverRawDetails raw={event.content || safeJson(metadata)} />
+      </div>
+    );
+  }
+  return (
+    <div className="observer-event-body">
+      <p className="observer-fallback-text">{event.content || compact(metadata, 360)}</p>
+    </div>
+  );
+}
+
+function ObserverObservationPanel({ observation, raw }: { observation: ObserverObservationView; raw: string }) {
+  const mission = asRecord(observation.mission);
+  const ruleDecision = asRecord(observation.rule_observation);
+  const memoryBefore = observation.memory_before;
+  const memoryAfter = observation.memory_after;
+  const recentCalls = observerToolCallItems(observation.recent_tool_calls);
+  const roundCalls = observerToolCallItems(observation.round_tool_calls);
+  const calls = roundCalls.length ? roundCalls : recentCalls;
+  const target = toText(mission.target || "");
+  const goal = toText(mission.goal || "");
+  return (
+    <div className="observer-observation">
+      <div className="observer-focus-strip">
+        <ObserverMiniStat label="阶段" value={toText(observation.phase || "round_review")} />
+        <ObserverMiniStat label="LLM 调用" value={toText(observation.llm_call_count ?? "0")} />
+        <ObserverMiniStat label="停滞轮次" value={toText(observation.stall_rounds ?? "0")} />
+        <ObserverMiniStat label="规则判定" value={observerVerdictLabel(ruleDecision.verdict)} tone={observerVerdictClass(ruleDecision.verdict)} />
+      </div>
+      <div className="observer-summary-grid">
+        <ObserverInfoBlock label="目标" value={target || "未记录"} />
+        <ObserverInfoBlock label="任务" value={goal || "未记录"} />
+        <ObserverInfoBlock label="审核前记忆" value={observerMemorySummary(memoryBefore)} />
+        <ObserverInfoBlock label="审核后记忆" value={observerMemorySummary(memoryAfter)} />
+      </div>
+      {calls.length ? <ObserverToolCallList calls={calls} /> : null}
+      {asStringList(ruleDecision.evidence).length ? (
+        <ObserverList title="规则证据" items={asStringList(ruleDecision.evidence)} />
+      ) : null}
+      <ObserverRawDetails raw={raw} />
+    </div>
+  );
+}
+
+function ObserverDecisionPanel({
+  decision,
+  raw,
+  metadata,
+  compactView
+}: {
+  decision: ObserverDecisionView;
+  raw: string;
+  metadata: Record<string, unknown>;
+  compactView?: boolean;
+}) {
+  const verdict = decision.verdict || "OK";
+  const evidence = asStringList(decision.evidence);
+  const memoryPatch = observerMemoryPatchItems(decision.memory_patch);
+  const experienceRefs = asStringList(decision.experience_refs || metadata.experience_refs);
+  const skillRefs = asStringList(metadata.skill_refs);
+  const detailItems = observerDecisionItems(decision);
+  return (
+    <div className={compactView ? "observer-decision compact" : "observer-decision"}>
+      <div className="observer-verdict-row">
+        <span className={`observer-verdict ${observerVerdictClass(verdict)}`}>{observerVerdictLabel(verdict)}</span>
+        <p>{observerPrimaryText(decision)}</p>
+      </div>
+      {detailItems.length ? (
+        <div className="observer-detail-grid">
+          {detailItems.map(([label, value]) => (
+            <ObserverInfoBlock label={label} value={toText(value)} key={label} />
+          ))}
+        </div>
+      ) : null}
+      {evidence.length ? <ObserverList title="关键证据" items={evidence} /> : null}
+      {memoryPatch.length ? <ObserverMemoryPatch patch={decision.memory_patch} /> : null}
+      {experienceRefs.length || skillRefs.length ? (
+        <div className="observer-ref-row">
+          {experienceRefs.slice(0, 6).map((item) => (
+            <code key={`exp-${item}`}>{item}</code>
+          ))}
+          {skillRefs.slice(0, 4).map((item) => (
+            <code key={`skill-${item}`}>{item}</code>
+          ))}
+        </div>
+      ) : null}
+      <ObserverRawDetails raw={raw || safeJson(metadata)} />
+    </div>
+  );
+}
+
+function ObserverToolPanel({ message }: { message: ObserverMessage }) {
+  const metadata = asRecord(message.metadata);
+  const args = asRecord(metadata.args);
+  const result = metadata.result;
+  const tool = toText(metadata.tool || message.type);
+  return (
+    <div className="observer-tool-panel">
+      <div className="observer-focus-strip">
+        <ObserverMiniStat label="内部动作" value={tool || "observer_think"} />
+        <ObserverMiniStat label="Step" value={toText(metadata.step ?? "-")} />
+      </div>
+      {Object.keys(args).length ? <ObserverInfoBlock label="参数" value={safeJson(args)} mono /> : null}
+      {result ? <ObserverInfoBlock label="结果" value={compact(result, 900)} /> : <p className="observer-fallback-text">{message.content}</p>}
+      <ObserverRawDetails raw={message.content || safeJson(metadata)} />
+    </div>
+  );
+}
+
+function ObserverToolCallList({ calls }: { calls: Record<string, unknown>[] }) {
+  return (
+    <div className="observer-call-list">
+      <span>本轮工具轨迹</span>
+      {calls.slice(0, 8).map((call, index) => {
+        const tool = toText(call.tool || "tool");
+        const args = toText(call.args_summary || call.args_full || "");
+        const result = toText(call.result_summary || call.result_observer || "");
+        const exitCode = call.exit_code === undefined || call.exit_code === null ? "" : `exit ${call.exit_code}`;
+        return (
+          <article className="observer-call" key={`${tool}-${index}`}>
+            <div>
+              <strong>{tool}</strong>
+              {exitCode ? <em>{exitCode}</em> : null}
+            </div>
+            {args ? <code>{compact(args, 180)}</code> : null}
+            {result ? <p>{compact(result, 260)}</p> : null}
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+function ObserverMemoryPatch({ patch }: { patch: unknown }) {
+  const groups = observerMemoryPatchItems(patch);
+  if (!groups.length) return null;
+  return (
+    <div className="observer-memory-patch">
+      <span>记忆补丁</span>
+      {groups.map((group) => (
+        <section key={group.key}>
+          <strong>{group.key}</strong>
+          <ul>
+            {group.items.slice(0, 6).map((item, index) => (
+              <li key={`${group.key}-${index}`}>{item}</li>
+            ))}
+          </ul>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function ObserverInfoBlock({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <article className={mono ? "observer-info mono" : "observer-info"}>
+      <span>{label}</span>
+      <p>{value}</p>
+    </article>
+  );
+}
+
+function ObserverMiniStat({ label, value, tone }: { label: string; value: string; tone?: string }) {
+  return (
+    <article className={tone ? `observer-mini-stat ${tone}` : "observer-mini-stat"}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </article>
+  );
+}
+
+function ObserverList({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="observer-list-block">
+      <span>{title}</span>
+      <ul>
+        {items.slice(0, 8).map((item, index) => (
+          <li key={`${title}-${index}`}>{item}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function ObserverRawDetails({ raw }: { raw: string }) {
+  if (!raw.trim()) return null;
+  return (
+    <details className="observer-raw">
+      <summary>原始数据</summary>
+      <pre>{raw}</pre>
+    </details>
+  );
+}
+
 function EventCard({ event }: { event: Event }) {
+  const isObserver = event.type === "observer_agent";
   return (
     <details className={`trace-card ${eventTone(event.type)}`} open={event.type === "flag" || event.type === "error"}>
       <summary>
@@ -1833,7 +2222,7 @@ function EventCard({ event }: { event: Event }) {
         </small>
       </summary>
       {event.command ? <code className="command-line">{event.command}</code> : null}
-      <pre>{event.content || safeJson(event.metadata)}</pre>
+      {isObserver ? <ObserverEventBody event={event} /> : <pre>{event.content || safeJson(event.metadata)}</pre>}
       {event.exit_code ? <span className="exit-code">exit {event.exit_code}</span> : null}
     </details>
   );
