@@ -4,6 +4,9 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from langchain_core.messages import HumanMessage
+
+from pikaqiu_agent.orchestrator import OrchestratorManager
 from pikaqiu_agent.mission_log_export import normalize_mission_log_export_dir
 from pikaqiu_agent.observer import ObserverDecision, should_inject_decision
 from pikaqiu_agent.storage import MissionStore
@@ -13,6 +16,31 @@ from pikaqiu_agent.success_guards import (
     _mission_scan_cooldown_blocks,
     _missing_tools_from_memory,
 )
+
+
+class ObserverCorrectionRoutingHarness(OrchestratorManager):
+    def __init__(self, store: MissionStore, *, human_guidance: list[str] | None = None) -> None:
+        self.store = store
+        self.observer = None  # type: ignore[assignment]
+        from pikaqiu_agent.observer import ObserverAgent
+
+        self.observer = ObserverAgent()
+        self.human_guidance = human_guidance or []
+        self.asked = False
+        self.observer_injected = False
+
+    def _ask_human_before_observer_correction(self, **kwargs):  # type: ignore[no-untyped-def]
+        if not self._human_collab_enabled(kwargs["mission_id"]):
+            return []
+        self.asked = True
+        return list(self.human_guidance)
+
+    def _inject_observer_steer(self, **kwargs):  # type: ignore[no-untyped-def]
+        self.observer_injected = True
+        messages = kwargs.get("messages")
+        if messages is not None:
+            messages.append(HumanMessage(content="observer fallback"))
+        return True
 
 
 class ControlLoopOptimizationTests(unittest.TestCase):
@@ -47,6 +75,77 @@ class ControlLoopOptimizationTests(unittest.TestCase):
             guidance="next round must verify",
         )
         self.assertTrue(should_inject_decision(follow_up, phase="round"))
+
+    def test_observer_injection_policy_allows_round_strong_evidence_signal(self):
+        signal = ObserverDecision(
+            verdict="WATCH",
+            guidance="close the proven LFI chain",
+            observer_enforcement_state="strong_evidence",
+        )
+
+        self.assertFalse(should_inject_decision(signal, phase="tool"))
+        self.assertTrue(should_inject_decision(signal, phase="round"))
+
+    def test_human_collaboration_intercepts_observer_correction(self):
+        store = MissionStore(":memory:")
+        mission_id = store.create_mission(
+            name="m",
+            target="http://x",
+            goal="flag",
+            scope="http://x",
+            domains=["web"],
+            max_rounds=1,
+            max_commands=1,
+            command_timeout_sec=1,
+            model="mock",
+        )
+        store.set_human_collab_enabled(mission_id, True)
+        harness = ObserverCorrectionRoutingHarness(store, human_guidance=["先验证 /admin 的 403/200 差异"])
+        messages = []
+
+        injected, pending = harness._route_observer_correction(
+            mission_id=mission_id,
+            round_no=1,
+            decision=ObserverDecision(verdict="L2", guidance="observer next step"),
+            phase="round",
+            messages=messages,
+        )
+
+        self.assertTrue(injected)
+        self.assertIsNone(pending)
+        self.assertTrue(harness.asked)
+        self.assertFalse(harness.observer_injected)
+        self.assertIn("HUMAN_OBSERVER_CORRECTION", messages[-1].content)
+        self.assertIn("/admin", messages[-1].content)
+
+    def test_observer_correction_falls_back_when_collaboration_disabled(self):
+        store = MissionStore(":memory:")
+        mission_id = store.create_mission(
+            name="m",
+            target="http://x",
+            goal="flag",
+            scope="http://x",
+            domains=["web"],
+            max_rounds=1,
+            max_commands=1,
+            command_timeout_sec=1,
+            model="mock",
+        )
+        harness = ObserverCorrectionRoutingHarness(store, human_guidance=["ignored"])
+        messages = []
+
+        injected, pending = harness._route_observer_correction(
+            mission_id=mission_id,
+            round_no=1,
+            decision=ObserverDecision(verdict="L2", guidance="observer next step"),
+            phase="round",
+            messages=messages,
+        )
+
+        self.assertTrue(injected)
+        self.assertIsNotNone(pending)
+        self.assertTrue(harness.observer_injected)
+        self.assertIn("observer fallback", messages[-1].content)
 
     def test_observer_summary_counts_verdicts(self):
         store = MissionStore(":memory:")
@@ -171,7 +270,14 @@ class ControlLoopOptimizationTests(unittest.TestCase):
     def test_known_missing_tool_blocks_repeat(self):
         self.assertEqual(_known_missing_tool_blocks("whatweb -a 1 http://x", {"whatweb"}), "whatweb")
         self.assertEqual(_known_missing_tool_blocks("curl -i http://x", {"whatweb"}), "")
-        memory = {"dead_ends": ["`whatweb` is unavailable in the sandbox; use curl instead."]}
+        memory = {
+            "dead_ends": [
+                (
+                    "工具链卡点：已尝试调用 `whatweb`，原始结果显示 "
+                    "`whatweb` is unavailable in the sandbox；当前沙箱缺少该工具，后续改用 curl。"
+                )
+            ]
+        }
         self.assertEqual(_missing_tools_from_memory(memory), {"whatweb"})
 
     def test_mission_log_export_normalization_uses_flag_events(self):

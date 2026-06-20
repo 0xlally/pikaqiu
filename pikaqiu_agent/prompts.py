@@ -335,7 +335,8 @@ def build_tool_memory_prompt(
 - summary 是一个简短中文段落，覆盖当前阶段、关键事实和主要阻塞点。
 - findings 只记录有工具输出支撑的事实，不写主观猜测。
 - leads 记录下一步可验证的具体假设、路线、命令或验证动作。
-- dead_ends 说明失败路线以及失败原因，避免重复尝试。
+- dead_ends 说明失败路线以及具体卡点，避免重复尝试；不要只写“未打通/失败了/没结果”。
+- 每条 dead_ends 用自然语言写清楚链条卡在哪一步：入口是否确认、认证/权限是否绕过、文件读取到哪一级、payload 是否执行、是否有回显、flag 路径是否定位，以及还缺哪条决定性原始证据。
 - credentials 只记录已确认的凭据、token 或可复用认证材料。
 - topology 只在重要时记录已观察到的网络、服务或依赖关系。
 - 不要把本地沙箱行为误写成目标事实。
@@ -356,7 +357,7 @@ def build_tool_memory_prompt(
   "summary": "当前态势中文摘要",
   "findings": ["已验证且可复用的中文事实"],
   "leads": ["下一步可验证的中文假设、路线、命令或验证动作"],
-  "dead_ends": ["失败路线和具体原因"],
+  "dead_ends": ["自然语言描述失败路线和具体卡点，例如：LFI 链已确认可读 /etc/passwd，但尚未定位 webroot/应用源码/flag 路径；下一步应读取 /proc/self/mountinfo 或 Web 配置。"],
   "credentials": ["已确认的凭据或 token"],
   "topology": ["10.0.1.1 -> 10.0.1.2 (MySQL:3306)"]
 }}
@@ -396,7 +397,8 @@ def build_memory_cleaning_prompt(
 - 删除所有漏洞判断，哪怕他们已经被证实
 
 ### 移入 dead_ends：
-- 将被删除的假设精简后简要记录到 dead_ends 中，格式为："[已清洗] XXX - 连续多轮未突破"
+- 将被删除的假设精简后记录到 dead_ends 中，用自然语言写清楚卡点，例如：
+  "XSS 链卡在标签过滤：已确认 /page?name= 存在反射，但真实标签被拦截，payload 未执行且无回显；尚未定位可绕过上下文。"
 
 ## 当前记忆
 
@@ -413,7 +415,7 @@ def build_memory_cleaning_prompt(
   "summary": "清洗后的态势摘要（只描述客观事实，不包含漏洞假设）",
   "findings": ["只保留客观事实..."],
   "leads": ["基于事实可以尝试的新方向..."],
-  "dead_ends": ["原有dead_ends + 被清洗的假设..."],
+  "dead_ends": ["自然语言描述被清洗假设的失败卡点，例如：登录绕过链卡在凭据验证，已确认 /login 存在但没有有效 session，后续需要先拿到可复用认证态。"],
   "credentials": ["保留所有已确认凭据..."],
   "topology": ["已确认的网络/服务关系..."]
 }}

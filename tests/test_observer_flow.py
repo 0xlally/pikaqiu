@@ -97,6 +97,103 @@ def test_observer_rule_classifies_environment_failure_loop() -> None:
     assert decision.interrupts is True
 
 
+def test_round_review_emits_strong_evidence_next_step_for_lfi() -> None:
+    observer = ObserverAgent()
+
+    decision = observer.review_round(
+        mission={"target": "http://target.local"},
+        memory_before={"findings": [], "leads": [], "dead_ends": []},
+        memory_after={"findings": ["filename parameter reads files"], "leads": [], "dead_ends": []},
+        tool_call_log=[
+            {
+                "tool": "bash_exec",
+                "args_summary": "curl http://target.local/read?file=../../etc/passwd",
+                "result_full": "HTTP/1.1 200 OK\nroot:x:0:0:root:/root:/bin/bash\n",
+            }
+        ],
+        llm_call_count=1,
+        stall_rounds=0,
+        captured_flags=[],
+    ).normalised()
+
+    assert decision.verdict == "WATCH"
+    assert decision.observer_enforcement_state == "strong_evidence"
+    assert "mountinfo" in decision.next_verification
+    assert decision.memory_patch["leads"]
+
+
+def test_round_review_emits_strong_evidence_for_sqli_error() -> None:
+    observer = ObserverAgent()
+
+    decision = observer.review_round(
+        mission={"target": "http://target.local"},
+        memory_before={"findings": [], "leads": [], "dead_ends": []},
+        memory_after={"findings": [], "leads": [], "dead_ends": []},
+        tool_call_log=[
+            {
+                "tool": "bash_exec",
+                "args_summary": "curl http://target.local/item?id=1'",
+                "result_full": "HTTP/1.1 500\nYou have an error in your SQL syntax near ''' at line 1",
+            }
+        ],
+        llm_call_count=1,
+        stall_rounds=0,
+        captured_flags=[],
+    ).normalised()
+
+    assert decision.observer_enforcement_state == "strong_evidence"
+    assert "SQLi" in decision.guidance
+    assert "[强证据:sqli_error_or_union]" in decision.memory_patch["leads"][0]
+
+
+def test_round_review_emits_strong_evidence_for_ssrf_internal_response() -> None:
+    observer = ObserverAgent()
+
+    decision = observer.review_round(
+        mission={"target": "http://target.local"},
+        memory_before={"findings": [], "leads": [], "dead_ends": []},
+        memory_after={"findings": [], "leads": [], "dead_ends": []},
+        tool_call_log=[
+            {
+                "tool": "bash_exec",
+                "args_summary": "curl 'http://target.local/fetch?url=http://169.254.169.254/latest/meta-data/'",
+                "result_full": "HTTP/1.1 200 OK\ninstance-id\ni-123456\nhostname\n",
+            }
+        ],
+        llm_call_count=1,
+        stall_rounds=0,
+        captured_flags=[],
+    ).normalised()
+
+    assert decision.observer_enforcement_state == "strong_evidence"
+    assert "SSRF" in decision.guidance
+    assert "[强证据:ssrf_internal]" in decision.memory_patch["leads"][0]
+
+
+def test_round_review_emits_strong_evidence_for_sensitive_config() -> None:
+    observer = ObserverAgent()
+
+    decision = observer.review_round(
+        mission={"target": "http://target.local"},
+        memory_before={"findings": [], "leads": [], "dead_ends": []},
+        memory_after={"findings": [], "leads": [], "dead_ends": []},
+        tool_call_log=[
+            {
+                "tool": "bash_exec",
+                "args_summary": "curl http://target.local/.env",
+                "result_full": "HTTP/1.1 200 OK\nAPP_KEY=base64:abc\nDB_PASSWORD='secret123'",
+            }
+        ],
+        llm_call_count=1,
+        stall_rounds=0,
+        captured_flags=[],
+    ).normalised()
+
+    assert decision.observer_enforcement_state == "strong_evidence"
+    assert "凭据" in decision.guidance
+    assert "[强证据:sensitive_config]" in decision.memory_patch["leads"][0]
+
+
 def test_skill_reference_requires_selected_or_activated_skill() -> None:
     try:
         from pikaqiu_agent.tools import create_skill_reference_tool

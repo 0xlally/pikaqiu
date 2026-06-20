@@ -6,6 +6,8 @@ from dataclasses import asdict, dataclass, field
 from difflib import SequenceMatcher
 from typing import Any
 
+from pikaqiu_agent.memory_rules import normalize_dead_ends
+
 
 MEMORY_PATCH_KEYS = ("findings", "leads", "dead_ends")
 OBSERVER_VERDICTS = {"OK", "WATCH", "L1", "L2", "L3", "L4", "ENV"}
@@ -72,6 +74,154 @@ VAGUE_RESULT_RE = re.compile(
     r"^(ok|done|success|successful|completed|finished|no output|empty|none|null|true|false|n/a|"
     r"empty result|suggestion|recommendation|next step|analysis)$",
     re.I,
+)
+STRONG_EVIDENCE_RULES = (
+    (
+        "lfi_passwd",
+        re.compile(r"root:x:0:0:|daemon:x:1:1:|/bin/(?:bash|sh)\b", re.I),
+        "LFI 已读到系统账户文件特征",
+        (
+            "围绕已验证 LFI 收束：读取 /proc/self/mountinfo、Web 服务配置和应用源码，"
+            "定位 webroot、日志路径或 flag 路径；不要再做宽目录扫描。"
+        ),
+        "原始响应需包含目标返回的文件内容、请求 URL、HTTP 状态码，以及下一步读取到的配置/源码片段。",
+    ),
+    (
+        "flag_file_read",
+        re.compile(r"\b(?:flag|ctf|dasctf)\{[^}\s]{4,200}\}|/(?:flag|flag\.txt)\b[^\n]{0,120}(?:200|contents?|read|found)", re.I),
+        "响应中已出现 flag 内容或 flag 文件读取线索",
+        (
+            "围绕已出现的 flag 证据收束：确认该值来自目标原始输出；若已经是完整 flag，立即提交，"
+            "不要继续扩展攻击面。"
+        ),
+        "保留包含 flag 候选值或 flag 文件路径的原始响应，并记录提交结果。",
+    ),
+    (
+        "sensitive_config",
+        re.compile(
+            r"(?:DB_PASSWORD|DATABASE_URL|MYSQL_PASSWORD|REDIS_PASSWORD|SECRET_KEY|APP_KEY|JWT_SECRET|AWS_ACCESS_KEY_ID|"
+            r"BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY|password\s*[:=]\s*['\"][^'\"]{4,})",
+            re.I,
+        ),
+        "敏感配置、密钥或凭据材料已泄露",
+        (
+            "围绕已泄露配置收束：先验证凭据用途和服务位置，再用最小请求访问后台、数据库、对象存储或签名接口；"
+            "不要继续泛扫。"
+        ),
+        "保留泄露字段来源、原始响应片段、凭据复用目标和验证前后的状态码/响应差异。",
+    ),
+    (
+        "rce_uid",
+        re.compile(r"\buid=\d+\([^)]+\)\s+gid=\d+\([^)]+\)|\buid=\d+\s+gid=\d+", re.I),
+        "命令执行已返回 uid/gid",
+        (
+            "围绕已验证 RCE 收束：先确认当前目录和环境变量，再读取 /flag、/flag.txt、/app/flag，"
+            "必要时 find / -maxdepth 3 -iname '*flag*'。"
+        ),
+        "保留命令回显中的 uid/gid、当前目录、flag 文件读取结果或 find 命中路径。",
+    ),
+    (
+        "ssti_eval",
+        re.compile(r"(?:\{\{\s*7\s*[*+]\s*7\s*\}\}|\${\s*7\s*[*+]\s*7\s*}|<%=\s*7\s*[*+]\s*7\s*%>)[^\n]{0,120}\b(?:49|14)\b", re.I),
+        "模板表达式已产生可计算回显",
+        (
+            "围绕已验证 SSTI 收束：识别模板引擎和过滤边界，做最小文件读取或命令执行验证；"
+            "不要再换无关参数。"
+        ),
+        "保留输入 payload、渲染回显、模板引擎判断依据，以及下一步文件读取/RCE 的原始结果。",
+    ),
+    (
+        "sqli_error_or_union",
+        re.compile(
+            r"(?:SQL syntax|mysql_fetch|MariaDB|PostgreSQL|SQLite|ODBC|ORA-\d{5}|"
+            r"You have an error in your SQL syntax|UNION SELECT[^\n]{0,160}(?:HTTP/\d|status|200|column|database\(\)))",
+            re.I,
+        ),
+        "SQL 注入错误或 UNION 线索已可观察",
+        (
+            "围绕已验证 SQLi 收束：固定注入点，先确认列数/回显位/数据库类型，再读取当前库表或 flag 相关表；"
+            "避免重新扫全站。"
+        ),
+        "保留注入 URL/参数、错误或 UNION 回显、列数/回显位判断，以及读取到的库表/flag 线索。",
+    ),
+    (
+        "ssrf_internal",
+        re.compile(
+            r"(?:169\.254\.169\.254|metadata\.google\.internal|latest/meta-data|127\.0\.0\.1|localhost|"
+            r"file:///|gopher://|dict://)[\s\S]{0,500}(?:HTTP/\d|200|root:x:|instance-id|ami-id|hostname|uid=)",
+            re.I,
+        ),
+        "SSRF/内网读取已产生内部响应特征",
+        (
+            "围绕已验证 SSRF 收束：枚举最小内网/metadata 路径或协议能力，优先读取凭据、配置和可访问管理端；"
+            "不要大范围端口扫描。"
+        ),
+        "保留 SSRF 参数、目标内部 URL、状态码、响应体特征和下一步内部资源读取结果。",
+    ),
+    (
+        "webshell_upload",
+        re.compile(r"\b(?:webshell|shell\.php|cmd=|system\(|passthru\(|eval\(|assert\()\b", re.I),
+        "疑似 WebShell/可执行写入链已出现",
+        (
+            "优先做最小回显验证：访问写入路径并执行 id/whoami；若可执行，立即进入 flag 搜索，"
+            "若 404/403，先验证写入目录和 Web 可达路径映射。"
+        ),
+        "保留写入响应、访问 URL、HTTP 状态码和 id/whoami 原始回显。",
+    ),
+    (
+        "auth_cookie",
+        re.compile(
+            r"set-cookie:[^\n]*(?:phpsessid|connect\.sid|session|jwt|token)|"
+            r"\b(?:jwt|bearer\s+[A-Za-z0-9_.-]{16,})\b|"
+            r"\b(?:user_id|is_admin|role)\s*[:=]",
+            re.I,
+        ),
+        "认证态或会话材料已出现",
+        (
+            "围绕已拿到的认证材料收束：复用同一 Session 访问登录后页面、管理接口和已发现敏感端点，"
+            "先验证身份差异，再尝试 IDOR/权限边界。"
+        ),
+        "保留 Set-Cookie/token、复用前后的状态码/响应差异，以及目标页面返回的身份或权限证据。",
+    ),
+    (
+        "cve_version",
+        re.compile(r"\bCVE-\d{4}-\d{4,7}\b|(?:wordpress|drupal|joomla|next\.js|flask|django|apache|nginx)[^\n]{0,80}\b\d+\.\d+(?:\.\d+)?", re.I),
+        "产品/版本或 CVE 线索已足够具体",
+        (
+            "围绕产品版本/CVE 做定向验证：先查本地 search_cve/knowledge，再用一个最小 PoC 验证决定性响应；"
+            "不要继续泛扫无关端点。"
+        ),
+        "保留版本来源、CVE/PoC 来源、最小验证请求和原始响应差异。",
+    ),
+    (
+        "api_object",
+        re.compile(
+            r"\b(?:s3|bucket|object[_ -]?key|presigned)\b|"
+            r"\b(?:\.next/static|_next/static|chunk)\b|"
+            r"/api/(?:s3|files|objects|assets|storage|download)\b",
+            re.I,
+        ),
+        "对象 API、静态 chunk 或存储 key 线索已出现",
+        (
+            "围绕对象/API 线索收束：解析前端 chunk 和接口响应，枚举已知 key 的相邻命名，"
+            "优先拿 metadata/列表/错误差异，不要盲目大字典爆破。"
+        ),
+        "保留接口 URL、对象 key、状态码差异、metadata 或 chunk 中提取的真实字段。",
+    ),
+    (
+        "deserialization_marker",
+        re.compile(
+            r"(?:ysoserial|__wakeup|__destruct|ObjectInputStream|pickle|java\.io\.Serializable|"
+            r"O:\d+:\"[^\"]+\":\d+:\{|rO0AB|aced0005)[^\n]{0,240}(?:error|exception|stack|uid=|HTTP/\d|200)",
+            re.I,
+        ),
+        "反序列化入口或 gadget 反馈已可观察",
+        (
+            "围绕反序列化证据收束：确认序列化格式、触发点和回显/副作用，再做最小 DNS/文件写入/命令执行验证；"
+            "不要盲换 gadget。"
+        ),
+        "保留序列化样本、触发请求、异常/回显/副作用证据，以及最小 gadget 验证结果。",
+    ),
 )
 
 
@@ -207,6 +357,12 @@ class ObserverDecision:
 def should_inject_decision(decision: ObserverDecision, *, phase: str) -> bool:
     """Only interrupt the main agent for the explicit L/ENV verdict family."""
     decision = decision.normalised()
+    if (
+        phase == "round"
+        and decision.observer_enforcement_state == "strong_evidence"
+        and (decision.next_verification or decision.guidance)
+    ):
+        return True
     if not decision.interrupts:
         return False
     if phase == "tool" and decision.verdict not in {"L1", "L4", "ENV"}:
@@ -281,6 +437,10 @@ class ObserverAgent:
                 required_evidence="一个能够确认、否定或收窄当前假设的工具结果",
             ).normalised()
 
+        strong_evidence = self._detect_strong_evidence(tool_call_log, memory_after)
+        if strong_evidence.observer_enforcement_state == "strong_evidence":
+            return strong_evidence.normalised()
+
         evidence_gap = self._round_evidence_gap(memory_before, memory_after, tool_call_log)
         if evidence_gap.interrupts:
             return evidence_gap.normalised()
@@ -316,6 +476,8 @@ class ObserverAgent:
             incoming = _str_list(patch.get(key, []))
             if not incoming:
                 continue
+            if key == "dead_ends":
+                incoming = normalize_dead_ends(incoming)
             existing = _str_list(updated.get(key, []))
             seen = {item.lower() for item in existing}
             for item in incoming:
@@ -344,6 +506,8 @@ class ObserverAgent:
             lines.append(f"next_verification: {_compact_line(decision.next_verification, 420)}")
         if decision.required_evidence:
             lines.append(f"required_evidence: {_compact_line(decision.required_evidence, 360)}")
+        if decision.observer_enforcement_state:
+            lines.append(f"observer_signal: {_compact_line(decision.observer_enforcement_state, 120)}")
         if decision.skill_signal:
             lines.append(f"skill_signal: {_compact_line(decision.skill_signal, 260)}")
         if decision.memory_patch:
@@ -369,6 +533,8 @@ class ObserverAgent:
             parts.append("required_evidence:\n" + decision.required_evidence)
         if decision.failure_boundary:
             parts.append("failure_boundary:\n" + decision.failure_boundary)
+        if decision.observer_enforcement_state:
+            parts.append("observer_signal:\n" + decision.observer_enforcement_state)
         if decision.skill_signal:
             parts.append("skill_signal:\n" + decision.skill_signal)
         if decision.memory_patch:
@@ -513,6 +679,40 @@ class ObserverAgent:
             ),
             required_evidence="记忆必须记录原始可观察结果，或一个可靠 dead end",
         )
+
+    def _detect_strong_evidence(
+        self,
+        tool_call_log: list[dict[str, Any]],
+        memory: dict[str, Any],
+    ) -> ObserverDecision:
+        recent = [row for row in tool_call_log[-6:] if not self._is_evidence_audit_exempt(row)]
+        if not recent:
+            return ObserverDecision.none()
+        memory_text = " ".join(_str_list(memory.get("leads", [])) + _str_list(memory.get("findings", []))).lower()
+        for row in reversed(recent):
+            args_text = _tool_args_text(row, limit=1200)
+            result_text = _tool_result_text(row, limit=6000)
+            for signal, pattern, rationale, guidance, required_evidence in STRONG_EVIDENCE_RULES:
+                haystack = result_text
+                if signal in {"api_object", "ssrf_internal"}:
+                    haystack = f"{args_text}\n{result_text}"
+                if not pattern.search(haystack):
+                    continue
+                if signal in memory_text and any(term in memory_text for term in ("收束", "下一步", "读取", "验证")):
+                    return ObserverDecision.none()
+                lead = f"[强证据:{signal}] {guidance}"
+                return ObserverDecision(
+                    verdict="WATCH",
+                    rationale=rationale,
+                    evidence=[_compact_line(_tool_result_text(row), 260)],
+                    guidance=guidance,
+                    next_verification=guidance,
+                    required_evidence=required_evidence,
+                    memory_patch={"leads": [lead]},
+                    primary_hypothesis=rationale,
+                    observer_enforcement_state="strong_evidence",
+                ).normalised()
+        return ObserverDecision.none()
 
     def _is_evidence_audit_exempt(self, row: dict[str, Any]) -> bool:
         return str(row.get("tool", "")) in EVIDENCE_AUDIT_EXEMPT_TOOLS
@@ -671,7 +871,7 @@ class ObserverAgent:
     ) -> ObserverDecision:
         pending = pending_decision.normalised()
         calls = next_tool_calls or []
-        if not pending.interrupts:
+        if not pending.interrupts and pending.observer_enforcement_state != "strong_evidence":
             return ObserverDecision(verdict="OK", observer_enforcement_state="resolved").normalised()
 
         if _route_memory_changed(memory_before, memory_after) or any(self._has_concrete_evidence(row) for row in calls):

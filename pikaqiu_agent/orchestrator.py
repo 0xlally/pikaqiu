@@ -224,6 +224,19 @@ def _observer_should_inject(decision: ObserverDecision, *, phase: str) -> bool:
     return should_inject_decision(decision, phase=phase)
 
 
+def _human_guidance_allows_stop(text: str) -> bool:
+    lowered = str(text or "").lower()
+    if any(term in lowered for term in ("不要停止", "不要放弃", "继续", "do not stop", "keep going")):
+        return False
+    return bool(re.search(
+        r"(允许|同意|可以|确认|批准).{0,8}(停止|放弃|结束)|"
+        r"(停止|放弃|结束).{0,8}(任务|mission)|"
+        r"approve\s+give\s+up|allow\s+stop|stop\s+mission|give\s+up",
+        lowered,
+        re.I,
+    ))
+
+
 class OrchestratorManager:
     def __init__(
         self,
@@ -946,6 +959,186 @@ class OrchestratorManager:
         )
         return True
 
+    def _observer_needs_correction(self, decision: ObserverDecision, *, phase: str) -> bool:
+        return _observer_should_inject(decision, phase=phase)
+
+    def _human_collab_enabled(self, mission_id: str) -> bool:
+        mission = self.store.get_mission(mission_id)
+        return bool((mission or {}).get("human_collab_enabled"))
+
+    def _format_observer_handoff_question(
+        self,
+        *,
+        decision: ObserverDecision,
+        phase: str,
+        reason: str = "",
+    ) -> str:
+        decision = decision.normalised()
+        parts = [
+            "[OBSERVER_NEEDS_HUMAN_CORRECTION]",
+            f"phase: {phase}",
+            f"verdict: {decision.verdict}",
+        ]
+        if decision.observer_enforcement_state:
+            parts.append(f"observer_signal: {decision.observer_enforcement_state}")
+        if decision.rationale:
+            parts.append(f"rationale: {decision.rationale}")
+        if decision.evidence:
+            parts.append("evidence:\n" + "\n".join(f"- {item}" for item in decision.evidence[:4]))
+        next_step = decision.next_verification or decision.guidance
+        if next_step:
+            parts.append(f"observer_next_verification: {next_step}")
+        if decision.required_evidence:
+            parts.append(f"required_evidence: {decision.required_evidence}")
+        if reason:
+            parts.append(f"agent_reason: {reason}")
+        parts.append(
+            "请给出人工纠偏指令。若认可 Observer 建议，请直接说明下一步；"
+            "若不认可，请说明改走哪条路线以及需要保留的原始证据。"
+        )
+        parts.append("[/OBSERVER_NEEDS_HUMAN_CORRECTION]")
+        return "\n\n".join(parts)
+
+    def _ask_human_before_observer_correction(
+        self,
+        *,
+        mission_id: str,
+        round_no: int,
+        decision: ObserverDecision,
+        phase: str,
+        reason: str = "",
+    ) -> list[str]:
+        if not self._human_collab_enabled(mission_id):
+            return []
+
+        question = self._format_observer_handoff_question(
+            decision=decision,
+            phase=phase,
+            reason=reason,
+        )
+        self.store.add_event(
+            mission_id=mission_id,
+            round_no=round_no,
+            event_type="human_guidance",
+            title="Observer correction waiting for human",
+            content=question,
+            metadata={"observer": decision.normalised().to_dict(), "phase": phase, "awaiting_human": True},
+        )
+
+        while True:
+            if self.store.should_stop(mission_id):
+                return []
+            if not self._human_collab_enabled(mission_id):
+                self.store.add_event(
+                    mission_id=mission_id,
+                    round_no=round_no,
+                    event_type="human_guidance",
+                    title="Human correction wait cancelled",
+                    content="人类协同已关闭；回退为 Observer 自动纠偏。",
+                    metadata={"observer": decision.normalised().to_dict(), "phase": phase},
+                )
+                return []
+            guidance_items = self.store.consume_pending_human_guidance(mission_id)
+            guidance = [
+                str(item.get("content", "")).strip()
+                for item in guidance_items
+                if str(item.get("content", "")).strip()
+            ]
+            if guidance:
+                self.store.add_event(
+                    mission_id=mission_id,
+                    round_no=round_no,
+                    event_type="human_guidance",
+                    title=f"Human correction received ({len(guidance)})",
+                    content="\n".join(f"- {item}" for item in guidance),
+                    metadata={"observer": decision.normalised().to_dict(), "phase": phase},
+                )
+                return guidance
+            time.sleep(2.0)
+
+    def _inject_human_correction(
+        self,
+        *,
+        mission_id: str,
+        round_no: int,
+        messages: list[Any] | None,
+        pending_guidance: list[str] | None,
+        guidance: list[str],
+        decision: ObserverDecision,
+        phase: str,
+    ) -> bool:
+        guidance_text = "\n".join(f"- {item}" for item in guidance if item.strip())
+        if not guidance_text.strip():
+            return False
+        injection = (
+            "[HUMAN_OBSERVER_CORRECTION]\n"
+            "Observer 认为当前路线需要纠偏；因为已开启人类协同，以下人工指令优先于 Observer 自动纠偏。"
+            "下一步必须执行人工指令，或用新的原始目标证据证明其不适用。\n\n"
+            f"{guidance_text}\n"
+            "[/HUMAN_OBSERVER_CORRECTION]"
+        )
+        if messages is not None:
+            messages.append(HumanMessage(content=injection))
+        elif pending_guidance is not None:
+            pending_guidance.append(injection)
+        else:
+            return False
+        self.store.add_event(
+            mission_id=mission_id,
+            round_no=round_no,
+            event_type="human_guidance",
+            title="Human correction injected",
+            content=guidance_text,
+            metadata={"observer": decision.normalised().to_dict(), "phase": phase, "injected": True},
+        )
+        return True
+
+    def _route_observer_correction(
+        self,
+        *,
+        mission_id: str,
+        round_no: int,
+        decision: ObserverDecision,
+        phase: str,
+        messages: list[Any] | None = None,
+        pending_guidance: list[str] | None = None,
+        pending_steer: ObserverDecision | None = None,
+        reason: str = "",
+    ) -> tuple[bool, ObserverDecision | None]:
+        decision = decision.normalised()
+        if not self._observer_needs_correction(decision, phase=phase):
+            return False, pending_steer
+
+        human_guidance = self._ask_human_before_observer_correction(
+            mission_id=mission_id,
+            round_no=round_no,
+            decision=decision,
+            phase=phase,
+            reason=reason,
+        )
+        if human_guidance:
+            injected = self._inject_human_correction(
+                mission_id=mission_id,
+                round_no=round_no,
+                messages=messages,
+                pending_guidance=pending_guidance,
+                guidance=human_guidance,
+                decision=decision,
+                phase=phase,
+            )
+            return injected, pending_steer
+
+        injected = self._inject_observer_steer(
+            mission_id=mission_id,
+            round_no=round_no,
+            messages=messages,
+            pending_guidance=pending_guidance,
+            decision=decision,
+            phase=phase,
+        )
+        pending_steer = self._update_pending_observer_steer(pending_steer, decision)
+        return injected, pending_steer
+
     def _record_observer_decision(
         self,
         *,
@@ -1068,6 +1261,9 @@ class OrchestratorManager:
         decision = decision.normalised()
         if decision.observer_enforcement_state == "resolved":
             return None
+        if decision.observer_enforcement_state == "strong_evidence":
+            if decision.next_verification or decision.required_evidence or decision.guidance:
+                return decision
         if decision.interrupts:
             if decision.next_verification or decision.required_evidence or decision.guidance:
                 return decision
@@ -1282,6 +1478,39 @@ class OrchestratorManager:
                 )
                 memory = patched_memory
                 if not allowed:
+                    human_correction = self._ask_human_before_observer_correction(
+                        mission_id=mission_id,
+                        round_no=round_no,
+                        decision=decision,
+                        phase="give_up",
+                        reason=reason,
+                    )
+                    if human_correction and _human_guidance_allows_stop("\n".join(human_correction)):
+                        self.store.add_event(
+                            mission_id=mission_id,
+                            round_no=round_no,
+                            event_type="system",
+                            title="AI gave up after human approval",
+                            content="Human correction approved stopping the mission.",
+                            metadata={"observer": decision.to_dict(), "human_correction": human_correction},
+                        )
+                        self.store.request_stop(mission_id)
+                        return "[GIVE_UP] Mission marked to stop after human approval."
+                    if human_correction:
+                        guidance_text = "\n".join(f"- {item}" for item in human_correction)
+                        self.store.add_event(
+                            mission_id=mission_id,
+                            round_no=round_no,
+                            event_type="human_guidance",
+                            title="Human correction returned to agent",
+                            content=guidance_text,
+                            metadata={"observer": decision.to_dict(), "phase": "give_up"},
+                        )
+                        return (
+                            "[GIVE_UP_REJECTED_BY_HUMAN]\n"
+                            "人类协同已接管本次 Observer 纠偏。停止请求未被批准，下一步按人工指令执行：\n"
+                            + guidance_text
+                        )
                     self.store.add_event(
                         mission_id=mission_id,
                         round_no=round_no,
@@ -1642,7 +1871,11 @@ class OrchestratorManager:
                         missing_tools_seen.add(missing_tool)
                         patch = {
                             "dead_ends": [
-                                f"`{missing_tool}` is unavailable in the sandbox; use curl/raw headers/body/HTML parsing instead."
+                                (
+                                    f"工具链卡点：已尝试调用 `{missing_tool}`，原始结果显示 "
+                                    f"`{missing_tool}` is unavailable in the sandbox；当前沙箱缺少该工具，"
+                                    "不要重复调用。后续应改用 curl/raw headers/body/HTML parsing 或小脚本解析。"
+                                )
                             ]
                         }
                         memory = self._apply_observer_memory_patch(
@@ -1757,22 +1990,41 @@ class OrchestratorManager:
                             memory=memory,
                             decision=override_decision,
                         )
-                        pending_observer_steer = self._update_pending_observer_steer(
-                            pending_observer_steer,
-                            override_decision,
-                        )
                         if override_decision.interrupts:
-                            messages.append(
-                                HumanMessage(
-                                    content=(
-                                        self.observer.format_injection(override_decision)
-                                        + "\n\n"
-                                        + _stale_observer_steer_block_message(
-                                            override_decision.next_verification
+                            human_guidance = self._ask_human_before_observer_correction(
+                                mission_id=mission_id,
+                                round_no=round_no,
+                                decision=override_decision,
+                                phase="override",
+                                reason=response_text[:500],
+                            )
+                            if human_guidance:
+                                self._inject_human_correction(
+                                    mission_id=mission_id,
+                                    round_no=round_no,
+                                    messages=messages,
+                                    pending_guidance=None,
+                                    guidance=human_guidance,
+                                    decision=override_decision,
+                                    phase="override",
+                                )
+                                pending_observer_steer = None
+                            else:
+                                pending_observer_steer = self._update_pending_observer_steer(
+                                    pending_observer_steer,
+                                    override_decision,
+                                )
+                                messages.append(
+                                    HumanMessage(
+                                        content=(
+                                            self.observer.format_injection(override_decision)
+                                            + "\n\n"
+                                            + _stale_observer_steer_block_message(
+                                                override_decision.next_verification
+                                            )
                                         )
                                     )
                                 )
-                            )
                         elif override_decision.observer_enforcement_state == "resolved":
                             pending_observer_steer = None
 
@@ -1917,18 +2169,15 @@ class OrchestratorManager:
                 decision=round_observer_decision,
             )
             memory = new_memory
-            if round_observer_decision.interrupts:
-                self._inject_observer_steer(
+            if round_observer_decision.interrupts or round_observer_decision.observer_enforcement_state == "strong_evidence":
+                _injected, pending_observer_steer = self._route_observer_correction(
                     mission_id=mission_id,
                     round_no=round_no,
-                    messages=None,
-                    pending_guidance=pending_observer_guidance,
                     decision=round_observer_decision,
                     phase="round",
-                )
-                pending_observer_steer = self._update_pending_observer_steer(
-                    pending_observer_steer,
-                    round_observer_decision,
+                    messages=None,
+                    pending_guidance=pending_observer_guidance,
+                    pending_steer=pending_observer_steer,
                 )
 
             # Stall detection: semantic comparison instead of fragile hash

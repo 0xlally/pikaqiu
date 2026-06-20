@@ -13,6 +13,8 @@ import logging
 import re
 from typing import Any
 
+from pikaqiu_agent.memory_rules import normalize_dead_ends
+
 logger = logging.getLogger(__name__)
 
 _CREDENTIAL_PATTERNS = [
@@ -266,7 +268,7 @@ def normalize_memory_enhanced(
     # Smart trimming with importance scoring
     result["findings"] = smart_trim(result["findings"], max_count=20)
     result["leads"] = smart_trim(result["leads"], max_count=12)
-    result["dead_ends"] = smart_trim(result["dead_ends"], max_count=12)
+    result["dead_ends"] = smart_trim(normalize_dead_ends(result["dead_ends"]), max_count=12)
 
     return result
 
