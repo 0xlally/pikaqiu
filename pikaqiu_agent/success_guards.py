@@ -2,25 +2,17 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 from typing import Any
 
 from pikaqiu_agent import flag_capture
 
 
-SCAN_TOOL_RE = re.compile(
-    r"\b(ffuf|arjun|nuclei|gobuster|dirsearch|feroxbuster|wfuzz|hydra|sqlmap|nikto)\b",
-    re.I,
-)
-BROAD_SCAN_RE = re.compile(
-    r"\b(ffuf|arjun|nuclei|gobuster|dirsearch|feroxbuster|wfuzz|sqlmap|nikto)\b|"
-    r"\b(directory-list|raft-|common\.txt|seclists|wordlist|FUZZ)\b",
-    re.I,
-)
-WORDLIST_SCAN_RE = re.compile(
-    r"(\s|^)(-w|--wordlist)(\s|=)|\b(directory-list|raft-|common\.txt|seclists|wordlist|FUZZ)\b",
-    re.I,
-)
-COOLDOWN_SCAN_TOOL_RE = re.compile(r"\b(ffuf|arjun|nuclei|sqlmap)\b", re.I)
+SCAN_TOOLS = {"ffuf", "arjun", "nuclei", "gobuster", "dirsearch", "feroxbuster", "wfuzz", "hydra", "sqlmap", "nikto"}
+BROAD_SCAN_TOOLS = {"ffuf", "arjun", "nuclei", "gobuster", "dirsearch", "feroxbuster", "wfuzz", "sqlmap", "nikto"}
+SHELL_WRAPPERS = {"sudo", "timeout", "time", "env", "nohup", "stdbuf", "proxychains", "proxychains4"}
+SHELL_CONTROL_TOKENS = {";", "&&", "||", "|"}
+WORDLIST_TOKEN_RE = re.compile(r"(directory-list|raft-|common\.txt|seclists|wordlist|FUZZ)", re.I)
 TARGETED_PROBE_RE = re.compile(
     r"\b(curl|httpx|python|python3|requests|openssl|nc|ncat)\b|"
     r"https?://[^\s'\"]+(/[^\s'\"]+|\?[^\s'\"]+)",
@@ -37,29 +29,91 @@ MISSING_TOOL_RE = re.compile(r"(?:^|\n)(?:bash:\s+line\s+\d+:\s+)?([A-Za-z0-9_.+
 GUIDANCE_RESULT_TOOLS = {"knowledge_search"}
 
 
+def _shell_words(display_cmd: str) -> list[str]:
+    text = str(display_cmd or "").strip()
+    if not text:
+        return []
+    try:
+        return shlex.split(text, posix=True)
+    except ValueError:
+        return re.findall(r"[^\s]+", text)
+
+
+def _base_command(token: str) -> str:
+    token = str(token or "").strip().strip("'\"")
+    token = token.replace("\\", "/")
+    return token.rsplit("/", 1)[-1].lower()
+
+
+def _executed_command_names(display_cmd: str) -> list[str]:
+    words = _shell_words(display_cmd)
+    names: list[str] = []
+    expect_command = True
+    skip_next = False
+    for word in words:
+        if skip_next:
+            skip_next = False
+            continue
+        base = _base_command(word)
+        if base in SHELL_CONTROL_TOKENS:
+            expect_command = True
+            continue
+        if not expect_command:
+            continue
+        if base in SHELL_WRAPPERS:
+            if base in {"timeout", "stdbuf"} and len(word) > 0:
+                # wrapper options are handled by the normal token walk; the next
+                # non-option token is treated as the real command.
+                pass
+            continue
+        if base in {"bash", "sh", "python", "python3", "perl", "ruby", "node"}:
+            names.append(base)
+            expect_command = False
+            continue
+        if base.startswith("-") or "=" in base:
+            continue
+        names.append(base)
+        expect_command = False
+    return names
+
+
+def _executes_any_tool(display_cmd: str, tools: set[str]) -> bool:
+    return any(name in tools for name in _executed_command_names(display_cmd))
+
+
 def is_scan_like_tool_call(tool_name: str, display_cmd: str) -> bool:
     if tool_name not in {"bash_exec", "python_exec"}:
         return False
-    return bool(SCAN_TOOL_RE.search(str(display_cmd or "")))
+    return _executes_any_tool(display_cmd, SCAN_TOOLS)
 
 
 def is_broad_scan_tool_call(tool_name: str, display_cmd: str) -> bool:
     if tool_name not in {"bash_exec", "python_exec"}:
         return False
-    return bool(BROAD_SCAN_RE.search(str(display_cmd or "")))
+    cmd = str(display_cmd or "")
+    return _executes_any_tool(cmd, BROAD_SCAN_TOOLS) or is_wordlist_scan_tool_call(tool_name, cmd)
 
 
 def is_wordlist_scan_tool_call(tool_name: str, display_cmd: str) -> bool:
     if tool_name not in {"bash_exec", "python_exec"}:
         return False
-    return bool(WORDLIST_SCAN_RE.search(str(display_cmd or "")))
+    cmd = str(display_cmd or "")
+    if not _executes_any_tool(cmd, SCAN_TOOLS):
+        return False
+    words = _shell_words(cmd)
+    for index, word in enumerate(words):
+        if word in {"-w", "--wordlist"} or word.startswith("--wordlist="):
+            return True
+        if WORDLIST_TOKEN_RE.search(word):
+            return True
+    return False
 
 
 def is_targeted_probe_tool_call(tool_name: str, display_cmd: str) -> bool:
     if tool_name not in {"bash_exec", "python_exec"}:
         return False
     cmd = str(display_cmd or "")
-    return bool(TARGETED_PROBE_RE.search(cmd)) and not bool(WORDLIST_SCAN_RE.search(cmd))
+    return bool(TARGETED_PROBE_RE.search(cmd)) and not is_wordlist_scan_tool_call(tool_name, cmd)
 
 
 def last_memory_item(memory: dict[str, Any], *keys: str) -> str:
@@ -99,9 +153,10 @@ def mission_scan_cooldown_blocks(tool_name: str, display_cmd: str, scan_timeout_
     if tool_name not in {"bash_exec", "python_exec"}:
         return False
     cmd = str(display_cmd or "")
-    if not COOLDOWN_SCAN_TOOL_RE.search(cmd):
+    executed = set(_executed_command_names(cmd))
+    if not executed.intersection({"ffuf", "arjun", "nuclei", "sqlmap"}):
         return False
-    if WORDLIST_SCAN_RE.search(cmd):
+    if is_wordlist_scan_tool_call(tool_name, cmd):
         return True
     return not bool(EXPLICIT_TARGET_RE.search(cmd))
 

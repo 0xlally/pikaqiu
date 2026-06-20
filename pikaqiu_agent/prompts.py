@@ -250,7 +250,7 @@ def build_tool_system_prompt(
         ),
         (
             "## 工具选择速查\n"
-            "- **Web发现/参数/漏洞**：目录/接口/虚拟主机用 `ffuf`；隐藏参数用 `arjun`；模板化漏洞/暴露面用 `nuclei`；SQL注入用 `sqlmap`；XSS用 `dalfox`；产品版本漏洞先 `search_cve` / `searchsploit`。\n"
+            "- **Web发现/参数/漏洞**：先用 `curl`/浏览器响应确认具体入口、状态码、参数和差异；只有已有明确输入点或候选路径时，才用 `ffuf`/`arjun`/`nuclei`/`sqlmap` 做小范围验证。产品版本漏洞先 `search_cve` / `searchsploit`。\n"
             "- **端口/内网探测**：单目标服务识别用 `nmap -sV -sC`；内网网段快速发现用 `fscan`；发现私网IP后优先结合隧道再访问内网Web。\n"
             "- **SMB/AD枚举**：SMB共享和凭据验证用 `netexec`、`smbmap`；LDAP/域对象用 `ldapdomaindump`、`powerview`；Kerberos用户枚举/喷洒用 `kerbrute`。\n"
             "- **Kerberos/ADCS/Relay**：ASREPRoast用 `asreproast`/`impacket-GetNPUsers`；Kerberoast用 `impacket-GetUserSPNs`；ADCS用 `certipy-ad`；NTLM relay用 `impacket-ntlmrelayx`；强制认证链用 `coercer`、`mitm6`、`PetitPotam`、`printerbug`、`DFSCoerce`、`ShadowCoerce`。\n"
@@ -258,6 +258,14 @@ def build_tool_system_prompt(
             "- **云/容器/K8s**：云配置审计用 `prowler`；镜像/文件系统/依赖/IaC扫描用 `trivy`；Kubernetes暴露面用 `kube-hunter`。\n"
             "- **Windows/后渗透资源**：Windows原生工具在 `/opt/windows-tools`，域内源码/脚本在 `/opt/ad-tools`；有Windows执行条件时再考虑 `mimikatz`、`Rubeus`、`SharpDPAPI`、`SharpHound`、`Certify`、`AdFind`。\n"
             "- **详细语法**：先看自动注入的 `tool_guidance`；仍不确定就运行 `<tool> -h`，或用 `knowledge_search` 查询工具名。"
+        ),
+        (
+            "## 最小高效扫描\n"
+            "- 扫描不是默认动作；需要扫描时，不要先写结构化计划，直接选择能最快验证当前证据链的最小扫描。\n"
+            "- 扫描应尽量小：单 host、单目录、单参数、短字典、低并发、短超时；不要把 `/`、全站、全端口、全模板作为默认起点。\n"
+            "- 先做基线请求再扫描：保存正常/异常状态码、长度、关键词和认证态，扫描结果必须和基线比较后才能写入 findings。\n"
+            "- 发现强证据后停止扩面：LFI/RCE/SQLi/SSRF/凭据/会话/源码泄露出现时，立即围绕该链条收束到 flag 或失败边界。\n"
+            "- 如果扫描被 guard 拦截，说明当前轮次需要定向验证：回到 memory 里的 lead，用 curl/python 打一个最小可复现探针。"
         ),
         _build_env_info_section(env_info),
         (

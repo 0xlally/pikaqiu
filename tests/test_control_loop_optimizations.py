@@ -241,6 +241,20 @@ class ControlLoopOptimizationTests(unittest.TestCase):
         self.assertFalse(
             _mission_scan_cooldown_blocks(
                 "bash_exec",
+                "echo 'sqlmap later'; curl -i http://x/admin",
+                2,
+            )
+        )
+        self.assertFalse(
+            _mission_scan_cooldown_blocks(
+                "bash_exec",
+                "command -v sqlmap || true",
+                2,
+            )
+        )
+        self.assertFalse(
+            _mission_scan_cooldown_blocks(
+                "bash_exec",
                 "sqlmap -u 'http://x/item?id=1' --batch --level=1",
                 2,
             )
