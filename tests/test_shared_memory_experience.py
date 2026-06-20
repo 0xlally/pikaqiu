@@ -119,12 +119,10 @@ class SharedMemoryExperienceTests(unittest.TestCase):
         memory = {
             "summary": "upload endpoint exists; parser behavior is unknown",
             "findings": ["upload endpoint exists"],
-            "leads": ["try polyglot payload"],
+            "leads": ["curl -F file=@polyglot.jpg http://x/upload"],
             "dead_ends": ["directory brute force timed out"],
-            "next_focus": ["curl -F file=@polyglot.jpg http://x/upload"],
-            "highest_value_lead": "verify upload parser",
-            "blocked_reason": "need upload response body",
-            "next_one_command": "curl -F file=@polyglot.jpg http://x/upload",
+            "credentials": [],
+            "topology": [],
         }
         hints = "## Distilled Experience Hints\n- [distilled] .pikaqiu_agent/experience_distilled/a.md: upload parser"
 
@@ -137,7 +135,6 @@ class SharedMemoryExperienceTests(unittest.TestCase):
         )
 
         self.assertLess(context.index("Current Memory"), context.index("Distilled Experience Hints"))
-        self.assertIn("verify upload parser", context)
         self.assertIn("curl -F file=@polyglot.jpg http://x/upload", context)
         self.assertIn("upload endpoint exists", context)
         self.assertNotIn("tool_call_log", context)
@@ -154,18 +151,16 @@ class SharedMemoryExperienceTests(unittest.TestCase):
                 "summary": "admin route exists",
                 "findings": ["admin route exists"],
                 "leads": ["probe admin"],
-                "next_focus": ["curl -i http://x/admin"],
+                "dead_ends": [],
                 "credentials": ["admin:admin"],
-                "highest_value_lead": "probe admin",
-                "blocked_reason": "need auth response",
-                "next_one_command": "curl -i http://x/admin",
+                "topology": ["browser -> web"],
             }
         )
 
-        self.assertEqual(view["highest_value_lead"], "probe admin")
-        self.assertEqual(view["next_focus"], ["curl -i http://x/admin"])
         self.assertEqual(view["findings"], ["admin route exists"])
+        self.assertEqual(view["leads"], ["probe admin"])
         self.assertEqual(view["credentials"], ["admin:admin"])
+        self.assertEqual(view["topology"], ["browser -> web"])
         self.assertEqual(
             set(view),
             {
@@ -173,12 +168,7 @@ class SharedMemoryExperienceTests(unittest.TestCase):
                 "findings",
                 "leads",
                 "dead_ends",
-                "next_focus",
                 "credentials",
-                "highest_value_lead",
-                "blocked_reason",
-                "next_one_command",
-                "nodes",
                 "topology",
             },
         )

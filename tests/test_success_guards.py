@@ -21,10 +21,10 @@ class SuccessGuardTests(unittest.TestCase):
         self.assertFalse(_is_broad_scan_tool_call("ask_adviser", "ffuf example"))
         self.assertFalse(_is_broad_scan_tool_call("bash_exec", "curl -i http://x/admin"))
 
-    def test_route_guard_prefers_highest_value_lead(self):
+    def test_route_guard_uses_current_lead(self):
         memory = {
             "summary": "Authenticated session and Apache cgi-bin %2e%2e alias observed.",
-            "highest_value_lead": "Verify /cgi-bin/%2e%2e/.htaccess direct-vs-alias parity",
+            "leads": ["Verify /cgi-bin/%2e%2e/.htaccess direct-vs-alias parity"],
         }
         guidance = _route_guard_guidance(memory)
         self.assertIn("[ROUTE_GUARD]", guidance)

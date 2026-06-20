@@ -335,7 +335,7 @@ class ObserverRuntime:
             "Use observer_finish when done. You have at most 4 internal steps total, including finish.\n\n"
             "Decision schema for observer_finish args: verdict OK|WATCH|L1|L2|L3|L4|ENV; "
             "rationale string; evidence array; guidance string; next_verification string; required_evidence string; "
-            "memory_patch object with only findings/leads/dead_ends/next_focus arrays; skill_signal string; "
+            "memory_patch object with only findings/leads/dead_ends arrays; skill_signal string; "
             "experience_refs array; primary_hypothesis string; failure_boundary string; blocked_prerequisite string; "
             "observer_enforcement_state string; agent_override_reason string.\n\n"
             "Verdict meanings: OK normal progress, no correction. WATCH possible context/tool-feedback drift, low efficiency, "
@@ -686,12 +686,7 @@ class ObserverRuntime:
             "findings": memory.get("findings", [])[-12:],
             "leads": memory.get("leads", [])[-12:],
             "dead_ends": memory.get("dead_ends", [])[-8:],
-            "next_focus": memory.get("next_focus", [])[-8:],
             "credentials": memory.get("credentials", [])[-4:],
-            "highest_value_lead": memory.get("highest_value_lead", ""),
-            "blocked_reason": memory.get("blocked_reason", ""),
-            "next_one_command": memory.get("next_one_command", ""),
-            "nodes": memory.get("nodes", {}),
             "topology": _as_list(memory.get("topology", []))[-10:],
         }
 

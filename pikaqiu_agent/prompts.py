@@ -32,7 +32,10 @@ def _build_memory_section(memory: dict[str, Any]) -> str:
     if not (
         memory.get("summary")
         or memory.get("findings")
+        or memory.get("leads")
+        or memory.get("dead_ends")
         or memory.get("credentials")
+        or memory.get("topology")
     ):
         return ""
     parts = []
@@ -40,36 +43,15 @@ def _build_memory_section(memory: dict[str, Any]) -> str:
         parts.append(f"**态势摘要**: {memory['summary']}")
     if memory.get("credentials"):
         parts.append("**已获凭据**: " + " | ".join(str(c) for c in memory["credentials"]))
-    if memory.get("highest_value_lead"):
-        parts.append(f"**Highest-value lead**: {memory['highest_value_lead']}")
-    if memory.get("blocked_reason"):
-        parts.append(f"**Current blocker**: {memory['blocked_reason']}")
-    if memory.get("next_one_command"):
-        parts.append(f"**Next one command**: {memory['next_one_command']}")
     if memory.get("findings"):
         findings_str = "\n".join(f"- {f}" for f in memory["findings"][:10])
         parts.append(f"**关键发现**:\n{findings_str}")
     if memory.get("leads"):
         leads_str = "\n".join(f"- {l}" for l in memory["leads"][:5])
-        parts.append(f"**待验证线索**:\n{leads_str}")
+        parts.append(f"**待验证路线/下一步**:\n{leads_str}")
     if memory.get("dead_ends"):
         dead_str = " | ".join(str(d) for d in memory["dead_ends"][:5])
         parts.append(f"**⛔ 已排除路径（不要重复尝试）**: {dead_str}")
-    if memory.get("nodes"):
-        node_lines = ["**📍 已发现节点**:"]
-        for ip, node in memory["nodes"].items():
-            role = node.get("role", "unknown")
-            access = node.get("access_level", "none")
-            flags = node.get("flags_found", [])
-            node_creds = node.get("credentials", [])
-            node_findings = node.get("findings", [])
-            flag_str = f" | 🚩 {', '.join(flags)}" if flags else ""
-            cred_str = f" | 🔑 {', '.join(node_creds[:3])}" if node_creds else ""
-            node_lines.append(f"  - **{ip}** ({role}) [access: {access}]{flag_str}{cred_str}")
-            if node_findings:
-                for f in node_findings[:3]:
-                    node_lines.append(f"    - {f}")
-        parts.append("\n".join(node_lines))
     if memory.get("topology"):
         topo_str = " | ".join(memory["topology"][:10])
         parts.append(f"**🗺️ 网络拓扑**: {topo_str}")
@@ -344,12 +326,6 @@ def build_tool_memory_prompt(
     tool_call_log: list[dict[str, Any]],
 ) -> str:
     """Build memory compression prompt for tool-use architecture."""
-    node_hint = (
-        "- Record nodes by IP/hostname when multiple hosts or services matter (optional).\n"
-        "- Record topology only when network relationships are observed (optional)."
-    )
-    node_note = "Use nodes/topology for multi-target or internal-network tasks only; omit them for simple single-target tasks."
-
     return f"""\
 You are the MemoryAgent. Compress this round of tool activity into the mission memory.
 
@@ -357,16 +333,12 @@ Rules:
 - Keep only information useful for later exploitation, deduplicated and compressed.
 - summary is a short paragraph covering current phase, key facts, and the main blocker.
 - findings contains only output-backed facts.
-- leads contains concrete hypotheses or routes that can be verified next.
+- leads contains concrete hypotheses, routes, or next actions that can be verified next.
 - dead_ends explains failed routes and why they failed.
 - credentials contains only confirmed credentials/tokens.
-- next_focus lists small concrete follow-up actions.
-- highest_value_lead is the one best route to close next.
-- blocked_reason explains what currently prevents flag capture, if known.
-- next_one_command is one exact next evidence-producing command/check, or empty.
+- topology records observed network/service relationships only when they matter.
 - Do not turn local sandbox actions into target facts.
 - If there are no new findings, preserve the useful existing memory.
-{node_hint}
 - Return strict JSON. The first character must be {{.
 
 Mission:
@@ -382,27 +354,11 @@ Return JSON:
 {{
   "summary": "current situation",
   "findings": ["verified reusable fact"],
-  "leads": ["specific next hypothesis or route"],
+  "leads": ["specific next hypothesis, route, command, or verification action"],
   "dead_ends": ["failed route and concrete reason"],
   "credentials": ["confirmed credential or token"],
-  "next_focus": ["small concrete follow-up check"],
-  "highest_value_lead": "single most valuable verified lead to close next",
-  "blocked_reason": "what currently prevents flag capture, if known",
-  "next_one_command": "one concrete next verification command or empty string",
-  "nodes": {{
-    "IP/hostname": {{
-      "role": "Web Server/DB/etc.",
-      "access_level": "none/recon/user/root/rce_root",
-      "findings": ["node-specific finding"],
-      "credentials": ["node-specific credential"],
-      "flags_found": ["flag"],
-      "next_steps": ["next step"]
-    }}
-  }},
   "topology": ["10.0.1.1 -> 10.0.1.2 (MySQL:3306)"]
 }}
-
-{node_note}
 """
 
 
@@ -435,8 +391,7 @@ def build_memory_cleaning_prompt(
 
 ### 必须删除（主观假设）：
 - 所有"疑似 XXX 漏洞"、"可能存在 XXX 注入"的结论
-- leads 中基于某个漏洞假设延伸的测试方向
-- next_focus 中基于错误假设的计划
+- leads 中基于某个漏洞假设延伸的测试方向或下一步动作
 - 删除所有漏洞判断，哪怕他们已经被证实
 
 ### 移入 dead_ends：
@@ -459,6 +414,6 @@ def build_memory_cleaning_prompt(
   "leads": ["基于事实可以尝试的新方向..."],
   "dead_ends": ["原有dead_ends + 被清洗的假设..."],
   "credentials": ["保留所有已确认凭据..."],
-  "next_focus": ["建议从零开始重新评估的方向..."]
+  "topology": ["已确认的网络/服务关系..."]
 }}
 """

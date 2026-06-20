@@ -101,7 +101,7 @@ _RUNTIME_MUTABLE_FIELDS = {
     "initial_rounds", "initial_commands", "max_rounds", "max_commands",
     "command_timeout_sec", "stdout_limit", "knowledge_top_k", "skills_dir",
     "skills_auto_use", "skill_catalog_limit", "skill_prompt_max_chars", "skill_reference_max_chars",
-    "context_compress_threshold", "observer_review_interval",
+    "context_compress_threshold", "memory_compress_interval",
     "extra_rounds_per_flag", "extra_commands_per_flag",
     # Mock
     "mock",
@@ -152,7 +152,7 @@ class AgentSettings:
     command_timeout_sec: int = 60      # default sandbox command timeout
     stdout_limit: int = 8000
     context_compress_threshold: int = 80000  # chars; mid-round context compression trigger
-    observer_review_interval: int = 16  # passive Observer audit interval, counted by main LLM turns
+    memory_compress_interval: int = 32  # main LLM calls between structured memory compression runs
     round_timeout_sec: int = 300
     knowledge_top_k: int = 6
     knowledge_dir: str = "./knowledge"  # directory for knowledge zips/folders
@@ -391,7 +391,7 @@ def _load_from_env(root: Path) -> AgentSettings:
         initial_commands=_env("PIKAQIU_MAX_COMMANDS_PER_ROUND", default=32, cast=int),
         command_timeout_sec=_env("PIKAQIU_COMMAND_TIMEOUT_SEC", default=60, cast=int),
         stdout_limit=_env("PIKAQIU_STDOUT_LIMIT", default=16000, cast=int),
-        observer_review_interval=_env("PIKAQIU_OBSERVER_REVIEW_INTERVAL", default=16, cast=int),
+        memory_compress_interval=_env("PIKAQIU_MEMORY_COMPRESS_INTERVAL", default=32, cast=int),
         knowledge_top_k=_env("PIKAQIU_KNOWLEDGE_TOP_K", default=6, cast=int),
         knowledge_dir=_env("PIKAQIU_KNOWLEDGE_DIR", default="./knowledge"),
         skills_dir=_env("PIKAQIU_SKILLS_DIR", default="./skills"),
@@ -565,9 +565,9 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
         command_timeout_sec=ag.get("command_timeout_sec", 60),
         stdout_limit=ag.get("stdout_limit", 8000),
         context_compress_threshold=ag.get("context_compress_threshold", 80000),
-        observer_review_interval=_env(
-            "PIKAQIU_OBSERVER_REVIEW_INTERVAL",
-            default=ag.get("observer_review_interval", 16),
+        memory_compress_interval=_env(
+            "PIKAQIU_MEMORY_COMPRESS_INTERVAL",
+            default=ag.get("memory_compress_interval", 32),
             cast=int,
         ),
         round_timeout_sec=ag.get("round_timeout_sec", 300),

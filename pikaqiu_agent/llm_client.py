@@ -330,7 +330,7 @@ class LLMClient:
     ) -> LLMResult:
         if any(
             key in result.payload
-            for key in ("summary", "findings", "leads", "dead_ends", "next_focus")
+            for key in ("summary", "findings", "leads", "dead_ends", "credentials", "topology")
         ):
             return result
 
@@ -345,7 +345,7 @@ class LLMClient:
             "leads": list(previous_memory.get("leads", [])),
             "dead_ends": list(previous_memory.get("dead_ends", [])),
             "credentials": list(previous_memory.get("credentials", [])),
-            "next_focus": list(previous_memory.get("next_focus", [])),
+            "topology": list(previous_memory.get("topology", [])),
         }
         return LLMResult(
             raw_text=result.raw_text,
@@ -545,7 +545,7 @@ class LLMClient:
             "leads": list(previous_memory.get("leads", []))[:20],
             "dead_ends": list(previous_memory.get("dead_ends", []))[:20],
             "credentials": list(previous_memory.get("credentials", []))[:20],
-            "next_focus": ["设置 API key 后切真实模型"],
+            "topology": list(previous_memory.get("topology", []))[:20],
         }
         return LLMResult(raw_text=json.dumps(payload, ensure_ascii=False), payload=payload, used_mock=True)
 

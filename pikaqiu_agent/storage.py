@@ -26,6 +26,18 @@ def _json_loads(value: str | None, default: Any) -> Any:
         return default
 
 
+MEMORY_COLUMNS = (
+    "mission_id",
+    "summary",
+    "findings_json",
+    "leads_json",
+    "dead_ends_json",
+    "credentials_json",
+    "topology_json",
+    "updated_at",
+)
+
+
 def _parse_iso_datetime(value: str | None) -> datetime | None:
     text = str(value or "").strip()
     if not text:
@@ -306,7 +318,7 @@ class MissionStore:
                   leads_json TEXT NOT NULL,
                   dead_ends_json TEXT NOT NULL,
                   credentials_json TEXT NOT NULL,
-                  next_focus_json TEXT NOT NULL,
+                  topology_json TEXT NOT NULL,
                   updated_at TEXT NOT NULL,
                   FOREIGN KEY(mission_id) REFERENCES missions(id)
                 );
@@ -382,17 +394,46 @@ class MissionStore:
                 self._conn.execute("ALTER TABLE cve_poc_index ADD COLUMN poc_content TEXT DEFAULT ''")
             except sqlite3.OperationalError:
                 pass  # Column already exists
-            # Migration: add nodes_json and topology_json columns for multi-node memory
-            for col, default_val in (("nodes_json", "{}"), ("topology_json", "[]")):
-                try:
-                    self._conn.execute(f"ALTER TABLE memories ADD COLUMN {col} TEXT NOT NULL DEFAULT '{default_val}'")
-                except sqlite3.OperationalError:
-                    pass  # Column already exists
-            for col in ("highest_value_lead", "blocked_reason", "next_one_command"):
-                try:
-                    self._conn.execute(f"ALTER TABLE memories ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
-                except sqlite3.OperationalError:
-                    pass  # Column already exists
+            self._rebuild_memories_table_if_needed()
+
+    def _rebuild_memories_table_if_needed(self) -> None:
+        rows = self._conn.execute("PRAGMA table_info(memories)").fetchall()
+        current_columns = tuple(row["name"] for row in rows)
+        if current_columns == MEMORY_COLUMNS:
+            return
+        select_columns = set(current_columns)
+        tmp_table = "memories_new"
+        self._conn.execute("DROP TABLE IF EXISTS memories_new")
+        self._conn.execute(
+            """
+            CREATE TABLE memories_new (
+              mission_id TEXT PRIMARY KEY,
+              summary TEXT NOT NULL,
+              findings_json TEXT NOT NULL,
+              leads_json TEXT NOT NULL,
+              dead_ends_json TEXT NOT NULL,
+              credentials_json TEXT NOT NULL,
+              topology_json TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              FOREIGN KEY(mission_id) REFERENCES missions(id)
+            )
+            """
+        )
+        topology_expr = "topology_json" if "topology_json" in select_columns else "'[]'"
+        self._conn.execute(
+            f"""
+            INSERT INTO {tmp_table}(
+              mission_id, summary, findings_json, leads_json,
+              dead_ends_json, credentials_json, topology_json, updated_at
+            )
+            SELECT
+              mission_id, summary, findings_json, leads_json,
+              dead_ends_json, credentials_json, {topology_expr}, updated_at
+            FROM memories
+            """
+        )
+        self._conn.execute("DROP TABLE memories")
+        self._conn.execute(f"ALTER TABLE {tmp_table} RENAME TO memories")
 
     def set_meta(self, key: str, value: str) -> None:
         with self._lock, self._conn:
@@ -454,7 +495,7 @@ class MissionStore:
                 """
                 INSERT INTO memories(
                   mission_id, summary, findings_json, leads_json,
-                  dead_ends_json, credentials_json, next_focus_json, updated_at
+                  dead_ends_json, credentials_json, topology_json, updated_at
                 ) VALUES(?, '', '[]', '[]', '[]', '[]', '[]', ?)
                 """,
                 (mission_id, now),
@@ -1143,12 +1184,7 @@ class MissionStore:
                     leads_json = ?,
                     dead_ends_json = ?,
                     credentials_json = ?,
-                    next_focus_json = ?,
-                    nodes_json = ?,
                     topology_json = ?,
-                    highest_value_lead = ?,
-                    blocked_reason = ?,
-                    next_one_command = ?,
                     updated_at = ?
                 WHERE mission_id = ?
                 """,
@@ -1158,12 +1194,7 @@ class MissionStore:
                     _json_dumps(memory.get("leads", [])),
                     _json_dumps(memory.get("dead_ends", [])),
                     _json_dumps(memory.get("credentials", [])),
-                    _json_dumps(memory.get("next_focus", memory.get("nex_focus", []))),
-                    _json_dumps(memory.get("nodes", {})),
                     _json_dumps(memory.get("topology", [])),
-                    str(memory.get("highest_value_lead", "")),
-                    str(memory.get("blocked_reason", "")),
-                    str(memory.get("next_one_command", "")),
                     _now(),
                     mission_id,
                 ),
@@ -1174,10 +1205,7 @@ class MissionStore:
             row = self._conn.execute(
                 """
                 SELECT summary, findings_json, leads_json,
-                       dead_ends_json, credentials_json, next_focus_json,
-                       nodes_json, topology_json,
-                       highest_value_lead, blocked_reason, next_one_command,
-                       updated_at
+                       dead_ends_json, credentials_json, topology_json
                 FROM memories
                 WHERE mission_id = ?
                 """,
@@ -1190,30 +1218,15 @@ class MissionStore:
                 "leads": [],
                 "dead_ends": [],
                 "credentials": [],
-                "next_focus": [],
-                "nex_focus": [],
-                "nodes": {},
                 "topology": [],
-                "highest_value_lead": "",
-                "blocked_reason": "",
-                "next_one_command": "",
-                "updated_at": "",
             }
-        next_focus = _json_loads(row["next_focus_json"], [])
         return {
             "summary": row["summary"],
             "findings": _json_loads(row["findings_json"], []),
             "leads": _json_loads(row["leads_json"], []),
             "dead_ends": _json_loads(row["dead_ends_json"], []),
             "credentials": _json_loads(row["credentials_json"], []),
-            "next_focus": next_focus,
-            "nex_focus": next_focus,
-            "nodes": _json_loads(row["nodes_json"], {}),
             "topology": _json_loads(row["topology_json"], []),
-            "highest_value_lead": row["highest_value_lead"],
-            "blocked_reason": row["blocked_reason"],
-            "next_one_command": row["next_one_command"],
-            "updated_at": row["updated_at"],
         }
 
 

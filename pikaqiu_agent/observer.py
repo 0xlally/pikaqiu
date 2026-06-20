@@ -7,7 +7,7 @@ from difflib import SequenceMatcher
 from typing import Any
 
 
-MEMORY_PATCH_KEYS = ("findings", "leads", "dead_ends", "next_focus")
+MEMORY_PATCH_KEYS = ("findings", "leads", "dead_ends")
 OBSERVER_VERDICTS = {"OK", "WATCH", "L1", "L2", "L3", "L4", "ENV"}
 INTERRUPT_VERDICTS = {"L1", "L2", "L3", "L4", "ENV"}
 VERDICT_LABELS = {
@@ -119,7 +119,7 @@ def _verdict_allows_interrupt(verdict: str) -> bool:
 
 
 def _route_memory_changed(before: dict[str, Any], after: dict[str, Any]) -> bool:
-    for key in ("findings", "leads", "next_focus"):
+    for key in ("findings", "leads"):
         if _str_list((before or {}).get(key, [])) != _str_list((after or {}).get(key, [])):
             return True
     return False
@@ -313,7 +313,7 @@ class ObserverAgent:
     def apply_memory_patch(self, memory: dict[str, Any], patch: dict[str, list[str]]) -> tuple[dict[str, Any], bool]:
         updated = dict(memory)
         changed = False
-        limits = {"findings": 20, "leads": 12, "dead_ends": 12, "next_focus": 12}
+        limits = {"findings": 20, "leads": 12, "dead_ends": 12}
         for key in MEMORY_PATCH_KEYS:
             incoming = _str_list(patch.get(key, []))
             if not incoming:
@@ -380,7 +380,7 @@ class ObserverAgent:
         return "\n\n".join(parts)
 
     def last_good_lead(self, memory: dict[str, Any]) -> str:
-        for key in ("next_focus", "leads", "findings"):
+        for key in ("leads", "findings"):
             items = _str_list(memory.get(key, []))
             if items:
                 return items[-1]
@@ -509,12 +509,12 @@ class ObserverAgent:
             verdict="L2",
             rationale="Round executed tools but did not add trustworthy route evidence to memory.",
             evidence=[
-                "findings/leads/next_focus did not change",
+                "findings/leads did not change",
                 "recent outputs do not provide enough concrete evidence for route trust",
             ],
             guidance=(
                 "Before continuing, close the evidence gap: identify the current hypothesis, run the smallest verification "
-                "that can confirm/deny it, and update findings/leads/next_focus with the raw observable result or a dead end."
+                "that can confirm/deny it, and update findings/leads with the raw observable result or a dead end."
             ),
             required_evidence="memory must record the raw observable result or a reliable dead end",
         )
@@ -632,12 +632,17 @@ class ObserverAgent:
         recent = tool_call_log[-6:] if tool_call_log else []
         has_concrete = any(self._has_concrete_evidence(row) for row in recent)
         failure_count = sum(1 for row in recent if FAILURE_RE.search(_tool_result_text(row)))
+        dead_ends = [
+            str(item).strip()
+            for item in memory.get("dead_ends", []) or []
+            if str(item).strip()
+        ]
         has_boundary = bool(
             str(reason or "").strip()
             and (
                 memory.get("failure_boundary")
                 or memory.get("required_next_evidence")
-                or memory.get("blocked_reason")
+                or dead_ends
                 or failure_count >= 3
             )
         )
@@ -645,7 +650,7 @@ class ObserverAgent:
             return ObserverDecision(
                 verdict="OK",
                 rationale="Stop is acceptable: evidence and a failure boundary are recorded.",
-                failure_boundary=str(memory.get("failure_boundary") or memory.get("blocked_reason") or "documented boundary"),
+                failure_boundary=str(memory.get("failure_boundary") or (dead_ends[-1] if dead_ends else "documented boundary")),
                 observer_enforcement_state="allow_stop",
             ).normalised()
 

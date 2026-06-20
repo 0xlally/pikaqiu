@@ -76,12 +76,12 @@ const configFields = [
   { key: "observer_base_url", label: "Observer API 地址", type: "text", section: "Observer" },
   { key: "observer_api_key", label: "Observer API Key", type: "password", section: "Observer" },
   { key: "observer_model", label: "Observer 模型", type: "text", section: "Observer" },
-  { key: "observer_review_interval", label: "Observer 审核间隔", type: "number", section: "Observer" },
   { key: "observer_reasoning_effort", label: "Observer 推理强度", type: "text", section: "Observer" },
   { key: "initial_rounds", label: "默认轮数", type: "number", section: "Agent 参数" },
   { key: "initial_commands", label: "每轮命令数", type: "number", section: "Agent 参数" },
   { key: "command_timeout_sec", label: "命令超时秒数", type: "number", section: "Agent 参数" },
   { key: "stdout_limit", label: "输出截断长度", type: "number", section: "Agent 参数" },
+  { key: "memory_compress_interval", label: "记忆压缩调用间隔", type: "number", section: "Agent 参数" },
   { key: "knowledge_top_k", label: "知识库检索数", type: "number", section: "Agent 参数" },
   { key: "skills_dir", label: "Skills 目录", type: "text", section: "Agent 参数" },
   { key: "skills_auto_use", label: "自动启用 Skill", type: "checkbox", section: "Agent 参数" }
@@ -695,9 +695,9 @@ function FunctionMap({
     },
     {
       label: "Memory",
-      title: detail.memory.highest_value_lead || "暂无主线",
-      body: compact(detail.memory.next_one_command || detail.memory.summary || "等待下一轮压缩", 92),
-      meta: formatTime(detail.memory.updated_at),
+      title: String(detail.memory.leads?.[0] || "暂无主线"),
+      body: compact(detail.memory.summary || "等待下一轮压缩", 92),
+      meta: formatTime(detail.mission.updated_at),
       icon: <Brain />,
       tab: "memory",
       tone: "blue"
@@ -889,9 +889,9 @@ function OverviewTab({
           </div>
           <div className="brief-grid">
             <BriefItem label="摘要" value={memory.summary || "暂未形成稳定摘要。"} />
-            <BriefItem label="最高价值线索" value={memory.highest_value_lead || "暂无"} />
-            <BriefItem label="下一条命令" value={memory.next_one_command || "等待下一轮规划"} mono />
-            <BriefItem label="阻塞原因" value={memory.blocked_reason || mission.error_message || "未阻塞"} />
+            <BriefItem label="当前线索" value={String(memory.leads?.[0] || "暂无")} />
+            <BriefItem label="最近发现" value={String(memory.findings?.[0] || "暂无")} />
+            <BriefItem label="任务状态" value={mission.error_message || "未阻塞"} />
           </div>
         </section>
 
@@ -988,7 +988,7 @@ function ObserverTab({ detail }: { detail: MissionDetail }) {
           <Circuitry />
           <div>
             <h2>被动 Observer</h2>
-            <p>Observer 不再是可调用工具，而是按配置间隔被动审核主模型轨迹。</p>
+            <p>Observer 不再是可调用工具，而是在每轮结束后被动审核主模型轨迹。</p>
           </div>
         </div>
         <div className="observer-stats">
@@ -1038,7 +1038,7 @@ function ObserverTab({ detail }: { detail: MissionDetail }) {
             ))}
           </div>
         ) : (
-          <EmptyState title="Observer 尚未介入" body="达到审核间隔或出现关键风险时，这里会出现被动审核结果。" />
+          <EmptyState title="Observer 尚未介入" body="任务完成首轮后，这里会出现被动审核结果。" />
         )}
       </section>
     </div>
@@ -1052,7 +1052,6 @@ function MemoryTab({ detail }: { detail: MissionDetail }) {
     ["Leads", memory.leads],
     ["Credentials", memory.credentials],
     ["Dead Ends", memory.dead_ends],
-    ["Next Focus", memory.next_focus],
     ["Topology", memory.topology]
   ] as const;
   return (
@@ -1062,16 +1061,11 @@ function MemoryTab({ detail }: { detail: MissionDetail }) {
           <Brain />
           <div>
             <h2>任务记忆</h2>
-            <p>更新时间：{formatTime(memory.updated_at)}</p>
+            <p>默认每 32 次主模型调用后，由 Memory Agent 压缩工具证据。</p>
           </div>
         </div>
         <div className="memory-headline">
           <p>{memory.summary || "暂无记忆摘要。"}</p>
-        </div>
-        <div className="brief-grid">
-          <BriefItem label="最高价值线索" value={memory.highest_value_lead || "暂无"} />
-          <BriefItem label="当前阻塞" value={memory.blocked_reason || "暂无"} />
-          <BriefItem label="下一条命令" value={memory.next_one_command || "暂无"} />
         </div>
       </section>
       {groups.map(([label, value]) => (
@@ -1080,10 +1074,6 @@ function MemoryTab({ detail }: { detail: MissionDetail }) {
           <ListBlock items={listify(value)} empty="暂无记录" />
         </section>
       ))}
-      <section className="panel span-2">
-        <h3>Nodes</h3>
-        <pre className="json-block">{safeJson(memory.nodes)}</pre>
-      </section>
     </div>
   );
 }
@@ -1398,7 +1388,6 @@ function SettingsPage() {
   const settingsSummary = [
     { label: "主模型", value: String(config.effective_chat_model || config.llm_model || bootstrap?.model || "未加载") },
     { label: "LLM 模式", value: String(bootstrap?.llm_mode || "未加载") },
-    { label: "Observer 间隔", value: `${String(config.observer_review_interval || "未加载")} 轮` },
     { label: "Skill", value: `${String(bootstrap?.skills?.enabled ?? "-")}/${String(bootstrap?.skills?.total ?? "-")} enabled` }
   ];
   return (

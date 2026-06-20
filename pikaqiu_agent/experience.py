@@ -30,12 +30,12 @@ def build_experience_query(mission: dict[str, Any], memory: dict[str, Any]) -> s
         mission.get("target", ""),
         mission.get("goal", ""),
         " ".join(str(item) for item in mission.get("domains", [])),
-        memory.get("highest_value_lead", ""),
-        memory.get("blocked_reason", ""),
-        memory.get("next_one_command", ""),
+        memory.get("summary", ""),
         " ".join(str(item) for item in memory.get("findings", [])[:6]),
         " ".join(str(item) for item in memory.get("leads", [])[:6]),
+        " ".join(str(item) for item in memory.get("dead_ends", [])[:4]),
         " ".join(str(item) for item in memory.get("credentials", [])[:4]),
+        " ".join(str(item) for item in memory.get("topology", [])[:4]),
     ]
     return " ".join(str(piece) for piece in pieces if str(piece).strip())
 

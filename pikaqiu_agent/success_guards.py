@@ -74,12 +74,12 @@ def last_memory_item(memory: dict[str, Any], *keys: str) -> str:
     return ""
 
 
-def highest_value_lead(memory: dict[str, Any]) -> str:
-    return last_memory_item(memory, "highest_value_lead", "next_focus", "leads", "findings")
+def current_lead(memory: dict[str, Any]) -> str:
+    return last_memory_item(memory, "leads", "findings")
 
 
 def next_verification_hint(memory: dict[str, Any]) -> str:
-    return last_memory_item(memory, "next_one_command", "highest_value_lead", "next_focus", "leads", "findings")
+    return last_memory_item(memory, "leads", "findings")
 
 
 def broad_scan_block_message(memory: dict[str, Any], *, reason: str = "round") -> str:
@@ -244,7 +244,7 @@ def route_guard_guidance(memory: dict[str, Any]) -> str:
         rules.append(
             "FastAPI/OpenAPI evidence exists. Use the documented routes to build minimal auth/body differentials; avoid generic path fuzzing first."
         )
-    lead = highest_value_lead(memory)
+    lead = current_lead(memory)
     if lead:
         rules.append(f"Highest-value lead to close next: {lead}")
     if not rules:
@@ -268,7 +268,7 @@ _is_scan_like_tool_call = is_scan_like_tool_call
 _is_broad_scan_tool_call = is_broad_scan_tool_call
 _is_wordlist_scan_tool_call = is_wordlist_scan_tool_call
 _is_targeted_probe_tool_call = is_targeted_probe_tool_call
-_highest_value_lead = highest_value_lead
+_current_lead = current_lead
 _next_verification_hint = next_verification_hint
 _broad_scan_block_message = broad_scan_block_message
 _mission_scan_cooldown_blocks = mission_scan_cooldown_blocks

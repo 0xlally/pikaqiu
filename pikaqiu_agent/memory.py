@@ -223,7 +223,7 @@ def normalize_memory_enhanced(
     - Uses smart_trim instead of simple tail-cut
     - Critical findings (RCE, creds, flags) are never trimmed
     - Low-priority findings are trimmed first
-    - Multi-node support: nodes dict + topology list
+    - Topology list support for multi-target relationships
     """
     summary_val = payload.get("summary", "")
     if isinstance(summary_val, str):
@@ -258,29 +258,9 @@ def normalize_memory_enhanced(
         "credentials": _dedupe(
             _as_str_list(payload.get("credentials", fallback.get("credentials", [])))
         ),
-        "next_focus": _dedupe(
-            _as_str_list(
-                payload.get(
-                    "next_focus",
-                    payload.get("nex_focus", fallback.get("next_focus", [])),
-                )
-            )
+        "topology": _dedupe(
+            _as_str_list(payload.get("topology", fallback.get("topology", [])))
         ),
-        "highest_value_lead": str(
-            payload.get("highest_value_lead")
-            or updates.get("highest_value_lead")
-            or fallback.get("highest_value_lead", "")
-        ).strip(),
-        "blocked_reason": str(
-            payload.get("blocked_reason")
-            or updates.get("blocked_reason")
-            or fallback.get("blocked_reason", "")
-        ).strip(),
-        "next_one_command": str(
-            payload.get("next_one_command")
-            or updates.get("next_one_command")
-            or fallback.get("next_one_command", "")
-        ).strip(),
     }
     
     # Smart trimming with importance scoring
@@ -288,113 +268,7 @@ def normalize_memory_enhanced(
     result["leads"] = smart_trim(result["leads"], max_count=12)
     result["dead_ends"] = smart_trim(result["dead_ends"], max_count=12)
 
-    # Multi-node support: merge nodes from payload and fallback
-    nodes = _normalize_nodes(
-        payload.get("nodes", {}),
-        fallback.get("nodes", {}),
-    )
-    if nodes:
-        result["nodes"] = nodes
-
-    # Topology: deduplicated list of network connections
-    topology = _dedupe(
-        _as_str_list(payload.get("topology", fallback.get("topology", [])))
-    )
-    if topology:
-        result["topology"] = topology
-
-    # Node status validation: soft consistency check to prevent memory hallucination
-    if nodes:
-        _validate_nodes(nodes, result)
-
     return result
-
-
-def _validate_nodes(nodes: dict[str, dict[str, Any]], memory: dict[str, Any]) -> None:
-    """Light consistency check on node access_level claims.
-    
-    Downgrades access_level if evidence doesn't support the claim.
-    This prevents memory agent hallucination (e.g., claiming root without evidence).
-    """
-    all_findings = " ".join(memory.get("findings", []))
-    all_creds = " ".join(memory.get("credentials", []))
-    
-    rce_keywords = re.compile(
-        r'(rce|command.?exec|shell|whoami|uid=|cat /etc/passwd|root:|www-data)', re.I
-    )
-    user_keywords = re.compile(
-        r'(login|session|authenticated|cookie|token|password|credential|ssh)', re.I
-    )
-    
-    for ip, node in nodes.items():
-        access = str(node.get("access_level", "none")).lower()
-        node_findings = " ".join(node.get("findings", []))
-        node_creds = node.get("credentials", [])
-        combined = all_findings + " " + node_findings + " " + all_creds
-        
-        if access in ("rce_root", "root"):
-            if not rce_keywords.search(combined) and not node.get("flags_found"):
-                node["access_level"] = "user"
-                logger.debug("[memory] node %s: downgraded from %s to user (no RCE evidence)", ip, access)
-        elif access == "user":
-            if not user_keywords.search(combined) and not node_creds:
-                node["access_level"] = "recon"
-                logger.debug("[memory] node %s: downgraded from user to recon (no auth evidence)", ip, access)
-
-
-def _normalize_nodes(
-    new_nodes: Any,
-    old_nodes: Any,
-) -> dict[str, dict[str, Any]]:
-    """Merge and normalize per-node memory.
-    
-    Each node is keyed by IP/hostname and contains:
-    - role: str (e.g., "Web Server", "Database")
-    - access_level: str (none/recon/user/root/rce_root)
-    - findings: list[str]
-    - credentials: list[str]
-    - flags_found: list[str]
-    - next_steps: list[str]
-    """
-    if not isinstance(new_nodes, dict):
-        new_nodes = {}
-    if not isinstance(old_nodes, dict):
-        old_nodes = {}
-
-    # Start with old nodes, overlay new
-    merged: dict[str, dict[str, Any]] = {}
-    all_keys = set(list(old_nodes.keys()) + list(new_nodes.keys()))
-
-    for key in all_keys:
-        old = old_nodes.get(key, {})
-        new = new_nodes.get(key, {})
-        if not isinstance(old, dict):
-            old = {}
-        if not isinstance(new, dict):
-            new = {}
-
-        node = {
-            "role": str(new.get("role") or old.get("role", "")),
-            "access_level": str(new.get("access_level") or old.get("access_level", "none")),
-            "findings": _dedupe(
-                _as_str_list(new.get("findings", old.get("findings", [])))
-            )[:10],
-            "credentials": _dedupe(
-                _as_str_list(new.get("credentials", old.get("credentials", [])))
-            )[:8],
-            "flags_found": _dedupe(
-                _as_str_list(new.get("flags_found", old.get("flags_found", [])))
-            ),
-            "next_steps": _dedupe(
-                _as_str_list(new.get("next_steps", old.get("next_steps", [])))
-            )[:5],
-        }
-        # Only include non-empty nodes
-        if any([node["role"], node["findings"], node["credentials"],
-                node["flags_found"], node["next_steps"]]):
-            merged[key] = node
-
-    return merged
 
 
 # ── Helper functions (moved from orchestrator.py for reuse) ───────────
@@ -445,7 +319,6 @@ def detect_stall(
     Returns True if the agent is stalled (no meaningful new findings AND no new leads).
     Unlike hash-based detection, this handles memory reordering correctly and filters
     trivial findings like 404s and timeouts.
-    Also checks per-node progress when nodes are present.
     """
     prev_findings = set(str(f).strip().lower() for f in previous_memory.get("findings", []))
     curr_findings = set(str(f).strip().lower() for f in current_memory.get("findings", []))
@@ -462,33 +335,6 @@ def detect_stall(
     curr_creds = set(str(c).strip().lower() for c in current_memory.get("credentials", []))
     new_creds = curr_creds - prev_creds
 
-    new_node_progress = False
-    curr_nodes = current_memory.get("nodes", {})
-    prev_nodes = previous_memory.get("nodes", {})
-    if isinstance(curr_nodes, dict) and curr_nodes:
-        if not isinstance(prev_nodes, dict):
-            prev_nodes = {}
-        if set(curr_nodes) - set(prev_nodes):
-            new_node_progress = True
-        else:
-            for key, curr_node in curr_nodes.items():
-                prev_node = prev_nodes.get(key)
-                if not isinstance(curr_node, dict) or not isinstance(prev_node, dict):
-                    if curr_node != prev_node:
-                        new_node_progress = True
-                        break
-                    continue
-                if curr_node.get("access_level", "none") != prev_node.get("access_level", "none"):
-                    new_node_progress = True
-                    break
-                curr_findings = {str(item).lower() for item in curr_node.get("findings", [])}
-                prev_findings = {str(item).lower() for item in prev_node.get("findings", [])}
-                curr_flags = set(curr_node.get("flags_found", []))
-                prev_flags = set(prev_node.get("flags_found", []))
-                if curr_findings - prev_findings or curr_flags - prev_flags:
-                    new_node_progress = True
-                    break
-
     # Stalled = no meaningful progress anywhere
     return (len(meaningful_new) == 0 and len(new_leads) == 0
-            and len(new_creds) == 0 and not new_node_progress)
+            and len(new_creds) == 0)

@@ -10,7 +10,23 @@ class _DummyKnowledge:
 
 
 class _DummyLLM:
-    pass
+    def __init__(self):
+        self.memory_calls = 0
+
+    def invoke_memory(self, prompt, previous_memory):
+        self.memory_calls += 1
+
+        class _Result:
+            payload = {
+                "summary": "login endpoint verified",
+                "findings": ["GET /login returned 200"],
+                "leads": ["POST credentials to /login"],
+                "dead_ends": [],
+                "credentials": [],
+                "topology": ["browser -> web"],
+            }
+
+        return _Result()
 
 
 class _DummySandbox:
@@ -93,3 +109,49 @@ def test_agent_slots_report_idle_when_flag_is_captured(tmp_path):
     assert first["status"] == "idle"
     assert first["status_reason"] == "flag_captured"
     assert first["captured_flag_count"] == 1
+
+
+def test_memory_compression_helper_records_current_schema(tmp_path):
+    manager = _manager(tmp_path)
+    mission_id = manager.store.create_mission(
+        name="memory",
+        target="http://target",
+        goal="capture flag",
+        scope="http://target",
+        domains=["web"],
+        max_rounds=1,
+        max_commands=1,
+        command_timeout_sec=5,
+        model="mock",
+    )
+    mission = manager.store.get_mission(mission_id)
+    before = manager.store.get_memory(mission_id)
+
+    after = manager._compress_memory_from_tool_calls(
+        mission_id=mission_id,
+        mission=mission,
+        memory=before,
+        round_no=1,
+        tool_call_log=[
+            {
+                "tool": "bash_exec",
+                "args_summary": "curl -i http://target/login",
+                "result_summary": "HTTP/1.1 200 OK",
+                "exit_code": 0,
+            }
+        ],
+        reason="32 main LLM calls",
+    )
+
+    assert manager.llm.memory_calls == 1
+    assert after == {
+        "summary": "login endpoint verified",
+        "findings": ["GET /login returned 200"],
+        "leads": ["POST credentials to /login"],
+        "dead_ends": [],
+        "credentials": [],
+        "topology": ["browser -> web"],
+    }
+    events = manager.store.get_events(mission_id)
+    memory_events = [event for event in events if event["type"] == "memory_agent"]
+    assert memory_events[-1]["metadata"]["reason"] == "32 main LLM calls"

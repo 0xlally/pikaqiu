@@ -31,7 +31,7 @@ class ControlLoopOptimizationTests(unittest.TestCase):
 
         repeated_memory = ObserverDecision(
             verdict="WATCH",
-            memory_patch={"next_focus": ["x"]},
+            memory_patch={"leads": ["x"]},
         )
         self.assertFalse(should_inject_decision(repeated_memory, phase="tool"))
 
@@ -116,10 +116,9 @@ class ControlLoopOptimizationTests(unittest.TestCase):
         self.assertEqual(record["captured_flags"], ["flag{real123}"])
         self.assertEqual(record["captured_flag_count"], 1)
 
-    def test_broad_scan_block_message_uses_next_one_command(self):
+    def test_broad_scan_block_message_uses_current_lead(self):
         memory = {
-            "next_one_command": "curl -i http://x/login",
-            "highest_value_lead": "ignore me",
+            "leads": ["curl -i http://x/login"],
         }
         message = _broad_scan_block_message(memory, reason="per-round broad scan")
         self.assertIn("[BROAD_SCAN_BLOCKED]", message)

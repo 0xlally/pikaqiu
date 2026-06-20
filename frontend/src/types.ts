@@ -118,13 +118,7 @@ export type MemoryState = {
   leads: unknown[];
   dead_ends: unknown[];
   credentials: unknown[];
-  next_focus: unknown[];
-  nodes: Record<string, unknown>;
   topology: unknown[];
-  highest_value_lead: string;
-  blocked_reason: string;
-  next_one_command: string;
-  updated_at: string;
 };
 
 export type ObserverMessage = {

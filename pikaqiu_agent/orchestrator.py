@@ -65,7 +65,7 @@ _append_flag_candidate_summary = _flag_capture.append_flag_candidate_summary
 _auto_capture_trusted_flags = _flag_capture.auto_capture_trusted_flags
 _is_scan_like_tool_call = _success_guards.is_scan_like_tool_call
 _is_broad_scan_tool_call = _success_guards.is_broad_scan_tool_call
-_highest_value_lead = _success_guards.highest_value_lead
+_current_lead = _success_guards.current_lead
 _next_verification_hint = _success_guards.next_verification_hint
 _summarize_guidance_result = _success_guards.summarize_guidance_result
 _round_time_guidance = _success_guards.round_time_guidance
@@ -467,59 +467,25 @@ class OrchestratorManager:
             logger.warning("[orchestrator] env-info collection failed: %s", e)
         return ""
 
-    def _do_final_memory_compression(
+    def _compress_memory_from_tool_calls(
         self,
+        *,
         mission_id: str,
         mission: dict[str, Any],
         memory: dict[str, Any],
         round_no: int,
         tool_call_log: list[dict[str, Any]],
-        outcome: str,
-    ) -> None:
-        """Run a final memory compression so DA can analyze the mission outcome."""
+        reason: str,
+    ) -> dict[str, Any]:
+        if not tool_call_log:
+            return memory
+        memory_prompt = build_tool_memory_prompt(
+            mission=mission,
+            previous_memory=memory,
+            round_no=round_no,
+            tool_call_log=_tool_call_memory_view(tool_call_log),
+        )
         try:
-            flag_events = [
-                event for event in self.store.get_events(mission_id)
-                if event.get("type") == "flag"
-            ]
-            if flag_events:
-                flags = self.store.get_captured_flags(mission_id)
-                completion_finding = (
-                    "mission_complete=true; captured_flags="
-                    + ", ".join(flags)
-                    + "; source_event_ids="
-                    + ",".join(str(event.get("id")) for event in flag_events)
-                )
-                enriched_memory = dict(memory)
-                findings = list(enriched_memory.get("findings") or [])
-                if completion_finding not in findings:
-                    findings.append(completion_finding)
-                enriched_memory.update({
-                    "mission_complete": True,
-                    "captured_flags": flags,
-                    "captured_flag_event_ids": [event.get("id") for event in flag_events],
-                    "blocked_reason": "",
-                    "findings": findings,
-                })
-                memory = enriched_memory
-                self.store.add_event(
-                    mission_id=mission_id,
-                    round_no=round_no,
-                    event_type="memory_agent",
-                    title="Final completion context",
-                    content=completion_finding,
-                    metadata={
-                        "mission_complete": True,
-                        "captured_flags": flags,
-                        "captured_flag_event_ids": [event.get("id") for event in flag_events],
-                    },
-                )
-            memory_prompt = build_tool_memory_prompt(
-                mission=mission,
-                previous_memory=memory,
-                round_no=round_no,
-                tool_call_log=_tool_call_memory_view(tool_call_log),
-            )
             pool = ThreadPoolExecutor(max_workers=1)
             try:
                 future = pool.submit(self.llm.invoke_memory, memory_prompt, memory)
@@ -527,33 +493,84 @@ class OrchestratorManager:
             finally:
                 pool.shutdown(wait=False)
             new_memory = normalize_memory_enhanced(memory_result.payload, memory)
-            if flag_events:
-                new_memory["mission_complete"] = True
-                new_memory["captured_flags"] = flags
-                new_memory["captured_flag_event_ids"] = [event.get("id") for event in flag_events]
-                new_memory["blocked_reason"] = ""
-                findings = list(new_memory.get("findings") or [])
-                if completion_finding not in findings:
-                    findings.append(completion_finding)
-                new_memory["findings"] = findings
-            self.store.set_memory(mission_id, new_memory)
-            self.store.add_event(
+        except Exception as mem_err:
+            logger.warning("[orchestrator] memory compression failed: %s", mem_err)
+            return memory
+        self.store.set_memory(mission_id, new_memory)
+        self.store.add_event(
+            mission_id=mission_id,
+            round_no=round_no,
+            event_type="memory_agent",
+            title=f"Memory compression ({reason})",
+            content=_compact_json(new_memory),
+            metadata={"reason": reason, "tool_call_count": len(tool_call_log)},
+        )
+        return self.store.get_memory(mission_id)
+
+    def _record_completion_memory(
+        self,
+        *,
+        mission_id: str,
+        round_no: int,
+        memory: dict[str, Any],
+    ) -> dict[str, Any]:
+        flag_events = [
+            event for event in self.store.get_events(mission_id)
+            if event.get("type") == "flag"
+        ]
+        if not flag_events:
+            return memory
+        flags = self.store.get_captured_flags(mission_id)
+        completion_finding = (
+            "mission_complete=true; captured_flags="
+            + ", ".join(flags)
+            + "; source_event_ids="
+            + ",".join(str(event.get("id")) for event in flag_events)
+        )
+        new_memory = dict(memory)
+        findings = list(new_memory.get("findings") or [])
+        if completion_finding not in findings:
+            findings.append(completion_finding)
+        new_memory["findings"] = findings
+        self.store.set_memory(mission_id, new_memory)
+        new_memory = self.store.get_memory(mission_id)
+        self.store.add_event(
+            mission_id=mission_id,
+            round_no=round_no,
+            event_type="memory_agent",
+            title="Completion memory recorded",
+            content=completion_finding,
+            metadata={
+                "captured_flags": flags,
+                "captured_flag_event_ids": [event.get("id") for event in flag_events],
+            },
+        )
+        return new_memory
+
+    def _finalize_success_experience(
+        self,
+        *,
+        mission_id: str,
+        mission: dict[str, Any],
+        memory: dict[str, Any],
+        round_no: int,
+        tool_call_log: list[dict[str, Any]],
+    ) -> None:
+        try:
+            new_memory = self._record_completion_memory(
                 mission_id=mission_id,
                 round_no=round_no,
-                event_type="memory_agent",
-                title=f"最终记忆压缩 ({outcome})",
-                content=_compact_json(new_memory),
+                memory=memory,
             )
-            if flag_events and outcome == "success":
-                self._craft_success_experience(
-                    mission_id=mission_id,
-                    mission=mission,
-                    memory=new_memory,
-                    round_no=round_no,
-                    tool_call_log=tool_call_log,
-                )
+            self._craft_success_experience(
+                mission_id=mission_id,
+                mission=mission,
+                memory=new_memory,
+                round_no=round_no,
+                tool_call_log=tool_call_log,
+            )
         except Exception as e:
-            logger.warning("[orchestrator] final memory compression failed: %s", e)
+            logger.warning("[orchestrator] success finalization failed: %s", e)
 
     def _build_experience_hints(
         self,
@@ -857,7 +874,7 @@ class OrchestratorManager:
             )
         if round_no == 1:
             return f"开始第 {round_no} 轮渗透。目标: {target}。"
-        return f"第 {round_no} 轮开始，上一轮记忆已压缩注入系统提示，继续利用。"
+        return f"第 {round_no} 轮开始，读取当前结构化记忆并继续利用。"
 
     def _record_command_event(
         self,
@@ -1123,10 +1140,13 @@ class OrchestratorManager:
         captured_flags: list[str] = []
         pending_observer_guidance: list[str] = []
         pending_observer_steer: ObserverDecision | None = None
-        observer_review_interval = max(1, int(getattr(self.settings, "observer_review_interval", 16) or 16))
-        observer_turns_since_review = 0
         mission_scan_timeout_count = 0
         missing_tools_seen: set[str] = _missing_tools_from_memory(memory)
+        tool_call_log: list[dict[str, Any]] = []
+        total_llm_call_count = 0
+        last_memory_compressed_llm_count = 0
+        last_memory_compressed_tool_index = 0
+        memory_compress_interval = max(1, int(self.settings.memory_compress_interval or 32))
 
         start_round = max(1, self.store.get_max_round_no(mission_id) + 1)
         if start_round > max_rounds:
@@ -1230,7 +1250,6 @@ class OrchestratorManager:
                 expected_flags=mission.get("expected_flags", 1),
                 experience_hints=experience_hints,
             )
-            tool_call_log: list[dict[str, Any]] = []
 
             def on_flag(flag: str) -> str:
                 for existing in captured_flags:
@@ -1409,7 +1428,6 @@ class OrchestratorManager:
             round_timeout_sec = mission.get("round_timeout_sec", self.settings.round_timeout_sec)
             round_broad_scan_count = 0
             last_time_guidance_tag = ""
-            round_memory_before_observer = memory
 
             self.store.add_event(
                 mission_id=mission_id,
@@ -1418,6 +1436,24 @@ class OrchestratorManager:
                 title=f"Round {round_no} 开始",
                 content=f"max_llm_calls_per_round={max_tool_calls_per_round}",
             )
+
+            def maybe_compress_memory_due() -> None:
+                nonlocal memory, last_memory_compressed_llm_count, last_memory_compressed_tool_index
+                if total_llm_call_count - last_memory_compressed_llm_count < memory_compress_interval:
+                    return
+                new_tool_calls = tool_call_log[last_memory_compressed_tool_index:]
+                if new_tool_calls:
+                    memory = self._compress_memory_from_tool_calls(
+                        mission_id=mission_id,
+                        mission=mission,
+                        memory=memory,
+                        round_no=round_no,
+                        tool_call_log=new_tool_calls,
+                        reason=f"{memory_compress_interval} main LLM calls",
+                    )
+                    missing_tools_seen.update(_missing_tools_from_memory(memory))
+                    last_memory_compressed_tool_index = len(tool_call_log)
+                last_memory_compressed_llm_count = total_llm_call_count
 
             while llm_call_count < max_tool_calls_per_round:
                 if self.store.should_stop(mission_id):
@@ -1470,7 +1506,7 @@ class OrchestratorManager:
                     break
 
                 llm_call_count += 1
-                observer_turns_since_review += 1
+                total_llm_call_count += 1
                 messages.append(response)
 
                 # Log AI response text
@@ -1485,6 +1521,7 @@ class OrchestratorManager:
                     )
 
                 if not response.tool_calls:
+                    maybe_compress_memory_due()
                     consecutive_no_tool += 1
                     if consecutive_no_tool >= 5:
                         # Model made 5 consecutive responses without calling tools — round done
@@ -1623,7 +1660,7 @@ class OrchestratorManager:
                         if "[BROAD_SCAN_BLOCKED]" not in result_str:
                             round_broad_scan_count += 1
                         if round_broad_scan_count > 1:
-                            lead = _highest_value_lead(memory)
+                            lead = _current_lead(memory)
                             deferred_guidance.append(
                                 "[BROAD_SCAN_LIMIT]\n"
                                 "This round already used a broad enumeration/scanning command. Stop starting more broad scans. "
@@ -1653,7 +1690,7 @@ class OrchestratorManager:
                             recent_scan_timeouts += 1
                         if recent_scan_timeouts >= 2:
                             deferred_guidance.append(
-                                "连续扫描/爆破类工具超时。停止扩大扫描，回到当前 memory 中最高价值的已验证线索，"
+                                "连续扫描/爆破类工具超时。停止扩大扫描，回到当前 memory 中最强的已验证线索，"
                                 "下一步只做一个小范围、可解释、能产出原始证据的验证。"
                             )
 
@@ -1668,7 +1705,7 @@ class OrchestratorManager:
                                 deferred_guidance.append(
                                     "[MISSION_SCAN_TIMEOUT_GUARD]\n"
                                     "This mission has already had at least two scan-like timeouts. Lower priority for ffuf/arjun/nuclei/sqlmap "
-                                    f"and prefer exact verification from memory: {_highest_value_lead(memory) or 'current highest-value lead'}.\n"
+                                    f"and prefer exact verification from memory: {_current_lead(memory) or 'current lead'}.\n"
                                     "[/MISSION_SCAN_TIMEOUT_GUARD]"
                                 )
 
@@ -1738,6 +1775,8 @@ class OrchestratorManager:
                             )
                         elif override_decision.observer_enforcement_state == "resolved":
                             pending_observer_steer = None
+
+                maybe_compress_memory_due()
 
                 # Mid-round context monitoring: if messages are getting too large,
                 # use LLM compression (if available) or fallback to importance-based scoring
@@ -1843,81 +1882,57 @@ class OrchestratorManager:
                     title="任务完成",
                     content=f"Flag(s) captured: {flags}",
                 )
-                # Final memory compression for DA analysis
-                self._do_final_memory_compression(
-                    mission_id, mission, memory, round_no, tool_call_log, "success"
+                self._finalize_success_experience(
+                    mission_id=mission_id,
+                    mission=mission,
+                    memory=memory,
+                    round_no=round_no,
+                    tool_call_log=tool_call_log,
                 )
                 return
 
-            # Memory compression at end of each round
-            memory_prompt = build_tool_memory_prompt(
-                mission=mission,
-                previous_memory=memory,
-                round_no=round_no,
-                tool_call_log=_tool_call_memory_view(round_tool_call_log),
-            )
-            try:
-                pool = ThreadPoolExecutor(max_workers=1)
-                try:
-                    future = pool.submit(self.llm.invoke_memory, memory_prompt, memory)
-                    memory_result = future.result(timeout=self.settings.llm_timeout_sec)
-                finally:
-                    pool.shutdown(wait=False)
-                new_memory = normalize_memory_enhanced(memory_result.payload, memory)
-            except Exception as mem_err:
-                logger.warning("[orchestrator] memory compression failed: %s", mem_err)
-                new_memory = memory
-            self.store.set_memory(mission_id, new_memory)
-            self.store.add_event(
+            memory_before_observer = memory
+            round_observer_decision = self.observer_runtime.review_round(
                 mission_id=mission_id,
                 round_no=round_no,
-                event_type="memory_agent",
-                title=f"Round {round_no} 记忆压缩",
-                content=_compact_json(new_memory),
+                mission=mission,
+                memory_before=memory_before_observer,
+                memory_after=memory_before_observer,
+                tool_call_log=tool_call_log,
+                round_tool_call_log=round_tool_call_log,
+                llm_call_count=llm_call_count,
+                stall_rounds=_stall_rounds,
+                captured_flags=captured_flags,
             )
-
-            if observer_turns_since_review >= observer_review_interval:
-                round_observer_decision = self.observer_runtime.review_round(
+            self._record_observer_decision(
+                mission_id=mission_id,
+                round_no=round_no,
+                decision=round_observer_decision,
+                phase="round",
+            )
+            new_memory = self._apply_observer_memory_patch(
+                mission_id=mission_id,
+                round_no=round_no,
+                memory=memory_before_observer,
+                decision=round_observer_decision,
+            )
+            memory = new_memory
+            if round_observer_decision.interrupts:
+                self._inject_observer_steer(
                     mission_id=mission_id,
                     round_no=round_no,
-                    mission=mission,
-                    memory_before=memory,
-                    memory_after=new_memory,
-                    tool_call_log=tool_call_log,
-                    round_tool_call_log=round_tool_call_log,
-                    llm_call_count=llm_call_count,
-                    stall_rounds=_stall_rounds,
-                    captured_flags=captured_flags,
-                )
-                observer_turns_since_review = 0
-                self._record_observer_decision(
-                    mission_id=mission_id,
-                    round_no=round_no,
+                    messages=None,
+                    pending_guidance=pending_observer_guidance,
                     decision=round_observer_decision,
                     phase="round",
                 )
-                new_memory = self._apply_observer_memory_patch(
-                    mission_id=mission_id,
-                    round_no=round_no,
-                    memory=new_memory,
-                    decision=round_observer_decision,
+                pending_observer_steer = self._update_pending_observer_steer(
+                    pending_observer_steer,
+                    round_observer_decision,
                 )
-                if round_observer_decision.interrupts:
-                    self._inject_observer_steer(
-                        mission_id=mission_id,
-                        round_no=round_no,
-                        messages=None,
-                        pending_guidance=pending_observer_guidance,
-                        decision=round_observer_decision,
-                        phase="round",
-                    )
-                    pending_observer_steer = self._update_pending_observer_steer(
-                        pending_observer_steer,
-                        round_observer_decision,
-                    )
 
             # Stall detection: semantic comparison instead of fragile hash
-            if detect_stall(new_memory, memory):
+            if detect_stall(new_memory, memory_before_observer):
                 _stall_rounds += 1
             else:
                 _stall_rounds = 0
@@ -1966,8 +1981,4 @@ class OrchestratorManager:
             title="Max rounds reached",
             content=stop_message,
             metadata={"observer": stop_decision.to_dict()},
-        )
-        # Final memory compression for DA analysis
-        self._do_final_memory_compression(
-            mission_id, mission, memory, max_rounds, tool_call_log, "max_rounds"
         )
