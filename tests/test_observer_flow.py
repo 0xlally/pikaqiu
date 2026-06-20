@@ -27,9 +27,9 @@ def test_observer_detects_flag_in_full_tail() -> None:
         captured_flags=[],
     ).normalised()
 
-    assert decision.severity == "critical"
-    assert decision.state == "risky"
-    assert decision.action == "steer"
+    assert decision.verdict == "L4"
+    assert decision.interrupts is True
+    assert "flag{tail_flag_value}" in " ".join(decision.evidence)
 
 
 def test_long_tail_exit_code_is_concrete_evidence() -> None:
@@ -58,18 +58,43 @@ def test_short_success_still_low_evidence() -> None:
 def test_observer_injection_is_runtime_telemetry() -> None:
     text = ObserverAgent().format_injection(
         ObserverDecision(
-            severity="critical",
-            state="risky",
-            intervention="steer",
-            action="steer",
-            problems=["possible flag found"],
-            steer_message="Submit verified flag.",
+            verdict="L4",
+            evidence=["possible flag found"],
+            guidance="Submit verified flag.",
         )
     )
 
     assert "[RUNTIME_OBSERVER_AUDIT source=observer_agent not_user_request]" in text
     assert "[/RUNTIME_OBSERVER_AUDIT]" in text
     assert "not human guidance or a user request" in text
+    assert "verdict=L4" in text
+
+
+def test_watch_verdict_is_non_interrupting_observation() -> None:
+    decision = ObserverDecision(
+        verdict="WATCH",
+        guidance="watch for context drift",
+    ).normalised()
+
+    assert decision.verdict == "WATCH"
+    assert decision.interrupts is False
+
+
+def test_observer_rule_classifies_environment_failure_loop() -> None:
+    observer = ObserverAgent()
+    decision = observer.observe_tool_call(
+        mission={"target": "http://target.local"},
+        tool_call_log=[
+            {"tool": "bash_exec", "args_summary": "ffuf 1", "result_summary": "timeout"},
+            {"tool": "bash_exec", "args_summary": "ffuf 2", "result_summary": "connection refused"},
+            {"tool": "bash_exec", "args_summary": "ffuf 3", "result_summary": "command not found"},
+        ],
+        memory={},
+        captured_flags=[],
+    ).normalised()
+
+    assert decision.verdict == "ENV"
+    assert decision.interrupts is True
 
 
 def test_skill_reference_requires_selected_or_activated_skill() -> None:

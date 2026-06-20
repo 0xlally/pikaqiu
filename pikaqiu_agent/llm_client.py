@@ -361,16 +361,13 @@ class LLMClient:
             payload = {
                 "tool": "observer_finish",
                 "args": {
-                    "severity": "info",
-                    "state": "progressing",
-                    "action": "no_action",
-                    "route_assessment": "mock observer runtime: no issue detected",
-                    "problems": [],
-                    "steer_message": "",
+                    "verdict": "OK",
+                    "rationale": "mock observer runtime: no issue detected",
+                    "evidence": [],
+                    "guidance": "",
                     "memory_patch": {},
                     "skill_signal": "",
                     "experience_refs": [],
-                    "visible_summary": "mock observer runtime completed",
                 },
             }
             return LLMResult(raw_text=json.dumps(payload, ensure_ascii=False), payload=payload, used_mock=True)

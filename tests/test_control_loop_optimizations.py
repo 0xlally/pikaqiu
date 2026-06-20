@@ -18,50 +18,65 @@ from pikaqiu_agent.success_guards import (
 class ControlLoopOptimizationTests(unittest.TestCase):
     def test_observer_injection_policy_for_tool_phase(self):
         warn_steer = ObserverDecision(
-            severity="warn",
-            state="slow",
-            action="steer",
-            intervention="steer",
-            steer_message="do one targeted check",
+            verdict="WATCH",
+            guidance="do one targeted check",
         )
-        self.assertTrue(should_inject_decision(warn_steer, phase="tool"))
+        self.assertFalse(should_inject_decision(warn_steer, phase="tool"))
 
         repeated_warn_steer = ObserverDecision(
-            severity="warn",
-            state="repeated",
-            action="steer",
-            intervention="steer",
-            steer_message="stop repeating scans",
+            verdict="L4",
+            guidance="stop repeating scans",
         )
         self.assertTrue(should_inject_decision(repeated_warn_steer, phase="tool"))
 
         repeated_memory = ObserverDecision(
-            severity="info",
-            state="repeated",
-            action="memory_patch",
-            intervention="memory_sync",
+            verdict="WATCH",
             memory_patch={"next_focus": ["x"]},
         )
         self.assertFalse(should_inject_decision(repeated_memory, phase="tool"))
 
         memory_only = ObserverDecision(
-            severity="info",
-            state="progressing",
-            action="memory_patch",
-            intervention="memory_sync",
+            verdict="OK",
             memory_patch={"findings": ["x"]},
         )
         self.assertFalse(should_inject_decision(memory_only, phase="tool"))
 
     def test_observer_injection_policy_preserves_round_follow_up(self):
         follow_up = ObserverDecision(
-            severity="warn",
-            state="slow",
-            action="steer",
-            intervention="follow_up",
-            steer_message="next round must verify",
+            verdict="L2",
+            guidance="next round must verify",
         )
         self.assertTrue(should_inject_decision(follow_up, phase="round"))
+
+    def test_observer_summary_counts_verdicts(self):
+        store = MissionStore(":memory:")
+        mission_id = store.create_mission(
+            name="m",
+            target="http://x",
+            goal="flag",
+            scope="http://x",
+            domains=["web"],
+            max_rounds=1,
+            max_commands=1,
+            command_timeout_sec=1,
+            model="mock",
+        )
+        for verdict in ("OK", "WATCH", "L2"):
+            store.add_observer_message(
+                mission_id=mission_id,
+                round_no=1,
+                message_type="decision",
+                direction="out",
+                title=f"Observer decision: {verdict}",
+                content=verdict,
+                metadata={"decision": ObserverDecision(verdict=verdict).to_dict()},
+            )
+
+        summary = store.get_observer_summary(mission_id)
+
+        self.assertEqual(summary["stats"]["ok"], 1)
+        self.assertEqual(summary["stats"]["watch"], 1)
+        self.assertEqual(summary["stats"]["interrupts"], 1)
 
     def test_flag_event_aggregation_is_truth_source(self):
         store = MissionStore(":memory:")

@@ -859,14 +859,17 @@ class MissionStore:
         stats = {
             "messages": len(messages),
             "decisions": len(decisions),
-            "warn_critical": sum(
+            "ok": sum(
                 1 for msg in decisions
-                if decision_payload(msg).get("severity") in {"warn", "critical"}
+                if decision_payload(msg).get("verdict") == "OK"
             ),
-            "steers": sum(
+            "watch": sum(
                 1 for msg in decisions
-                if decision_payload(msg).get("action") == "steer"
-                or decision_payload(msg).get("intervention") in {"steer", "follow_up", "rollback_steer"}
+                if decision_payload(msg).get("verdict") == "WATCH"
+            ),
+            "interrupts": sum(
+                1 for msg in decisions
+                if decision_payload(msg).get("verdict") in {"L1", "L2", "L3", "L4", "ENV"}
             ),
             "memory_patches": sum(
                 1 for msg in decisions
@@ -874,8 +877,7 @@ class MissionStore:
             ),
             "skill_signals": sum(
                 1 for msg in decisions
-                if str(decision_payload(msg).get("skill_signal") or decision_payload(msg).get("skill_card") or "").strip()
-                and str(decision_payload(msg).get("skill_signal") or decision_payload(msg).get("skill_card")).strip().lower() != "none"
+                if str(decision_payload(msg).get("skill_signal") or "").strip()
             ),
         }
         return {

@@ -938,13 +938,11 @@ class OrchestratorManager:
         phase: str,
     ) -> None:
         decision = decision.normalised()
-        if decision.severity == "none" and not decision.actionable:
-            return
         self.store.add_event(
             mission_id=mission_id,
             round_no=round_no,
             event_type="observer_agent",
-            title=f"Observer {phase}: {decision.state}/{decision.action}",
+            title=f"Observer {phase}: {decision.verdict}",
             content=self.observer.format_event_content(decision),
             metadata={"observer": decision.to_dict(), "phase": phase},
         )
@@ -1002,13 +1000,13 @@ class OrchestratorManager:
                 round_no=round_no,
                 event_type="observer_agent",
                 title="Observer steer injected",
-                content=decision.steer_message or decision.skill_instruction or decision.route_assessment,
+                content=decision.guidance or decision.next_verification or decision.rationale,
                 metadata={
                     "observer": decision.to_dict(),
                     "injected": True,
                     "phase": phase,
                     "injection_signature": decision.signature(),
-                    "next_step": decision.steer_message or decision.skill_instruction or decision.route_assessment,
+                    "next_step": decision.guidance or decision.next_verification or decision.rationale,
                 },
             )
         return injected
@@ -1053,8 +1051,8 @@ class OrchestratorManager:
         decision = decision.normalised()
         if decision.observer_enforcement_state == "resolved":
             return None
-        if decision.action == "steer" and decision.severity in {"warn", "critical"}:
-            if decision.next_verification or decision.required_next_evidence or decision.steer_message:
+        if decision.interrupts:
+            if decision.next_verification or decision.required_evidence or decision.guidance:
                 return decision
         return current
 
@@ -1270,12 +1268,12 @@ class OrchestratorManager:
                         round_no=round_no,
                         event_type="warning",
                         title="Give up rejected by Observer",
-                        content=decision.steer_message or _low_evidence_stop_block_message(memory),
+                        content=decision.guidance or _low_evidence_stop_block_message(memory),
                         metadata={"observer": decision.to_dict()},
                     )
                     return (
                         "[GIVE_UP_REJECTED]\n"
-                        + (decision.steer_message or _low_evidence_stop_block_message(memory))
+                        + (decision.guidance or _low_evidence_stop_block_message(memory))
                     )
                 self.store.add_event(
                     mission_id=mission_id,
@@ -1615,10 +1613,8 @@ class OrchestratorManager:
                             round_no=round_no,
                             memory=memory,
                             decision=ObserverDecision(
-                                severity="info",
-                                state="progressing",
-                                intervention="memory_sync",
-                                action="memory_patch",
+                                verdict="OK",
+                                rationale="Sandbox missing-tool observation recorded in memory.",
                                 memory_patch=patch,
                             ),
                         )
@@ -1711,7 +1707,7 @@ class OrchestratorManager:
                         memory_after=memory,
                         agent_override_reason=response_text[:500],
                     ).normalised()
-                    if override_decision.actionable:
+                    if override_decision.interrupts or override_decision.observer_enforcement_state == "resolved":
                         self._record_observer_decision(
                             mission_id=mission_id,
                             round_no=round_no,
@@ -1728,7 +1724,7 @@ class OrchestratorManager:
                             pending_observer_steer,
                             override_decision,
                         )
-                        if override_decision.severity == "critical":
+                        if override_decision.interrupts:
                             messages.append(
                                 HumanMessage(
                                     content=(
@@ -1906,7 +1902,7 @@ class OrchestratorManager:
                     memory=new_memory,
                     decision=round_observer_decision,
                 )
-                if round_observer_decision.actionable:
+                if round_observer_decision.interrupts:
                     self._inject_observer_steer(
                         mission_id=mission_id,
                         round_no=round_no,

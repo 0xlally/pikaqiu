@@ -33,7 +33,7 @@ OPENAI_API_KEY=replace-with-your-api-key
 PIKAQIU_LLM_API_KEY=replace-with-your-api-key
 ```
 
-Observer 默认复用主模型配置。它是被动审核器，不是主 Agent 可调用工具；默认每 16 次主模型 turn 介入审核一次，可通过 `observer_review_interval` 或 `PIKAQIU_OBSERVER_REVIEW_INTERVAL` 修改。
+Observer 默认复用主模型配置。它是被动审核器，不是主 Agent 可调用工具；默认每 16 次主模型 turn 介入审核一次，可通过 `observer_review_interval` 或 `PIKAQIU_OBSERVER_REVIEW_INTERVAL` 修改。每次审核都会输出 `OK`、`WATCH`、`L1`、`L2`、`L3`、`L4` 或 `ENV` 结论；`OK/WATCH` 只记录和观察，只有明确的 `L*` 或 `ENV` 才会打断/纠偏主 Agent。
 
 ### 3. 启动沙箱容器
 
@@ -175,7 +175,7 @@ Flask API (pikaqiu_agent/web_app.py)
 4. Sandbox Executor 在 `pikaqiu-sandbox-1` 中执行 bash/python 等命令。
 5. 命令输出写入 SQLite events，并触发 Flag 自动识别。
 6. Memory Agent 将关键发现压缩成结构化记忆。
-7. Passive Observer 按配置间隔审核运行轨迹，只在关键风险、重复卡住或需要纠偏时注入短建议。
+7. Passive Observer 按配置间隔审核运行轨迹，并输出 `OK/WATCH/L1/L2/L3/L4/ENV` 结论；`WATCH` 只提醒下一轮观察点，`L*` 或 `ENV` 才注入短纠偏。
 8. 前端每 3 秒轮询 mission、detail、experiment 数据并刷新 UI。
 9. 达到目标、捕获足够 Flag、达到最大轮数或用户停止后，任务进入终态。
 10. 如果任务成功捕获 Flag，系统会自动提炼 `Experience Craft` 草稿，记录漏洞类型、适用场景、Payload、命令链和证据；草稿不会直接进入主 Agent 的经验检索。

@@ -158,8 +158,9 @@ export type ObserverSummary = {
   stats: {
     messages: number;
     decisions: number;
-    warn_critical: number;
-    steers: number;
+    ok: number;
+    watch: number;
+    interrupts: number;
     memory_patches: number;
     skill_signals: number;
   };

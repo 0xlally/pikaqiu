@@ -13,8 +13,6 @@ from pikaqiu_agent.observer import (
     MEMORY_PATCH_KEYS,
     ObserverAgent,
     ObserverDecision,
-    SEVERITIES,
-    STATES,
 )
 from pikaqiu_agent.skill_loader import SkillLoader
 from pikaqiu_agent.storage import MissionStore
@@ -164,9 +162,8 @@ class ObserverRuntime:
     ) -> ObserverDecision:
         self.ensure_session(mission_id)
         rule_decision = rule_decision.normalised()
-        if (
-            rule_decision.severity == "critical"
-            and any("possible flag" in problem.lower() for problem in rule_decision.problems)
+        if rule_decision.verdict == "L4" and any(
+            "possible flag" in item.lower() for item in rule_decision.evidence
         ):
             self._record_decision(
                 mission_id=mission_id,
@@ -327,37 +324,38 @@ class ObserverRuntime:
             "methodology. Use experience/rules for common mistakes, hunting route choices, proven techniques, "
             "WAF bypass process, never-submit checks, and chain-building judgement. Do not hard-code a scene-to-file "
             "mapping; search or load the files that match the current evidence.\n\n"
-            "Low-noise policy: output no_action when the route is evidence-backed and progressing. "
-            "Intervene only for a real evidence gap, route deviation, repeated weak action, stall, risk, missed "
-            "memory update, or a clearly relevant skill opportunity. A steer must be short, specific, and tell "
-            "the main agent exactly what to verify next and what raw output to preserve.\n\n"
-            "Steer is stop-the-line only: use action=steer for critical risk, clear repetition, or a blocked route. "
-            "For ordinary evidence gaps, prefer action=no_action with a short visible_summary, or action=memory_patch "
-            "when memory is missing concrete facts. Never write a tutorial, broad checklist, or user-facing report.\n\n"
+            "Low-noise policy: every round review must end with exactly one verdict. "
+            "OK and WATCH are passive: they are recorded for humans and future context, but they do not interrupt the main agent. "
+            "Use OK when the route is reasonable, tool use is normal, and the evidence chain gained new information or valid exclusions. "
+            "Use WATCH when there are mild signs of inefficient repetition, weak evidence, or context drift, but not enough to change the next action. "
+            "Use L1/L2/L3/L4/ENV only when clear evidence shows the next main-agent action should change immediately. "
+            "For L/ENV verdicts, guidance must be short, specific, and name exactly what to verify next and what raw output to preserve.\n\n"
             "Every response must be one JSON object: "
             "{\"tool\":\"tool_name\",\"args\":{...}}. "
             "Use observer_finish when done. You have at most 4 internal steps total, including finish.\n\n"
-            "Decision schema for observer_finish args: severity none|info|warn|critical; "
-            "state progressing|slow|stalled|repeated|off_track|risky; "
-            "action no_action|steer|memory_patch|skill_signal; route_assessment string; "
-            "problems array; steer_message string; memory_patch object with only findings/leads/dead_ends/next_focus "
-            "and failure-boundary scalar fields; "
-            "skill_signal string; experience_refs array; visible_summary string; "
-            "primary_hypothesis string; next_verification string; failure_boundary one of "
-            "missing_evidence|missing_tool|unanswered_hypothesis|hypothesis_disproved|stale_plan|execution_quality|external_limit; "
-            "blocked_prerequisite string; required_next_evidence string; observer_enforcement_state string; "
-            "agent_override_reason string.\n\n"
-            "Length limits: route_assessment <= 240 chars, steer_message <= 320 chars, visible_summary <= 180 chars, "
-            "problems <= 3 short bullets. Do not address the main agent as 'you'; use imperative task notes.\n\n"
+            "Decision schema for observer_finish args: verdict OK|WATCH|L1|L2|L3|L4|ENV; "
+            "rationale string; evidence array; guidance string; next_verification string; required_evidence string; "
+            "memory_patch object with only findings/leads/dead_ends/next_focus arrays; skill_signal string; "
+            "experience_refs array; primary_hypothesis string; failure_boundary string; blocked_prerequisite string; "
+            "observer_enforcement_state string; agent_override_reason string.\n\n"
+            "Verdict meanings: OK normal progress, no correction. WATCH possible context/tool-feedback drift, low efficiency, "
+            "weak evidence, or mild repetition, but no interrupt. L1 tool usage error: bad args, wrong tool, path/encoding/"
+            "request construction problem; prefer self-correction. L2 insufficient information: missing reconnaissance, "
+            "unverified conclusion, or no reproducible evidence. L3 strategy direction error: sustained low-yield or "
+            "disproved attack surface. L4 cognitive bias: repeated same failure, ignored lead, hallucinated/misread evidence, "
+            "self-contradiction, or premature success/failure claim. ENV environment fault: missing tool, network/target "
+            "unreachable, service crash, permission/API/rate-limit/reverse-connect issue.\n\n"
+            "Length limits: rationale <= 240 chars, guidance <= 360 chars, evidence <= 3 short bullets. "
+            "Do not address the main agent as 'you'; use imperative task notes.\n\n"
             "Do not trust the main agent's self-assessment that a path is exhausted. Treat only observable "
             "tool output, memory facts, events, and loaded experience as evidence. When progress is blocked, "
             "name the current hypothesis, the exact next verification needed, and the failure boundary only if "
             "the evidence truly supports it. Do not map framework/product names to fixed actions.\n\n"
             "When judging whether the main agent route is correct, combine the current evidence with /experience "
             "best practices. You may search or load experience as needed. If you think the main agent should use "
-            "a skill, search/load skills only for your own judgement, then output action=skill_signal and a concise "
-            "skill_signal; do not activate it yourself. If you loaded a skill, name the exact skill id and put the "
-            "main agent handoff in skill_instruction as an activate_skill(skill_id=\"...\", reason=\"...\") call."
+            "a skill, search/load skills only for your own judgement, then output a concise skill_signal; "
+            "do not activate it yourself. If you loaded a skill, name the exact skill id and explain the "
+            "activate_skill(...) handoff inside skill_signal."
         )
 
     def _build_prompt(
@@ -374,7 +372,7 @@ class ObserverRuntime:
             "Preferred experience files to consider when relevant, but do not use a fixed scene mapping:\n"
             + "\n".join(f"- {path}" for path in PREFERRED_EXPERIENCE_REFS)
             + "\n\nAvailable tool arguments:\n"
-            "- observer_think: {\"note\":\"...\",\"route_assessment\":\"optional\"}\n"
+            "- observer_think: {\"note\":\"...\",\"rationale\":\"optional\"}\n"
             "- experience_search: {\"query\":\"...\",\"limit\":5}\n"
             "- load_experience: {\"path\":\"experience/...md\",\"max_chars\":8000}\n"
             "- observer_skill_search: {\"query\":\"...\",\"limit\":5}\n"
@@ -394,11 +392,13 @@ class ObserverRuntime:
             "techniques, or WAF bypass?\n"
             "5. Is the main agent repeating weak actions, skipping a stronger lead, or failing to write key findings/leads?\n"
             "6. Would a project skill help, based on the evidence? If yes, use observer_skill_search/load_skill for "
-            "your own judgement and finish with skill_signal only.\n"
-            "7. If you steer, name the exact next verification action and the raw evidence the main agent must capture.\n\n"
+            "your own judgement and finish with a concise skill_signal.\n"
+            "7. Choose one verdict: OK, WATCH, L1, L2, L3, L4, or ENV. Be conservative: WATCH is for mild drift only; "
+            "L-level/ENV requires clear evidence that the next action should change.\n"
+            "8. For L/ENV verdicts, name the exact next verification action and the raw evidence the main agent must capture.\n\n"
             "Do not over-interrupt. If the checklist shows evidence-backed progress, call observer_finish with "
-            "action=no_action. If evidence is insufficient but not blocking, do not steer; use a short visible_summary "
-            "or memory_patch. Use steer only when the next main-agent action should change immediately. "
+            "verdict=OK. If evidence is weak or strategy might drift but the failure is not clear, "
+            "call observer_finish with verdict=WATCH. Use L1/L2/L3/L4/ENV only when the next main-agent action should change immediately. "
             "Never output a route because a technology name was spotted; output only the evidence gap and the next "
             "verification needed to close it.\n\n"
             "Choose exactly one tool now. If enough evidence exists, call observer_finish."
@@ -406,7 +406,7 @@ class ObserverRuntime:
 
     def _parse_tool_call(self, payload: dict[str, Any], raw_text: str) -> tuple[str, dict[str, Any]]:
         data = payload if isinstance(payload, dict) else {}
-        if "tool" not in data and any(key in data for key in ("severity", "state", "action", "route_assessment")):
+        if "tool" not in data and any(key in data for key in ("verdict", "rationale", "evidence", "guidance")):
             return "observer_finish", data
         tool_name = str(data.get("tool") or "").strip()
         args = data.get("args") if isinstance(data.get("args"), dict) else {}
@@ -426,7 +426,7 @@ class ObserverRuntime:
             return {
                 "ok": True,
                 "note": _clean_text(args.get("note"), 2000),
-                "route_assessment": _clean_text(args.get("route_assessment"), 1200),
+                "rationale": _clean_text(args.get("rationale"), 1200),
             }
         if tool_name == "experience_search":
             return self._experience_search(
@@ -522,54 +522,28 @@ class ObserverRuntime:
             if ref not in refs:
                 refs.append(ref)
         skill_signal = str(payload.get("skill_signal") or fallback.skill_signal)
-        skill_instruction = str(payload.get("skill_instruction") or "")
         if used_skills and not skill_signal:
             skill_signal = (
                 f"activate_skill: {used_skills[-1]} because Observer loaded it as relevant to the current evidence"
             )
-        if used_skills and "activate_skill" not in skill_instruction:
-            skill_instruction = (
-                f"Call activate_skill(skill_id=\"{used_skills[-1]}\", reason=\"Observer identified this skill "
-                "as relevant to the current evidence\"), then follow the returned SKILL.md guidance. "
-                + skill_instruction
-            ).strip()
-        action = str(payload.get("action") or "")
-        intervention = str(payload.get("intervention") or "")
-        if not intervention:
-            intervention = {
-                "memory_patch": "memory_sync",
-                "skill_signal": "skill_card",
-                "steer": "steer",
-                "no_action": "none",
-            }.get(action, fallback.intervention)
         decision = ObserverDecision(
-            severity=str(payload.get("severity") or fallback.severity),
-            state=str(payload.get("state") or fallback.state),
-            intervention=intervention,
-            action=str(payload.get("action") or fallback.action),
-            route_assessment=str(payload.get("route_assessment") or fallback.route_assessment),
-            problems=_as_list(payload.get("problems") or fallback.problems),
-            steer_message=str(payload.get("steer_message") or fallback.steer_message),
+            verdict=str(payload.get("verdict") or payload.get("conclusion") or fallback.verdict),
+            rationale=str(payload.get("rationale") or payload.get("summary") or fallback.rationale),
+            evidence=_as_list(payload.get("evidence") or fallback.evidence),
+            guidance=str(payload.get("guidance") or fallback.guidance),
             memory_patch=payload.get("memory_patch") if isinstance(payload.get("memory_patch"), dict) else fallback.memory_patch,
-            skill_card=str(skill_signal or payload.get("skill_card") or fallback.skill_card),
-            skill_instruction=skill_instruction,
             skill_signal=skill_signal,
             experience_refs=refs,
-            visible_summary=str(payload.get("visible_summary") or payload.get("summary") or ""),
             primary_hypothesis=str(payload.get("primary_hypothesis") or fallback.primary_hypothesis),
             next_verification=str(payload.get("next_verification") or fallback.next_verification),
             failure_boundary=str(payload.get("failure_boundary") or fallback.failure_boundary),
             blocked_prerequisite=str(payload.get("blocked_prerequisite") or fallback.blocked_prerequisite),
-            required_next_evidence=str(payload.get("required_next_evidence") or fallback.required_next_evidence),
+            required_evidence=str(payload.get("required_evidence") or fallback.required_evidence),
             observer_enforcement_state=str(
                 payload.get("observer_enforcement_state") or fallback.observer_enforcement_state
             ),
             agent_override_reason=str(payload.get("agent_override_reason") or fallback.agent_override_reason),
         ).normalised()
-        if decision.severity not in SEVERITIES:
-            decision.severity = fallback.severity
-        if decision.state not in STATES:
-            decision.state = fallback.state
         decision.memory_patch = self._safe_memory_patch(decision.memory_patch)
         return decision.normalised()
 
@@ -580,18 +554,13 @@ class ObserverRuntime:
         used_experience: list[str],
         reason: str,
     ) -> ObserverDecision:
-        if rule_decision.actionable:
+        if rule_decision.interrupts:
             decision = rule_decision.normalised()
-            decision.visible_summary = decision.visible_summary or reason
+            decision.rationale = decision.rationale or reason
         else:
             decision = ObserverDecision(
-                severity="info",
-                state="progressing",
-                intervention="none",
-                action="no_action",
-                route_assessment="Observer runtime did not produce an actionable correction.",
-                problems=[],
-                visible_summary=reason,
+                verdict="OK",
+                rationale=reason or "Observer runtime did not produce an interrupting correction.",
             ).normalised()
         decision.experience_refs = list(dict.fromkeys(decision.experience_refs + used_experience))
         return decision.normalised()
@@ -623,8 +592,8 @@ class ObserverRuntime:
             round_no=round_no,
             message_type="decision",
             direction="out",
-            title=f"Observer decision: {decision.state}/{decision.action}",
-            content=decision.visible_summary or decision.route_assessment or decision.steer_message or "observer_finish",
+            title=f"Observer decision: {decision.verdict}",
+            content=decision.rationale or decision.guidance or "observer_finish",
             metadata={
                 "phase": phase,
                 "step": step,

@@ -687,11 +687,11 @@ function FunctionMap({
     {
       label: "Observer",
       title: observer.status || "idle",
-      body: compact(toText(latest.reason || latest.summary || latest.steer || "等待被动审核"), 92),
+      body: compact(toText(latest.rationale || latest.guidance || "等待被动审核"), 92),
       meta: `${observer.stats?.decisions || 0} 次审核`,
       icon: <Circuitry />,
       tab: "observer",
-      tone: observer.stats?.steers ? "warn" : "blue"
+      tone: observer.stats?.interrupts ? "warn" : "blue"
     },
     {
       label: "Memory",
@@ -993,16 +993,20 @@ function ObserverTab({ detail }: { detail: MissionDetail }) {
         </div>
         <div className="observer-stats">
           <MetricTile label="状态" value={observer.status || "idle"} />
+          <MetricTile label="最新结论" value={toText(latest.verdict || "OK")} />
           <MetricTile label="审核次数" value={String(observer.stats?.decisions || 0)} />
-          <MetricTile label="纠偏" value={String(observer.stats?.steers || 0)} />
+          <MetricTile label="WATCH" value={String(observer.stats?.watch || 0)} />
+          <MetricTile label="L/ENV" value={String(observer.stats?.interrupts || 0)} />
           <MetricTile label="记忆补丁" value={String(observer.stats?.memory_patches || 0)} />
           <MetricTile label="Skill 信号" value={String(observer.stats?.skill_signals || 0)} />
         </div>
         <div className="decision-board">
-          <BriefItem label="Action" value={toText(latest.action || latest.intervention || "none")} />
-          <BriefItem label="Severity" value={toText(latest.severity || "normal")} />
-          <BriefItem label="Reason" value={toText(latest.reason || latest.rationale || latest.summary || "暂无最新判断")} />
-          <BriefItem label="Steer" value={toText(latest.steer || latest.message || latest.follow_up || "无纠偏")} />
+          <BriefItem label="Verdict" value={toText(latest.verdict || "OK")} />
+          <BriefItem label="Rationale" value={toText(latest.rationale || "暂无最新判断")} />
+          <BriefItem label="Evidence" value={toText(latest.evidence || "暂无证据")} />
+          <BriefItem label="Guidance" value={toText(latest.guidance || "无纠偏")} />
+          <BriefItem label="Next" value={toText(latest.next_verification || "无需额外验证")} />
+          <BriefItem label="Required Evidence" value={toText(latest.required_evidence || "无")} />
         </div>
       </section>
       <section className="panel span-2">
@@ -1018,7 +1022,12 @@ function ObserverTab({ detail }: { detail: MissionDetail }) {
             {messages.slice().reverse().map((message) => (
               <article className="message-card" key={message.id}>
                 <div>
-                  <span className="trace-type">{message.type}</span>
+                  <span className="trace-type">
+                    {message.type}
+                    {typeof message.metadata?.decision === "object" && message.metadata.decision
+                      ? ` · ${toText((message.metadata.decision as Record<string, unknown>).verdict || "")}`
+                      : ""}
+                  </span>
                   <strong>{message.title || "observer message"}</strong>
                 </div>
                 <p>{message.content || compact(message.metadata, 260)}</p>
