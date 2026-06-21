@@ -62,14 +62,13 @@ layer order: `url→html-entity→unicode`, `html-entity→unicode→url`, etc.
 `alert(1)` is the most-WAF-blocked, most-overridden detection token in the
 field. If your first probe fires an `alert`-shaped payload and gets a block
 or null response, **DO NOT conclude "no XSS"** — rotate through the ladder
-below. Every XSS hunter, browser-verifier, and surface-probe SPA seed in
-this workspace MUST walk these tiers in order until execution is
+below. Every JS-execution probe should walk these tiers until execution is
 confirmed or all 7 tiers are exhausted.
 
 ```text
 Tier 1: alert(1)              ← blocked by ~70% of WAFs and any page that does `window.alert = ()=>{}`
 Tier 2: prompt(1) / confirm(1) / print()  ← rotate when alert string is regex-blocked
-Tier 3: console.log(1)        ← silent in UI, visible in DevTools / Playwright console listener
+Tier 3: console.log(1)        ← silent in UI, visible in browser/runtime console capture
 Tier 4: DOM marker mutation   ← survives every dialog override, easy to detect
 Tier 5: Global property write ← detect via window['xss_proof'] readback
 Tier 6: OOB callback (fetch / Image)  ← proves exec AND captures cookies AND defeats every dialog defense

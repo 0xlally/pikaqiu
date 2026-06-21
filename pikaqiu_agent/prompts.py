@@ -72,8 +72,8 @@ def _build_skills_section(skills: list[dict[str, Any]] | None) -> str:
     for skill in skills:
         skill_id = str(skill.get("id") or "").strip()
         name = str(skill.get("name") or skill_id or "unnamed").strip()
-        description = str(skill.get("description") or "").strip()
-        prompt = str(skill.get("prompt") or "").strip()
+        description = _skill_system_prompt_text(skill_id, str(skill.get("description") or "").strip())
+        prompt = _skill_system_prompt_text(skill_id, str(skill.get("prompt") or "").strip())
         if not prompt:
             continue
 
@@ -116,7 +116,7 @@ def _build_skill_catalog_section(skill_catalog: list[dict[str, Any]] | None) -> 
         lines = ["Available skills catalog (metadata only):"]
         for skill in skill_catalog:
             skill_id = str(skill.get("id") or "").strip()
-            description = str(skill.get("description") or "").strip()
+            description = _skill_system_prompt_text(skill_id, str(skill.get("description") or "").strip())
             tags = skill.get("tags") or []
             tag_text = ", ".join(str(tag) for tag in tags) if tags else ""
             suffix = f" [tags: {tag_text}]" if tag_text else ""
@@ -126,6 +126,27 @@ def _build_skill_catalog_section(skill_catalog: list[dict[str, Any]] | None) -> 
         parts.append("No skills are currently loaded. Continue with the normal tools.")
 
     return "\n\n".join(parts)
+
+
+def _skill_system_prompt_text(skill_id: str, text: str) -> str:
+    """Render skill text safely inside the agent system prompt.
+
+    Skill files remain the source of truth, but catalog/active-skill injection
+    should not smuggle tool-specific XSS patches into the base agent prompt.
+    """
+    if skill_id != "xss-bypass-skill" or not text:
+        return text
+
+    replacements = (
+        ("Playwright Verification", "Browser / Runtime Verification"),
+        ("Playwright verification", "browser/runtime verification"),
+        ("references/playwright-verification.md", "references/browser-runtime-verification.md"),
+        ("必须用 Playwright 收集浏览器证据", "需要浏览器、挑战 harness 或运行时证据"),
+        ("Playwright 证据清单", "浏览器/运行时证据清单"),
+    )
+    for old, new in replacements:
+        text = text.replace(old, new)
+    return text
 
 
 def build_volatile_context(
@@ -250,7 +271,7 @@ def build_tool_system_prompt(
         ),
         (
             "## 工具选择速查\n"
-            "- **Web发现/参数/漏洞**：先用 `curl`/浏览器响应确认具体入口、状态码、参数和差异；只有已有明确输入点或候选路径时，才用 `ffuf`/`arjun`/`nuclei`/`sqlmap` 做小范围验证。XSS/DOM/JS 执行类问题直接用 `python_exec` + Playwright 验证；产品版本漏洞先 `search_cve` / `searchsploit`。\n"
+            "- **Web发现/参数/漏洞**：先用 `curl`/浏览器响应确认具体入口、状态码、参数和差异；只有已有明确输入点或候选路径时，才用 `ffuf`/`arjun`/`nuclei`/`sqlmap` 做小范围验证。XSS/DOM/JS 执行类问题需要运行时证据，具体工具按当前环境和已激活 skill 选择；产品版本漏洞先 `search_cve` / `searchsploit`。\n"
             "- **端口/内网探测**：单目标服务识别用 `nmap -sV -sC`；内网网段快速发现用 `fscan`；发现私网IP后优先结合隧道再访问内网Web。\n"
             "- **SMB/AD枚举**：SMB共享和凭据验证用 `netexec`、`smbmap`；LDAP/域对象用 `ldapdomaindump`、`powerview`；Kerberos用户枚举/喷洒用 `kerbrute`。\n"
             "- **Kerberos/ADCS/Relay**：ASREPRoast用 `asreproast`/`impacket-GetNPUsers`；Kerberoast用 `impacket-GetUserSPNs`；ADCS用 `certipy-ad`；NTLM relay用 `impacket-ntlmrelayx`；强制认证链用 `coercer`、`mitm6`、`PetitPotam`、`printerbug`、`DFSCoerce`、`ShadowCoerce`。\n"
@@ -260,44 +281,11 @@ def build_tool_system_prompt(
             "- **详细语法**：先看自动注入的 `tool_guidance`；仍不确定就运行 `<tool> -h`，或用 `knowledge_search` 查询工具名。"
         ),
         (
-            "## XSS/DOM 浏览器验证（强制）\n"
-            "- 涉及 XSS、DOM XSS、HTML 注入到浏览器语境、`<script>`、事件属性、`img`/`svg`/`onerror`、JSFuck、CSP、cookie/localStorage、admin bot、页面成功分支时，直接用 `python_exec` + Playwright 运行真实 Chromium 验证。\n"
-            "- 不要尝试 `agent-browser`、浏览器 skill、手工可视化浏览器或其他未注册工具；当前可依赖的浏览器能力就是 Python Playwright。\n"
-            "- `curl`/`requests` 只能用于枚举过滤器、确认反射位置、保存原始响应，不能作为 XSS 成功证据；看到响应里有 `<script>` 只说明反射，不说明浏览器执行或命中成功条件。\n"
-            "- Playwright evidence 至少打印：当前 URL、捕获到的 dialog/alert、`document.body.innerText` 或关键 DOM、console/pageerror；有意义时保存 `evidence/xss-browser.png` 截图。\n"
-            "- 如果使用 JSFuck，先用 `jsfuck`/Node 生成实际 payload，再放入 Playwright 提交流程；payload 必须有可观察副作用，如 alert/dialog、DOM 写入、跳转、请求回连或页面成功文本，不能只执行空函数。\n"
-            "- 推荐模板（在同一次 `python_exec` 内完成打开页面、提交 payload、收集证据）：\n"
-            "```python\n"
-            "from pathlib import Path\n"
-            "from playwright.sync_api import sync_playwright\n"
-            "\n"
-            "url = 'http://target/page'\n"
-            "payload = 'PAYLOAD_HERE'\n"
-            "Path('evidence').mkdir(exist_ok=True)\n"
-            "\n"
-            "with sync_playwright() as p:\n"
-            "    browser = p.chromium.launch(headless=True)\n"
-            "    page = browser.new_page()\n"
-            "    dialogs = []\n"
-            "    console = []\n"
-            "    errors = []\n"
-            "    page.on('dialog', lambda d: (dialogs.append(d.message), d.accept()))\n"
-            "    page.on('console', lambda msg: console.append(f'{msg.type}: {msg.text}'))\n"
-            "    page.on('pageerror', lambda exc: errors.append(str(exc)))\n"
-            "    page.goto(url, wait_until='domcontentloaded')\n"
-            "    field = page.locator('textarea[name=name], input[name=name]').first\n"
-            "    submit = page.locator('input[type=submit], button[type=submit]').first\n"
-            "    field.fill(payload)\n"
-            "    submit.click()\n"
-            "    page.wait_for_timeout(1000)\n"
-            "    print('[url]', page.url)\n"
-            "    print('[dialogs]', dialogs)\n"
-            "    print('[console]', console[-10:])\n"
-            "    print('[pageerrors]', errors[-10:])\n"
-            "    print('[body]', page.locator('body').inner_text(timeout=3000))\n"
-            "    page.screenshot(path='evidence/xss-browser.png', full_page=True)\n"
-            "    browser.close()\n"
-            "```\n"
+            "## XSS/DOM 运行时验证\n"
+            "- 涉及 XSS、DOM XSS、HTML 注入到浏览器语境、事件属性、CSP、cookie/localStorage、admin bot 或页面成功分支时，需要浏览器、挑战 harness、bot callback、同源状态变化或题目返回等运行时证据。\n"
+            "- 不要把 `curl`/`requests` 的反射结果当成 XSS 成功证据；它们适合枚举过滤器、确认反射位置、保存原始响应，但看到响应里有 `<script>` 只说明反射，不说明浏览器执行或命中成功条件。\n"
+            "- 运行时证据至少记录当前 URL、dialog/alert 或替代成功信号、关键 DOM/页面文本、console/pageerror、资源请求或同源状态变化；工具选择由当前环境和已激活 skill 决定。\n"
+            "- 如果使用 JSFuck 或其他编码生成器，先生成实际 payload 并核对字符集；payload 必须有可观察副作用，如 dialog、DOM 写入、跳转、请求回连、同源状态变化或页面成功文本，不能只执行空函数。\n"
         ),
         (
             "## 最小高效扫描\n"

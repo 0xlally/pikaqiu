@@ -139,6 +139,26 @@ class SharedMemoryExperienceTests(unittest.TestCase):
         self.assertIn("upload endpoint exists", context)
         self.assertNotIn("tool_call_log", context)
 
+    def test_experience_hints_do_not_inject_xss_playwright_special_case(self):
+        root = Path(__file__).resolve().parents[1]
+        payload_rules = (root / "experience" / "route-rules" / "payloads.md").read_text(
+            encoding="utf-8"
+        )
+
+        rows = experience.search_experience(
+            root,
+            "XSS alert console browser runtime detection ladder",
+            limit=5,
+        )
+        hints = experience.format_experience_hints(rows, limit=5)
+
+        self.assertIn("browser/runtime console capture", payload_rules)
+        self.assertNotIn("Playwright console listener", payload_rules)
+        self.assertNotIn("Every XSS hunter, browser-verifier", payload_rules)
+        self.assertIn("XSS", hints)
+        self.assertNotIn("Playwright console listener", hints)
+        self.assertNotIn("Every XSS hunter, browser-verifier", hints)
+
     def test_observer_runtime_memory_view_exposes_single_layer_memory(self):
         try:
             from pikaqiu_agent.observer_runtime import ObserverRuntime
