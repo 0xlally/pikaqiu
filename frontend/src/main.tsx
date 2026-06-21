@@ -678,7 +678,7 @@ function MissionLaunch({
       goal: String(form.get("goal") || "").trim(),
       max_rounds: Number(form.get("max_rounds") || defaults?.max_rounds || 4),
       max_commands: Number(form.get("max_commands") || defaults?.max_commands || 64),
-      command_timeout_sec: Number(form.get("command_timeout_sec") || defaults?.command_timeout_sec || 60),
+      command_timeout_sec: Number(form.get("command_timeout_sec") || defaults?.command_timeout_sec || 300),
       expected_flags: Number(form.get("expected_flags") || 1),
       skills: selectedSkills
     };
@@ -743,7 +743,7 @@ function MissionLaunch({
               type="number"
               min={5}
               max={600}
-              defaultValue={defaults?.command_timeout_sec || 60}
+              defaultValue={defaults?.command_timeout_sec || 300}
             />
           </label>
           <label>
@@ -913,7 +913,7 @@ function MissionDetailHeader({
         <div>
           <p className="kicker">NO MISSION SELECTED</p>
           <h1>选择一个任务，或发起新的攻防流程。</h1>
-          <p>页面会自动轮询后端，将命令、Observer 审核、记忆和证据整理到同一条时间线。</p>
+          <p>页面会自动轮询后端，将命令、Observer 审核和记忆整理到同一条时间线。</p>
         </div>
       </section>
     );
@@ -1165,7 +1165,7 @@ function MissionPane({
     content = (
       <EmptyState
         title="等待任务数据"
-        body="选择左侧任务，或展开发起任务表单创建新目标。这里会显示总览、时间线、Observer、记忆、证据和知识库。"
+        body="选择左侧任务，或展开发起任务表单创建新目标。这里会显示总览、时间线、Observer、记忆和知识库。"
         large
       />
     );
@@ -1338,10 +1338,10 @@ function ObserverTab({ detail }: { detail: MissionDetail }) {
         <div className="decision-board">
           <BriefItem label="Verdict" value={toText(latest.verdict || "OK")} />
           <BriefItem label="Rationale" value={toText(latest.rationale || "暂无最新判断")} />
-          <BriefItem label="Evidence" value={toText(latest.evidence || "暂无证据")} />
+          <BriefItem label="支撑依据" value={toText(latest.evidence || "暂无依据")} />
           <BriefItem label="Guidance" value={toText(latest.guidance || "无纠偏")} />
           <BriefItem label="Next" value={toText(latest.next_verification || "无需额外验证")} />
-          <BriefItem label="Required Evidence" value={toText(latest.required_evidence || "无")} />
+          <BriefItem label="需补充验证" value={toText(latest.required_evidence || "无")} />
         </div>
       </section>
       <section className="panel span-2">
@@ -1382,7 +1382,7 @@ function MemoryTab({ detail }: { detail: MissionDetail }) {
           <Brain />
           <div>
             <h2>任务记忆</h2>
-            <p>默认每 32 次主模型调用后，由 Memory Agent 压缩工具证据。</p>
+            <p>默认每 32 次主模型调用后，由 Memory Agent 压缩工具输出。</p>
           </div>
         </div>
         <div className="memory-headline">

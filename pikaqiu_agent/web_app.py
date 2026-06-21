@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import logging
+import re
+import shlex
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from flask import Flask, jsonify, request, send_from_directory
 
@@ -16,6 +18,8 @@ from pikaqiu_agent.skill_loader import SkillLoader
 from pikaqiu_agent.storage import MissionStore
 
 logger = logging.getLogger(__name__)
+
+_MISSION_WORKDIR_PREFIX_RE = re.compile(r"^[0-9a-fA-F]{8}$")
 
 
 def _json_error(message: str, status: int):
@@ -52,6 +56,69 @@ def _string_list(value: Any) -> list[str]:
 def _clamp_text(value: Any, max_chars: int) -> str:
     text = str(value or "").strip()
     return text[:max_chars]
+
+
+def _mission_workdir_prefix(mission_id: str) -> str:
+    prefix = mission_id[:8]
+    if not _MISSION_WORKDIR_PREFIX_RE.fullmatch(prefix):
+        raise ValueError("unsafe mission id prefix")
+    return prefix
+
+
+def _sandbox_workdir_parent(settings: AgentSettings) -> str:
+    parent = str(settings.sandbox_workdir or "").rstrip("/")
+    if not parent or parent == "/" or not parent.startswith("/"):
+        raise ValueError("unsafe sandbox workdir")
+    return parent
+
+
+def _cleanup_mission_workspace(
+    settings: AgentSettings,
+    mission_id: str,
+    *,
+    executor_factory: Callable[..., SandboxExecutor] = SandboxExecutor,
+) -> list[dict[str, Any]]:
+    try:
+        prefix = _mission_workdir_prefix(mission_id)
+        parent = _sandbox_workdir_parent(settings)
+    except ValueError as exc:
+        return [{"container": "", "workdir": "", "ok": False, "error": str(exc)}]
+
+    containers = list(dict.fromkeys(settings.sandbox_containers or [settings.sandbox_container]))
+    command = (
+        f"if [ -e {shlex.quote(prefix)} ]; then rm -rf -- {shlex.quote(prefix)}; fi\n"
+        f"if [ -e {shlex.quote(prefix)} ]; then echo 'delete_failed'; exit 1; fi\n"
+        "echo 'workspace_removed_or_absent'"
+    )
+
+    cleanup: list[dict[str, Any]] = []
+    for container in containers:
+        result_row: dict[str, Any] = {
+            "container": container,
+            "workdir": f"{parent}/{prefix}",
+            "ok": False,
+        }
+        try:
+            result = executor_factory(settings, container_override=container).run(
+                command,
+                timeout_sec=20,
+                workdir=shlex.quote(parent),
+            )
+            result_row.update({
+                "ok": result.exit_code == 0,
+                "stdout": result.stdout[-500:],
+                "stderr": result.stderr[-500:],
+            })
+        except Exception as exc:  # pragma: no cover - defensive around Docker availability
+            logger.warning(
+                "failed to cleanup mission workspace %s in %s: %s",
+                mission_id,
+                container,
+                exc,
+            )
+            result_row["error"] = str(exc)
+        cleanup.append(result_row)
+    return cleanup
 
 
 def _experiment_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -412,10 +479,23 @@ def create_app(runtime: AppRuntime | None = None) -> Flask:
             return _json_error("mission not found", 404)
         if mission["status"] in {"queued", "running"} or rt().orchestrator.thread_alive(mission_id):
             return _json_error("任务仍在执行中，请先停止任务再删除记录", 409)
+        workspace_cleanup = _cleanup_mission_workspace(rt().settings, mission_id)
+        failed_cleanup = [row for row in workspace_cleanup if not row.get("ok")]
+        if failed_cleanup:
+            logger.warning(
+                "mission %s workspace cleanup had %s failure(s): %s",
+                mission_id,
+                len(failed_cleanup),
+                failed_cleanup,
+            )
         deleted = rt().store.delete_mission(mission_id)
         if not deleted:
             return _json_error("mission not found", 404)
-        return jsonify({"ok": True, "deleted_id": mission_id})
+        return jsonify({
+            "ok": True,
+            "deleted_id": mission_id,
+            "workspace_cleanup": workspace_cleanup,
+        })
 
     # ── Knowledge ─────────────────────────────────────────────
 

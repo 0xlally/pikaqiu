@@ -149,7 +149,7 @@ class AgentSettings:
     # Agent params — "initial" for first attempt, "max" as ceiling for retries
     initial_rounds: int = 4
     initial_commands: int = 64
-    command_timeout_sec: int = 60      # default sandbox command timeout
+    command_timeout_sec: int = 300     # default sandbox command timeout
     stdout_limit: int = 8000
     context_compress_threshold: int = 80000  # chars; mid-round context compression trigger
     memory_compress_interval: int = 32  # main LLM calls between structured memory compression runs
@@ -389,7 +389,7 @@ def _load_from_env(root: Path) -> AgentSettings:
         observer_disable_response_storage=_env("PIKAQIU_OBSERVER_DISABLE_RESPONSE_STORAGE", default=True, cast=bool),
         initial_rounds=_env("PIKAQIU_MAX_ROUNDS", default=4, cast=int),
         initial_commands=_env("PIKAQIU_MAX_COMMANDS_PER_ROUND", default=64, cast=int),
-        command_timeout_sec=_env("PIKAQIU_COMMAND_TIMEOUT_SEC", default=60, cast=int),
+        command_timeout_sec=_env("PIKAQIU_COMMAND_TIMEOUT_SEC", default=300, cast=int),
         stdout_limit=_env("PIKAQIU_STDOUT_LIMIT", default=16000, cast=int),
         memory_compress_interval=_env("PIKAQIU_MEMORY_COMPRESS_INTERVAL", default=32, cast=int),
         knowledge_top_k=_env("PIKAQIU_KNOWLEDGE_TOP_K", default=6, cast=int),
@@ -562,7 +562,7 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
         observer_disable_response_storage=observer_disable_response_storage,
         initial_rounds=ag.get("initial_rounds", ag.get("max_rounds", 4)),
         initial_commands=ag.get("initial_commands", ag.get("max_commands_per_round", 64)),
-        command_timeout_sec=ag.get("command_timeout_sec", 60),
+        command_timeout_sec=ag.get("command_timeout_sec", 300),
         stdout_limit=ag.get("stdout_limit", 8000),
         context_compress_threshold=ag.get("context_compress_threshold", 80000),
         memory_compress_interval=_env(
