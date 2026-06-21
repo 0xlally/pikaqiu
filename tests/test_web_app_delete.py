@@ -29,6 +29,28 @@ def test_agent_settings_default_command_timeout_matches_launch_fallback(tmp_path
     assert settings.command_timeout_sec == 300
 
 
+def test_memory_compress_interval_is_runtime_configurable(tmp_path):
+    settings = _settings(tmp_path)
+    store = MissionStore(":memory:")
+    runtime = SimpleNamespace(
+        settings=settings,
+        store=store,
+        orchestrator=SimpleNamespace(thread_alive=lambda _mission_id: False),
+        static_root=tmp_path,
+    )
+    app = create_app(runtime)
+    client = app.test_client()
+
+    assert settings.memory_compress_interval == 64
+    assert client.get("/api/config").get_json()["config"]["memory_compress_interval"] == 64
+
+    response = client.post("/api/config", json={"config": {"memory_compress_interval": 12}})
+
+    assert response.status_code == 200
+    assert settings.memory_compress_interval == 12
+    assert response.get_json()["config"]["memory_compress_interval"] == 12
+
+
 def test_cleanup_mission_workspace_removes_uuid_prefix_in_each_container(tmp_path):
     calls = []
 

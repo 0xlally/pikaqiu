@@ -249,7 +249,7 @@ const configFields = [
   { key: "initial_commands", label: "每轮命令数", type: "number", section: "Agent 参数" },
   { key: "command_timeout_sec", label: "命令超时秒数", type: "number", section: "Agent 参数" },
   { key: "stdout_limit", label: "输出截断长度", type: "number", section: "Agent 参数" },
-  { key: "memory_compress_interval", label: "记忆压缩调用间隔", type: "number", section: "Agent 参数" },
+  { key: "memory_compress_interval", label: "记忆压缩轮次（主模型调用）", type: "number", section: "Agent 参数" },
   { key: "knowledge_top_k", label: "知识库检索数", type: "number", section: "Agent 参数" },
   { key: "skills_dir", label: "Skills 目录", type: "text", section: "Agent 参数" },
   { key: "skills_auto_use", label: "自动启用 Skill", type: "checkbox", section: "Agent 参数" }
@@ -1382,7 +1382,7 @@ function MemoryTab({ detail }: { detail: MissionDetail }) {
           <Brain />
           <div>
             <h2>任务记忆</h2>
-            <p>默认每 32 次主模型调用后，由 Memory Agent 压缩工具输出。</p>
+            <p>默认每 64 次主模型调用后，由 Memory Agent 压缩工具输出；可在设置页调整。</p>
           </div>
         </div>
         <div className="memory-headline">

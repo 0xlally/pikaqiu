@@ -152,7 +152,7 @@ class AgentSettings:
     command_timeout_sec: int = 300     # default sandbox command timeout
     stdout_limit: int = 8000
     context_compress_threshold: int = 80000  # chars; mid-round context compression trigger
-    memory_compress_interval: int = 32  # main LLM calls between structured memory compression runs
+    memory_compress_interval: int = 64  # main LLM calls between structured memory compression runs
     round_timeout_sec: int = 300
     knowledge_top_k: int = 6
     knowledge_dir: str = "./knowledge"  # directory for knowledge zips/folders
@@ -391,7 +391,7 @@ def _load_from_env(root: Path) -> AgentSettings:
         initial_commands=_env("PIKAQIU_MAX_COMMANDS_PER_ROUND", default=64, cast=int),
         command_timeout_sec=_env("PIKAQIU_COMMAND_TIMEOUT_SEC", default=300, cast=int),
         stdout_limit=_env("PIKAQIU_STDOUT_LIMIT", default=16000, cast=int),
-        memory_compress_interval=_env("PIKAQIU_MEMORY_COMPRESS_INTERVAL", default=32, cast=int),
+        memory_compress_interval=_env("PIKAQIU_MEMORY_COMPRESS_INTERVAL", default=64, cast=int),
         knowledge_top_k=_env("PIKAQIU_KNOWLEDGE_TOP_K", default=6, cast=int),
         knowledge_dir=_env("PIKAQIU_KNOWLEDGE_DIR", default="./knowledge"),
         skills_dir=_env("PIKAQIU_SKILLS_DIR", default="./skills"),
@@ -567,7 +567,7 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
         context_compress_threshold=ag.get("context_compress_threshold", 80000),
         memory_compress_interval=_env(
             "PIKAQIU_MEMORY_COMPRESS_INTERVAL",
-            default=ag.get("memory_compress_interval", 32),
+            default=ag.get("memory_compress_interval", 64),
             cast=int,
         ),
         round_timeout_sec=ag.get("round_timeout_sec", 300),

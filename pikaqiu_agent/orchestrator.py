@@ -1366,7 +1366,7 @@ class OrchestratorManager:
         total_llm_call_count = 0
         last_memory_compressed_llm_count = 0
         last_memory_compressed_tool_index = 0
-        memory_compress_interval = max(1, int(self.settings.memory_compress_interval or 32))
+        memory_compress_interval = max(1, int(self.settings.memory_compress_interval or 64))
 
         start_round = max(1, self.store.get_max_round_no(mission_id) + 1)
         if start_round > max_rounds:
