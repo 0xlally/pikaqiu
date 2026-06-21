@@ -15,6 +15,12 @@ def _clamp_timeout(timeout: int, max_timeout: int, min_timeout: int = 1) -> int:
     return max(min_timeout, min(int(timeout), max_timeout))
 
 
+def _resolve_timeout(timeout: int | None, max_timeout: int, min_timeout: int = 1) -> int:
+    if timeout is None:
+        return max(min_timeout, int(max_timeout))
+    return _clamp_timeout(timeout, max_timeout, min_timeout)
+
+
 def _format_sandbox_result(prefix: str, result) -> str:
     parts = [prefix]
     if result.stdout:
@@ -45,12 +51,21 @@ def _truncate_end(text: str, limit: int) -> str:
 
 class BashInput(BaseModel):
     command: str = Field(description="The bash command to execute")
-    timeout: int = Field(default=60, description="Timeout in seconds. For long tools like sqlmap/nmap use background: cmd > /tmp/out.txt 2>&1 & then check results later.")
+    timeout: int | None = Field(
+        default=None,
+        description=(
+            "Optional timeout in seconds. Omit to use the mission command timeout. "
+            "For long tools like sqlmap/nmap, prefer background jobs that write logs."
+        ),
+    )
 
 
 class PythonInput(BaseModel):
     code: str = Field(description="Python source code to execute")
-    timeout: int = Field(default=60, description="Timeout in seconds.")
+    timeout: int | None = Field(
+        default=None,
+        description="Optional timeout in seconds. Omit to use the mission command timeout.",
+    )
 
 
 class KnowledgeSearchInput(BaseModel):
@@ -103,9 +118,9 @@ class SkillReferenceInput(BaseModel):
 
 # ── Tool factories ─────────────────────────────────────────────────────
 
-def create_bash_tool(sandbox, workdir: str, stop_fn: Callable[[], bool] | None = None, on_chunk: Callable[[str], None] | None = None, max_timeout: int = 120) -> BaseTool:
+def create_bash_tool(sandbox, workdir: str, stop_fn: Callable[[], bool] | None = None, on_chunk: Callable[[str], None] | None = None, max_timeout: int = 300) -> BaseTool:
     @tool("bash_exec", args_schema=BashInput)
-    def bash_exec(command: str, timeout: int = 60) -> str:
+    def bash_exec(command: str, timeout: int | None = None) -> str:
         """Execute a bash command in the Kali Linux sandbox.
         Use for recon and exploitation.
         Do not hide stderr with 2>/dev/null while validating a command; tool errors
@@ -114,15 +129,15 @@ def create_bash_tool(sandbox, workdir: str, stop_fn: Callable[[], bool] | None =
           nohup sqlmap ... > /tmp/sqlmap.log 2>&1 &
           sleep 30 && tail -50 /tmp/sqlmap.log
         """
-        timeout = _clamp_timeout(timeout, max_timeout)
+        timeout = _resolve_timeout(timeout, max_timeout)
         result = sandbox.run(command, timeout_sec=timeout, workdir=workdir, stop_fn=stop_fn, on_chunk=on_chunk)
         return _format_sandbox_result("[输出为Kali沙箱中的本地执行结果，并非远程目标输出]", result)
     return bash_exec
 
 
-def create_python_tool(sandbox, workdir: str, stop_fn: Callable[[], bool] | None = None, on_chunk: Callable[[str], None] | None = None, max_timeout: int = 120) -> BaseTool:
+def create_python_tool(sandbox, workdir: str, stop_fn: Callable[[], bool] | None = None, on_chunk: Callable[[str], None] | None = None, max_timeout: int = 300) -> BaseTool:
     @tool("python_exec", args_schema=PythonInput)
-    def python_exec(code: str, timeout: int = 60) -> str:
+    def python_exec(code: str, timeout: int | None = None) -> str:
         """Execute Python code in the Kali sandbox.
         Preferred for HTTP sessions, cookies, JSON parsing, complex logic.
 
@@ -131,7 +146,7 @@ def create_python_tool(sandbox, workdir: str, stop_fn: Callable[[], bool] | None
         If you need to maintain a session (cookies etc.), you must login again in each call.
         Code is sent via base64 — no escaping needed.
         """
-        timeout = _clamp_timeout(timeout, max_timeout)
+        timeout = _resolve_timeout(timeout, max_timeout)
         result = sandbox.run_python(code, timeout_sec=timeout, workdir=workdir, stop_fn=stop_fn, on_chunk=on_chunk)
         parts = [_format_sandbox_result("[以下是Kali沙箱中的Python执行结果]", result)]
         # Context reminder for serialization payloads
@@ -590,7 +605,7 @@ def create_all_tools(
     stop_fn: Callable[[], bool] | None = None,
     on_chunk: Callable[[str], None] | None = None,
     knowledge_top_k: int = 3,
-    command_timeout_sec: int = 120,
+    command_timeout_sec: int = 300,
     skill_prompt_max_chars: int = 12000,
     skill_reference_max_chars: int = 20000,
 ) -> list[BaseTool]:
