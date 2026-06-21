@@ -15,6 +15,7 @@ description: 面向授权 CTF 和渗透测试的 XSS 绕过专项流程。用于
 4. 涉及 DOM、事件、CSP、Trusted Types、sandbox、mXSS、上传预览或 admin bot 时，必须用 Playwright 收集浏览器证据。
 5. 不激活外部 payload 字典 skill；需要更多候选时，读取本 skill 的 playbook 并按当前证据收窄。
 6. 不把“源码里看起来能执行”当成功；成功必须来自浏览器执行、challenge artifact、bot callback、同源状态变化或 flag。
+7. 一旦某个最小 payload 改变 challenge 状态、图片、文案、跳转或 session，立即停止扩展 payload 枚举，先做状态机差分和运行时验证。
 
 ## 引用文件
 

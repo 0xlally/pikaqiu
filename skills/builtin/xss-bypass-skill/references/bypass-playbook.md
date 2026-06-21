@@ -7,6 +7,7 @@
 - `<` 被禁：转向属性逃逸、JS 字符串逃逸、URL sink、上传预览或 DOM decode sink。实体/URL 编码只有在后续解码证据存在时才有意义。
 - tag 被禁：先找能存活的最小 tag，再加执行面。优先枚举 `x`、`svg`、`math`、`details`、`input`、`video/source`、`iframe/srcdoc`、`meta refresh`、`base`。
 - 边界标签：如果过滤器是字母范围、首字母或黑名单正则，先求补集而不是背常见标签。例：`<[a-yA-Y/]+` 拦 `<a>` 到 `<y>` 和闭合标签，但 `<z autofocus onfocus=...>` 可作为自定义标签存活。黑盒时用 `<a>`、`<m>`、`<y>`、`<z>`、`<zz>` 做最小差异探测。
+- 状态变化优先级高于标签枚举：当某个最小标签只改变 challenge 状态而没有保留原始 payload 或产生浏览器执行证据时，先围绕这个状态做最小差分；不要继续堆更多特殊标签。重点比较 raw HTML、最终 DOM、状态文本、是否有 flag、是否需要下一阶段输入或 bot/harness 触发。
 - event 被禁：固定 tag 后只换触发方式。常见无交互信号包括 `onerror`、`onload`、`autofocus/onfocus`、`open/ontoggle`、`onanimationstart`、`ontransitionend`、media `source/onerror`、popover/toggle。
 - 挑战 harness：检查 `check.js`、bot 脚本或页面辅助 JS 是否会主动触发 `[autofocus]`、`[onfocus]`、click、mouseover、toggle、animation 等事件。如果 harness 会触发 focus，自定义 tag + `autofocus onfocus=...` 是高优先级候选。
 - 空格被禁：测试 `/`、tab、换行、form-feed、回车和无引号属性；只换分隔符，不换载体。
