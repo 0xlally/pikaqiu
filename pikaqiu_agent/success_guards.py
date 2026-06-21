@@ -231,26 +231,6 @@ def summarize_guidance_result(tool_name: str, result_str: str, limit: int) -> st
     )
 
 
-def round_time_guidance(remaining_round_time: float) -> str | None:
-    remaining = int(max(0, remaining_round_time))
-    if remaining < 45:
-        return (
-            "[ROUND_TIME_CRITICAL]\n"
-            f"Only {remaining}s remains in this round. Do not start broad scans, fuzzers, or long research calls. "
-            "Close the current lead now: auto/submit any real flag already observed, preserve decisive raw evidence, "
-            "or run one minimal verification command that can finish quickly.\n"
-            "[/ROUND_TIME_CRITICAL]"
-        )
-    if remaining < 90:
-        return (
-            "[ROUND_TIME_LIMITED]\n"
-            f"{remaining}s remains in this round. Use only a small targeted verification tied to current memory. "
-            "Avoid ffuf/arjun/nuclei/sqlmap and broad wordlists unless the exact candidate is already known.\n"
-            "[/ROUND_TIME_LIMITED]"
-        )
-    return None
-
-
 def route_guard_guidance(memory: dict[str, Any]) -> str:
     text = json.dumps(memory or {}, ensure_ascii=False).lower()
     rules: list[str] = []
@@ -334,6 +314,5 @@ _missing_tool_block_message = missing_tool_block_message
 _low_evidence_stop_block_message = low_evidence_stop_block_message
 _stale_observer_steer_block_message = stale_observer_steer_block_message
 _summarize_guidance_result = summarize_guidance_result
-_round_time_guidance = round_time_guidance
 _route_guard_guidance = route_guard_guidance
 _post_partial_flag_guidance = post_partial_flag_guidance

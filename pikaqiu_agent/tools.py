@@ -73,12 +73,6 @@ class KnowledgeSearchInput(BaseModel):
     limit: int = Field(default=6, description="Maximum number of results")
 
 
-class WebSearchInput(BaseModel):
-    query: str = Field(description="Internet search query for public web pages, CVEs, exploit writeups, docs, or error messages")
-    limit: int = Field(default=5, description="Maximum number of search results, capped at 10")
-    timeout: int = Field(default=20, description="Timeout in seconds, capped by command timeout")
-
-
 class WebFetchInput(BaseModel):
     url: str = Field(description="HTTP/HTTPS URL to fetch from the public internet")
     max_chars: int = Field(default=12000, description="Maximum extracted text characters to return, capped at 30000")
@@ -157,86 +151,6 @@ def create_python_tool(sandbox, workdir: str, stop_fn: Callable[[], bool] | None
     return python_exec
 
 
-def create_web_search_tool(
-    sandbox,
-    workdir: str,
-    stop_fn: Callable[[], bool] | None = None,
-    on_chunk: Callable[[str], None] | None = None,
-    max_timeout: int = 120,
-) -> BaseTool:
-    @tool("web_search", args_schema=WebSearchInput)
-    def web_search(query: str, limit: int = 5, timeout: int = 20) -> str:
-        """Search the public internet from inside the Kali sandbox.
-
-        Use for current CVE/exploit research, public docs, writeups, and exact
-        error strings when the offline knowledge base is insufficient.
-        Returns title, URL, and snippet for each result. Use web_fetch for a URL.
-        """
-        limit = max(1, min(int(limit or 5), 10))
-        timeout = _clamp_timeout(int(timeout or 20), max_timeout, min_timeout=5)
-        code = f"""
-import html
-import json
-import re
-import sys
-import urllib.parse
-import urllib.request
-
-query = {json.dumps(query)}
-limit = {limit}
-timeout = {timeout}
-ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 PikaQiu-Agent/1.0"
-
-def clean_html(value):
-    value = html.unescape(value or "")
-    value = re.sub(r"(?is)<(script|style|svg|noscript).*?</\\1>", " ", value)
-    value = re.sub(r"(?s)<[^>]+>", " ", value)
-    value = re.sub(r"\\s+", " ", value)
-    return value.strip()
-
-def normalize_url(href):
-    href = html.unescape(href or "").strip()
-    if href.startswith("//"):
-        href = "https:" + href
-    parsed = urllib.parse.urlparse(href)
-    qs = urllib.parse.parse_qs(parsed.query)
-    if "uddg" in qs and qs["uddg"]:
-        href = qs["uddg"][0]
-    return href
-
-def search_duckduckgo():
-    url = "https://html.duckduckgo.com/html/?q=" + urllib.parse.quote_plus(query)
-    req = urllib.request.Request(url, headers={{"User-Agent": ua, "Accept-Language": "en-US,en;q=0.8"}})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        body = resp.read(1200000).decode(resp.headers.get_content_charset() or "utf-8", "replace")
-
-    results = []
-    matches = list(re.finditer(r'<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="([^"]+)"[^>]*>(.*?)</a>', body, re.I | re.S))
-    for idx, match in enumerate(matches):
-        if len(results) >= limit:
-            break
-        href = normalize_url(match.group(1))
-        title = clean_html(match.group(2))
-        next_start = matches[idx + 1].start() if idx + 1 < len(matches) else len(body)
-        block = body[match.end():next_start]
-        snippet_match = re.search(r'<a[^>]+class="[^"]*result__snippet[^"]*"[^>]*>(.*?)</a>|<div[^>]+class="[^"]*result__snippet[^"]*"[^>]*>(.*?)</div>', block, re.I | re.S)
-        snippet = clean_html((snippet_match.group(1) or snippet_match.group(2)) if snippet_match else "")
-        if title and href.startswith(("http://", "https://")):
-            results.append({{"title": title, "url": href, "snippet": snippet}})
-    return results
-
-try:
-    results = search_duckduckgo()
-    print(json.dumps({{"query": query, "results": results}}, ensure_ascii=False, indent=2))
-except Exception as exc:
-    print(json.dumps({{"query": query, "error": str(exc), "results": []}}, ensure_ascii=False, indent=2))
-    sys.exit(1)
-"""
-        result = sandbox.run_python(code, timeout_sec=timeout, workdir=workdir, stop_fn=stop_fn, on_chunk=on_chunk)
-        return _format_sandbox_result(f"[web_search query] {query}", result)
-    return web_search
-
-
 def create_web_fetch_tool(
     sandbox,
     workdir: str,
@@ -248,7 +162,7 @@ def create_web_fetch_tool(
     def web_fetch(url: str, max_chars: int = 12000, timeout: int = 20) -> str:
         """Fetch an HTTP/HTTPS page from the public internet and extract readable text.
 
-        Use after web_search when a result looks relevant. Prefer official docs,
+        Use only when you already have a specific URL. Prefer official docs,
         security bulletins, Exploit-DB, NVD, GitHub PoCs, and vendor pages.
         """
         max_chars = max(1000, min(int(max_chars or 12000), 30000))
@@ -613,7 +527,6 @@ def create_all_tools(
     tools: list[BaseTool] = [
         create_bash_tool(sandbox, workdir, stop_fn=stop_fn, on_chunk=on_chunk, max_timeout=command_timeout_sec),
         create_python_tool(sandbox, workdir, stop_fn=stop_fn, on_chunk=on_chunk, max_timeout=command_timeout_sec),
-        create_web_search_tool(sandbox, workdir, stop_fn=stop_fn, on_chunk=on_chunk, max_timeout=command_timeout_sec),
         create_web_fetch_tool(sandbox, workdir, stop_fn=stop_fn, on_chunk=on_chunk, max_timeout=command_timeout_sec),
     ]
     if knowledge:

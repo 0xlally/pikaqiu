@@ -68,7 +68,6 @@ _is_broad_scan_tool_call = _success_guards.is_broad_scan_tool_call
 _current_lead = _success_guards.current_lead
 _next_verification_hint = _success_guards.next_verification_hint
 _summarize_guidance_result = _success_guards.summarize_guidance_result
-_round_time_guidance = _success_guards.round_time_guidance
 _route_guard_guidance = _success_guards.route_guard_guidance
 _post_partial_flag_guidance = _success_guards.post_partial_flag_guidance
 _broad_scan_block_message = _success_guards.broad_scan_block_message
@@ -907,7 +906,7 @@ class OrchestratorManager:
             return (
                 f"[连续 {stall_rounds} 轮无新发现]\n"
                 "请**重新评估攻击方向**，选择一个全新的思路。\n"
-                "如果不确定该尝试什么，回到已验证证据，优先用 knowledge_search/search_cve/web_search 或最小可观测探针推进。"
+                "如果不确定该尝试什么，回到已验证证据，优先用 knowledge_search/search_cve/searchsploit 或最小可观测探针推进。"
             )
         if round_no == 1:
             return f"开始第 {round_no} 轮渗透。目标: {target}。"
@@ -1677,10 +1676,7 @@ class OrchestratorManager:
             tool_exec_count = 0  # total individual tool executions this round (for logging)
             round_tool_call_log: list[dict[str, Any]] = []
             consecutive_no_tool = 0
-            round_start_time = time.monotonic()
-            round_timeout_sec = mission.get("round_timeout_sec", self.settings.round_timeout_sec)
             round_broad_scan_count = 0
-            last_time_guidance_tag = ""
 
             self.store.add_event(
                 mission_id=mission_id,
@@ -1714,26 +1710,6 @@ class OrchestratorManager:
                     return
                 if flag_captured.is_set():
                     break
-                # Round-level timeout
-                elapsed = time.monotonic() - round_start_time
-                if elapsed > round_timeout_sec:
-                    self.store.add_event(
-                        mission_id=mission_id,
-                        round_no=round_no,
-                        event_type="warning",
-                        title=f"Round {round_no} 超时",
-                        content=f"本轮已运行 {int(elapsed)}s（上限 {round_timeout_sec}s），强制进入下一轮",
-                    )
-                    logger.warning("[orchestrator] round %d timed out after %ds", round_no, int(elapsed))
-                    break
-                remaining_round_time = round_timeout_sec - elapsed
-                time_guidance = _round_time_guidance(remaining_round_time)
-                time_guidance_tag = ""
-                if time_guidance:
-                    time_guidance_tag = "[ROUND_TIME_CRITICAL]" if "[ROUND_TIME_CRITICAL]" in time_guidance else "[ROUND_TIME_LIMITED]"
-                if time_guidance and time_guidance_tag != last_time_guidance_tag:
-                    messages.append(HumanMessage(content=time_guidance))
-                    last_time_guidance_tag = time_guidance_tag
 
                 if self._inject_human_guidance(
                     mission_id=mission_id,
@@ -1786,7 +1762,7 @@ class OrchestratorManager:
                             "你是自主agent，没有人在看你的文本输出。"
                             "立即调用一个工具（bash_exec/python_exec/knowledge_search/search_cve/skill_search等）继续推进攻击。"
                             "如果不确定下一步，先用当前证据做一个最小可观测验证，或用 skill_search 检索相关专项流程；"
-                            "需要具体payload时优先用 knowledge_search/search_cve/web_search 查证后再执行。"
+                            "需要具体payload时优先用 knowledge_search/search_cve/searchsploit 查证后再执行。"
                         )))
                     continue
                 consecutive_no_tool = 0

@@ -45,7 +45,6 @@ SKILL_ERROR_RE = re.compile(
     re.I,
 )
 SCOPE_SAFE_TOOLS = {
-    "web_search",
     "web_fetch",
     "knowledge_search",
     "search_cve",
@@ -611,7 +610,7 @@ class ObserverAgent:
             evidence=[f"命令中出现疑似越界主机：{risky[0]}"],
             guidance=(
                 f"停止用执行工具访问 `{risky[0]}`。回到范围内目标 `{target}`。"
-                "公开资料查询只能使用 web_search/web_fetch。"
+                "公开资料抓取只能在已有明确 URL 时使用 web_fetch；漏洞资料优先用 search_cve/knowledge_search/searchsploit。"
             ),
             required_evidence="下一次执行必须指向声明的任务范围",
         )

@@ -12,7 +12,8 @@
       "examples": [
         "ffuf -u http://TARGET/FUZZ -w /usr/share/seclists/Discovery/Web-Content/common.txt -mc all",
         "arjun -u http://TARGET/path -m GET,POST",
-        "nuclei -u http://TARGET -severity low,medium,high,critical"
+        "nuclei -u http://TARGET -severity low,medium,high,critical",
+        "wpscan --url http://TARGET --enumerate vp,vt,u --plugins-detection aggressive --no-update"
       ],
       "tools": [
         {
@@ -49,6 +50,16 @@
           "purpose": "Template-based vulnerability, exposure, and misconfiguration detection.",
           "first_commands": ["nuclei -u http://TARGET -severity medium,high,critical", "nuclei -u http://TARGET -tags cve,exposure,misconfig"],
           "notes": "Use findings as leads; verify manually before relying on them."
+        },
+        {
+          "name": "wpscan",
+          "commands": ["wpscan"],
+          "purpose": "Focused WordPress core, plugin, theme, and user enumeration.",
+          "first_commands": [
+            "wpscan --url http://TARGET --enumerate vp,vt,u --plugins-detection aggressive --no-update",
+            "wpscan --url http://TARGET --enumerate ap,at,u --plugins-detection passive --no-update"
+          ],
+          "notes": "Use immediately after WordPress is fingerprinted. Keep enumeration small first; verify vulnerable plugins manually before exploitation."
         },
         {
           "name": "sqlmap",

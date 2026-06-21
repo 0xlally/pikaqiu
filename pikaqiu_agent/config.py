@@ -153,7 +153,6 @@ class AgentSettings:
     stdout_limit: int = 8000
     context_compress_threshold: int = 80000  # chars; mid-round context compression trigger
     memory_compress_interval: int = 64  # main LLM calls between structured memory compression runs
-    round_timeout_sec: int = 300
     knowledge_top_k: int = 6
     knowledge_dir: str = "./knowledge"  # directory for knowledge zips/folders
     skills_dir: str = "./skills"  # directory containing */SKILL.md skill folders
@@ -570,7 +569,6 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
             default=ag.get("memory_compress_interval", 64),
             cast=int,
         ),
-        round_timeout_sec=ag.get("round_timeout_sec", 300),
         knowledge_top_k=ag.get("knowledge_top_k", 6),
         knowledge_dir=ag.get("knowledge_dir", "./knowledge"),
         skills_dir=ag.get("skills_dir", "./skills"),

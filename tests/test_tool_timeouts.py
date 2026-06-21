@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from pikaqiu_agent.tools import create_bash_tool, create_python_tool
+from pikaqiu_agent.tools import create_all_tools, create_bash_tool, create_python_tool
 
 
 class FakeSandbox:
@@ -46,3 +46,11 @@ def test_explicit_tool_timeout_can_shorten_but_not_exceed_mission_timeout():
         ("run", "sleep 1", 40, "/work"),
         ("run_python", "print('ok')", 300, "/work"),
     ]
+
+
+def test_all_tools_expose_only_expected_default_names():
+    sandbox = FakeSandbox()
+    tools = create_all_tools(sandbox, "/work", command_timeout_sec=300)
+    names = {tool.name for tool in tools}
+
+    assert names == {"bash_exec", "python_exec", "web_fetch"}

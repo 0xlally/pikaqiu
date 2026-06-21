@@ -3,18 +3,12 @@ import unittest
 from pikaqiu_agent.success_guards import (
     _is_broad_scan_tool_call,
     _post_partial_flag_guidance,
-    _round_time_guidance,
     _route_guard_guidance,
     _summarize_guidance_result,
 )
 
 
 class SuccessGuardTests(unittest.TestCase):
-    def test_round_time_guidance_has_two_budget_levels(self):
-        self.assertIsNone(_round_time_guidance(120))
-        self.assertIn("[ROUND_TIME_LIMITED]", _round_time_guidance(60))
-        self.assertIn("[ROUND_TIME_CRITICAL]", _round_time_guidance(20))
-
     def test_broad_scan_detection(self):
         self.assertTrue(_is_broad_scan_tool_call("bash_exec", "ffuf -w common.txt -u http://x/FUZZ"))
         self.assertTrue(_is_broad_scan_tool_call("bash_exec", "arjun -u http://x/login"))
