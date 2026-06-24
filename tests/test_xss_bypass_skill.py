@@ -21,11 +21,6 @@ def test_xss_bypass_skill_is_searchable_and_reference_backed() -> None:
     assert results
     assert results[0]["id"] == "xss-bypass-skill"
 
-    workflow_ref = loader.read_reference(
-        "xss-bypass-skill",
-        "references/workflow.md",
-        max_chars=30000,
-    )
     bypass_ref = loader.read_reference(
         "xss-bypass-skill",
         "references/bypass-playbook.md",
@@ -36,24 +31,36 @@ def test_xss_bypass_skill_is_searchable_and_reference_backed() -> None:
         "references/playwright-verification.md",
         max_chars=30000,
     )
+    skill_text = (
+        root / "skills" / "builtin" / "xss-bypass-skill" / "SKILL.md"
+    ).read_text(encoding="utf-8")
 
     for expected in (
-        "HTML 文本",
-        "HTML 属性",
-        "JS 字符串",
-        "URL/navigation",
-        "CSS/style",
-        "DOM source/sink",
-        "上传/预览",
-        "Admin Bot",
-        "失败记录",
+        "最短闭环",
+        "绕过过滤和环境限制",
+        "小批量代表性探针快速分层",
+        "单变量复测归因",
+        "定位上下文",
+        "确认限制",
+        "生成最小 payload",
+        "用浏览器验真",
+        "强证据后收束",
+        "references/bypass-playbook.md",
+        "references/playwright-verification.md",
+        "失败时写链条位置",
     ):
-        assert expected in workflow_ref
+        assert expected in skill_text
 
     for expected in (
         "HTML 与 Parser",
         "边界标签",
         "<z autofocus onfocus",
+        "少数标签白名单",
+        "image/img",
+        "src=x onerror",
+        "body",
+        "style",
+        "tag/attr=value/event",
         "check.js",
         "JavaScript 上下文",
         "URL、协议与导航",
@@ -99,7 +106,6 @@ def test_xss_bypass_skill_keeps_references_small_and_current() -> None:
     assert reference_paths == [
         "references/bypass-playbook.md",
         "references/playwright-verification.md",
-        "references/workflow.md",
     ]
 
     removed_reference_names = {
@@ -132,4 +138,4 @@ def test_xss_bypass_skill_keeps_references_small_and_current() -> None:
     for term in forbidden_terms:
         assert term not in all_text
 
-    assert "Playwright verification" in all_text
+    assert "Playwright Verification" in all_text

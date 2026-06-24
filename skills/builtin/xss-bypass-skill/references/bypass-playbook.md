@@ -5,12 +5,13 @@
 ## HTML 与 Parser
 
 - `<` 被禁：转向属性逃逸、JS 字符串逃逸、URL sink、上传预览或 DOM decode sink。实体/URL 编码只有在后续解码证据存在时才有意义。
-- tag 被禁：先找能存活的最小 tag，再加执行面。优先枚举 `x`、`svg`、`math`、`details`、`input`、`video/source`、`iframe/srcdoc`、`meta refresh`、`base`。
+- tag 被禁：先找能存活的最小 tag，再加执行面。优先枚举 `x`、`svg`、`math`、`details`、`input`、`body`、`style`、`image/img`、`video/source`、`iframe/srcdoc`、`meta refresh`、`base`。
 - 边界标签：如果过滤器是字母范围、首字母或黑名单正则，先求补集而不是背常见标签。例：`<[a-yA-Y/]+` 拦 `<a>` 到 `<y>` 和闭合标签，但 `<z autofocus onfocus=...>` 可作为自定义标签存活。黑盒时用 `<a>`、`<m>`、`<y>`、`<z>`、`<zz>` 做最小差异探测。
+- 少数标签白名单：如果只允许一个或少数标签，固定允许 tag 后选择对应执行面，不要重新泛扫。图片/资源类优先 `src=x onerror=...`，部分 parser 会把 `<image>` 归入图片元素语义；文档/容器类如 `body`、可触发加载的 `style` 优先 `onload`；可聚焦或自定义元素优先 `autofocus/onfocus`，尤其配合 harness 主动触发 focus。
 - 状态变化优先级高于标签枚举：当某个最小标签只改变 challenge 状态而没有保留原始 payload 或产生浏览器执行证据时，先围绕这个状态做最小差分；不要继续堆更多特殊标签。重点比较 raw HTML、最终 DOM、状态文本、是否有 flag、是否需要下一阶段输入或 bot/harness 触发。
 - event 被禁：固定 tag 后只换触发方式。常见无交互信号包括 `onerror`、`onload`、`autofocus/onfocus`、`open/ontoggle`、`onanimationstart`、`ontransitionend`、media `source/onerror`、popover/toggle。
 - 挑战 harness：检查 `check.js`、bot 脚本或页面辅助 JS 是否会主动触发 `[autofocus]`、`[onfocus]`、click、mouseover、toggle、animation 等事件。如果 harness 会触发 focus，自定义 tag + `autofocus onfocus=...` 是高优先级候选。
-- 空格被禁：测试 `/`、tab、换行、form-feed、回车和无引号属性；只换分隔符，不换载体。
+- 空格被禁：测试 `/`、tab、换行、form-feed、回车和无引号属性；只换分隔符，不换载体。对 HTML tag 属性，优先把 `tag attr=value event=...` 变成 `tag/attr=value/event=...`，用 raw HTML 和最终 DOM 确认浏览器仍拆成属性。
 - raw-text/RCDATA：在 `script/style/textarea/title/xmp/plaintext` 中优先测试对应闭合标签，再进入 HTML 载体。
 - parser 差异：保留“服务端输出 -> sanitizer 输出 -> 最终 DOM”三态。只有最终 DOM 产生 active markup 才算进入 mXSS 阶段。
 - DOM clobbering：当代码读取 `window.foo`、`document.foo`、form/name/id、配置对象或 sanitizer wrapper 时，测试 `id/name` 是否能覆盖对象引用，再连接后续 sink。
