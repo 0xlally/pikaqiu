@@ -10,6 +10,7 @@ from pikaqiu_agent.orchestrator import (
     OrchestratorManager,
     _compress_context_middle,
     _estimate_messages_size,
+    _memory_agent_long_term_review_block,
 )
 from pikaqiu_agent.mission_log_export import normalize_mission_log_export_dir
 from pikaqiu_agent.observer import ObserverDecision, should_inject_decision
@@ -110,6 +111,26 @@ class ControlLoopOptimizationTests(unittest.TestCase):
         self.assertEqual(metadata["error"], "compression model unavailable")
         self.assertEqual(len(fake_llm.calls), 0)
         self.assertIn("[上下文过大，中间对话已按重要性压缩]", summary)
+
+    def test_mid_round_context_compression_injects_long_term_memory_review(self):
+        block, metadata = _memory_agent_long_term_review_block(
+            {
+                "summary": "WordPress target with REST user enumeration.",
+                "findings": ["GET /wp-json/wp/v2/users returned wordpress_admin"],
+                "leads": ["Verify authenticated route or plugin chain"],
+                "dead_ends": ["Do not repeat broad plugin scan without token"],
+                "credentials": ["wordpress_admin candidate"],
+                "topology": ["browser -> WordPress"],
+            }
+        )
+
+        self.assertTrue(metadata["injected"])
+        self.assertEqual(metadata["findings"], 1)
+        self.assertEqual(metadata["leads"], 1)
+        self.assertIn("[MEMORY_AGENT_LONG_TERM_REVIEW]", block)
+        self.assertIn("下一次选择工具前，必须先对照 Memory Agent 的长期记忆", block)
+        self.assertIn("wordpress_admin", block)
+        self.assertIn("Do not repeat broad plugin scan", block)
 
     def test_observer_injection_policy_for_tool_phase(self):
         warn_steer = ObserverDecision(

@@ -333,6 +333,59 @@ def _compress_context_middle(
     return compressed_summary, metadata
 
 
+def _memory_agent_long_term_review_block(memory: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    def _items(value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [str(item).strip() for item in value if str(item).strip()]
+
+    def _list_section(label: str, values: list[str], limit: int) -> str:
+        selected = values[-limit:]
+        return label + ":\n" + "\n".join(f"- {_truncate_middle(item, 500)}" for item in selected)
+
+    summary = str(memory.get("summary") or "").strip()
+    findings = _items(memory.get("findings"))
+    leads = _items(memory.get("leads"))
+    credentials = _items(memory.get("credentials"))
+    dead_ends = _items(memory.get("dead_ends"))
+    topology = _items(memory.get("topology"))
+
+    sections: list[str] = []
+    if summary:
+        sections.append("态势摘要:\n" + _truncate_middle(summary, 900))
+    if credentials:
+        sections.append(_list_section("已获凭据", credentials, 6))
+    if findings:
+        sections.append(_list_section("关键发现", findings, 10))
+    if leads:
+        sections.append(_list_section("待验证路线/下一步", leads, 8))
+    if dead_ends:
+        sections.append(_list_section("已排除路径（不要重复尝试）", dead_ends, 8))
+    if topology:
+        sections.append(_list_section("拓扑/资产关系", topology, 8))
+
+    body = "\n\n".join(sections) if sections else "Memory Agent 长期记忆暂无稳定条目。"
+    block = (
+        "[MEMORY_AGENT_LONG_TERM_REVIEW]\n"
+        "轮内上下文刚被自动压缩。下一次选择工具前，必须先对照 Memory Agent 的长期记忆："
+        "优先延续已验证线索、凭据和拓扑关系，避免重复已排除路径；"
+        "若长期记忆与压缩摘要冲突，先用新的原始目标证据验证，再改变路线。\n\n"
+        f"{body}\n"
+        "[/MEMORY_AGENT_LONG_TERM_REVIEW]"
+    )
+    metadata = {
+        "injected": True,
+        "chars": len(block),
+        "summary_present": bool(summary),
+        "findings": len(findings),
+        "leads": len(leads),
+        "credentials": len(credentials),
+        "dead_ends": len(dead_ends),
+        "topology": len(topology),
+    }
+    return block, metadata
+
+
 def _observer_should_inject(decision: ObserverDecision, *, phase: str) -> bool:
     """Keep Observer low-noise: UI/event memory always records it, but main-agent
     injection is reserved for stop-the-line issues or clear stalls."""
@@ -2173,13 +2226,16 @@ class OrchestratorManager:
                         compression_model=self.settings.get_compression_model(),
                     )
 
+                    memory_review, memory_review_meta = _memory_agent_long_term_review_block(memory)
                     messages = (
                         messages[:kept_head]
                         + [HumanMessage(content=compressed_summary)]
                         + messages[tail_start:]
+                        + [HumanMessage(content=memory_review)]
                     )
                     compressed_chars = _estimate_messages_size(messages)
                     compression_meta["compressed_chars"] = compressed_chars
+                    compression_meta["memory_review"] = memory_review_meta
                     logger.info(
                         "[orchestrator] mid-round context compression: method=%s %d chars -> %d chars",
                         compression_meta["method"],

@@ -140,7 +140,7 @@ def test_memory_compression_helper_records_current_schema(tmp_path):
                 "exit_code": 0,
             }
         ],
-        reason="32 main LLM calls",
+        reason="8 main LLM calls",
     )
 
     assert manager.llm.memory_calls == 1
@@ -154,4 +154,4 @@ def test_memory_compression_helper_records_current_schema(tmp_path):
     }
     events = manager.store.get_events(mission_id)
     memory_events = [event for event in events if event["type"] == "memory_agent"]
-    assert memory_events[-1]["metadata"]["reason"] == "32 main LLM calls"
+    assert memory_events[-1]["metadata"]["reason"] == "8 main LLM calls"

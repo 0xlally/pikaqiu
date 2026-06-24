@@ -41,8 +41,8 @@ def test_memory_compress_interval_is_runtime_configurable(tmp_path):
     app = create_app(runtime)
     client = app.test_client()
 
-    assert settings.memory_compress_interval == 32
-    assert client.get("/api/config").get_json()["config"]["memory_compress_interval"] == 32
+    assert settings.memory_compress_interval == 8
+    assert client.get("/api/config").get_json()["config"]["memory_compress_interval"] == 8
 
     response = client.post("/api/config", json={"config": {"memory_compress_interval": 12}})
 
@@ -66,7 +66,7 @@ compression:
   model: ""
   reasoning_effort: ""
 agent_defaults:
-  memory_compress_interval: 32
+  memory_compress_interval: 8
 """,
         encoding="utf-8",
     )
@@ -75,7 +75,7 @@ agent_defaults:
 
     assert settings.compression_model == "gpt-5.5"
     assert settings.compression_reasoning_effort == "xhigh"
-    assert settings.memory_compress_interval == 32
+    assert settings.memory_compress_interval == 8
     assert settings.get_compression_model() == "gpt-5.5"
 
 

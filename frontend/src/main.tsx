@@ -1389,7 +1389,7 @@ function MemoryTab({ detail }: { detail: MissionDetail }) {
           <Brain />
           <div>
             <h2>任务记忆</h2>
-            <p>默认每 32 次主模型调用后，由 Memory Agent 压缩工具输出；可在设置页调整。</p>
+            <p>默认每 8 次主模型调用后，由 Memory Agent 压缩工具输出；可在设置页调整。</p>
           </div>
         </div>
         <div className="memory-headline">
