@@ -414,11 +414,15 @@ pre {
   height: 100%;
 }
 
-.detail-shell .trace-card summary strong {
+.detail-shell .trace-card summary strong,
+.detail-shell .trace-summary-button strong {
   white-space: normal;
 }
 
-.detail-shell .trace-card pre,
+.detail-shell .trace-output-frame {
+  max-height: 520px;
+}
+
 .detail-shell .json-block {
   max-height: 520px;
 }
@@ -1446,7 +1450,8 @@ select:focus {
   background: var(--surface-2);
 }
 
-.trace-card summary {
+.trace-card summary,
+.trace-summary-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -1454,7 +1459,8 @@ select:focus {
   padding: 12px;
 }
 
-.trace-card summary strong {
+.trace-card summary strong,
+.trace-summary-button strong {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: normal;
@@ -1462,18 +1468,83 @@ select:focus {
   word-break: break-word;
 }
 
-.trace-card summary small {
+.trace-card summary small,
+.trace-summary-button small {
   color: var(--faint);
   font-family: var(--font-mono);
   font-size: 11px;
 }
 
-.trace-card pre,
-.json-block {
+.trace-summary-button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  min-width: 0;
+  gap: 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  text-align: left;
+}
+
+.trace-action-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.trace-action-bar button {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--accent-strong);
+  padding: 5px 9px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.trace-action-bar button:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.trace-content {
+  position: relative;
+  border-top: 1px solid var(--line);
+}
+
+.trace-output-frame {
   max-height: 360px;
   overflow: auto;
+  background: #0d1624;
+}
+
+.trace-action-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  justify-content: flex-end;
+  border-top: 1px solid rgb(148 163 184 / 0.24);
+  background: linear-gradient(0deg, rgb(13 22 36 / 0.92), rgb(13 22 36 / 0.7));
+  padding: 7px 10px;
+  backdrop-filter: blur(12px);
+}
+
+.trace-action-bar button {
+  border-color: rgb(148 163 184 / 0.5);
+  background: rgb(255 255 255 / 0.08);
+  color: #e8f1ff;
+}
+
+.trace-action-bar button:hover {
+  border-color: rgb(232 241 255 / 0.82);
+  background: rgb(232 241 255 / 0.14);
+}
+
+.trace-card pre,
+.json-block {
   margin: 0;
-  border-top: 1px solid var(--line);
   background: #0d1624;
   color: #e8f1ff;
   padding: 13px;
@@ -2389,13 +2460,17 @@ select:focus {
     padding: 0 12px;
   }
 
-  .mission-shell .trace-card summary {
+  .mission-shell .trace-card summary,
+  .mission-shell .trace-summary-row {
     padding: 9px 10px;
+  }
+
+  .mission-shell .trace-output-frame {
+    max-height: 320px;
   }
 
   .mission-shell .trace-card pre,
   .mission-shell .json-block {
-    max-height: 320px;
     padding: 11px;
   }
 
@@ -2404,7 +2479,10 @@ select:focus {
     overflow: auto;
   }
 
-  .mission-shell.detail-shell .trace-card pre,
+  .mission-shell.detail-shell .trace-output-frame {
+    max-height: 520px;
+  }
+
   .mission-shell.detail-shell .json-block {
     max-height: 520px;
   }
@@ -2892,8 +2970,14 @@ select:focus {
     position: static;
   }
 
-  .trace-card summary {
+  .trace-card summary,
+  .trace-summary-button,
+  .trace-summary-row {
     grid-template-columns: 1fr;
+  }
+
+  .trace-action-bar {
+    justify-content: flex-start;
   }
 
   .observer-message-head,

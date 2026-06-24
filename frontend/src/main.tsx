@@ -81,6 +81,26 @@ function missionHref(id: string) {
   return `/missions/${encodeURIComponent(id)}`;
 }
 
+async function copyToClipboard(text: string) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+  } catch {
+    // Fall back below when clipboard permission is unavailable.
+  }
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "true");
+  area.style.position = "fixed";
+  area.style.left = "-9999px";
+  document.body.appendChild(area);
+  area.select();
+  document.execCommand("copy");
+  document.body.removeChild(area);
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
@@ -2224,19 +2244,51 @@ function ObserverRawDetails({ raw }: { raw: string }) {
 
 function EventCard({ event }: { event: Event }) {
   const isObserver = event.type === "observer_agent";
+  const [open, setOpen] = useState(event.type === "flag" || event.type === "error");
+  const [copied, setCopied] = useState(false);
+  const contentText = event.content || safeJson(event.metadata);
+  const copyText = [
+    event.title ? `# ${event.title}` : "",
+    event.command ? `$ ${event.command}` : "",
+    contentText,
+    event.exit_code ? `exit ${event.exit_code}` : ""
+  ].filter(Boolean).join("\n\n");
+
+  async function copyEvent() {
+    await copyToClipboard(copyText);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1400);
+  }
+
   return (
-    <details className={`trace-card ${eventTone(event.type)}`} open={event.type === "flag" || event.type === "error"}>
-      <summary>
-        <span className="trace-type">{eventLabel(event.type)}</span>
-        <strong>{event.title || compact(event.command || event.content, 120)}</strong>
-        <small>
-          R{event.round_no} · {formatTime(event.ended_at || event.started_at)}
-        </small>
-      </summary>
-      {event.command ? <code className="command-line">{event.command}</code> : null}
-      {isObserver ? <ObserverEventBody event={event} /> : <pre>{event.content || safeJson(event.metadata)}</pre>}
-      {event.exit_code ? <span className="exit-code">exit {event.exit_code}</span> : null}
-    </details>
+    <article className={`trace-card ${eventTone(event.type)}${open ? " open" : ""}`}>
+      <div className="trace-summary-row">
+        <button className="trace-summary-button" type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
+          <span className="trace-type">{eventLabel(event.type)}</span>
+          <strong>{event.title || compact(event.command || event.content, 120)}</strong>
+          <small>
+            R{event.round_no} · {formatTime(event.ended_at || event.started_at)}
+          </small>
+        </button>
+      </div>
+      {open ? (
+        <div className="trace-content">
+          {event.command ? <code className="command-line">{event.command}</code> : null}
+          {isObserver ? (
+            <ObserverEventBody event={event} />
+          ) : (
+            <div className="trace-output-frame">
+              <pre>{contentText}</pre>
+              <div className="trace-action-bar" aria-label="展开事件操作">
+                <button type="button" onClick={copyEvent}>{copied ? "已复制" : "复制"}</button>
+                <button type="button" onClick={() => setOpen(false)}>收起</button>
+              </div>
+            </div>
+          )}
+          {event.exit_code ? <span className="exit-code">exit {event.exit_code}</span> : null}
+        </div>
+      ) : null}
+    </article>
   );
 }
 
