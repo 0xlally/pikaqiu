@@ -6,7 +6,11 @@ from pathlib import Path
 
 from langchain_core.messages import HumanMessage
 
-from pikaqiu_agent.orchestrator import OrchestratorManager
+from pikaqiu_agent.orchestrator import (
+    OrchestratorManager,
+    _compress_context_middle,
+    _estimate_messages_size,
+)
 from pikaqiu_agent.mission_log_export import normalize_mission_log_export_dir
 from pikaqiu_agent.observer import ObserverDecision, should_inject_decision
 from pikaqiu_agent.storage import MissionStore
@@ -43,7 +47,70 @@ class ObserverCorrectionRoutingHarness(OrchestratorManager):
         return True
 
 
+class FakeCompressionLLM:
+    def __init__(self, summary: str | None, *, available: bool = True) -> None:
+        self.summary = summary
+        self.has_compression_model = available
+        self.calls = []
+
+    def invoke_compression(self, messages_text, mission_context):  # type: ignore[no-untyped-def]
+        self.calls.append((messages_text, mission_context))
+        return self.summary
+
+
 class ControlLoopOptimizationTests(unittest.TestCase):
+    def test_mid_round_context_compression_prefers_model_when_available(self):
+        middle = [
+            HumanMessage(content=f"confirmed lead {idx}: /wp-json/wp/v2/users " + "A" * 800)
+            for idx in range(3)
+        ]
+        fake_llm = FakeCompressionLLM(
+            (
+                "- 保留 WordPress REST 用户枚举证据：/wp-json/wp/v2/users 返回用户列表。\n"
+                "- 保留插件扫描死路：宽扫没有形成可复现利用链，后续应转向认证、主题或 REST 权限边界。\n"
+                "- 保留当前目标、路径和失败分支，避免下一轮重复枚举。"
+            )
+        )
+
+        summary, metadata = _compress_context_middle(
+            middle=middle,
+            msg_size=_estimate_messages_size(middle),
+            mission={"target": "http://target", "goal": "capture flag"},
+            llm=fake_llm,  # type: ignore[arg-type]
+            compression_timeout_sec=5,
+            compression_model="gpt-5.5",
+        )
+
+        self.assertEqual(metadata["method"], "model")
+        self.assertEqual(metadata["model"], "gpt-5.5")
+        self.assertEqual(metadata["error"], "")
+        self.assertGreater(metadata["summary_chars"], 50)
+        self.assertEqual(len(fake_llm.calls), 1)
+        self.assertIn("[上下文已由压缩模型智能压缩]", summary)
+        self.assertIn("/wp-json/wp/v2/users", summary)
+
+    def test_mid_round_context_compression_records_fallback_when_model_unavailable(self):
+        middle = [
+            HumanMessage(content=f"dead end {idx}: directory brute force timed out " + "B" * 300)
+            for idx in range(2)
+        ]
+        fake_llm = FakeCompressionLLM(None, available=False)
+
+        summary, metadata = _compress_context_middle(
+            middle=middle,
+            msg_size=_estimate_messages_size(middle),
+            mission={"target": "http://target", "goal": "capture flag"},
+            llm=fake_llm,  # type: ignore[arg-type]
+            compression_timeout_sec=5,
+            compression_model="gpt-5.5",
+        )
+
+        self.assertEqual(metadata["method"], "fallback")
+        self.assertEqual(metadata["model"], "")
+        self.assertEqual(metadata["error"], "compression model unavailable")
+        self.assertEqual(len(fake_llm.calls), 0)
+        self.assertIn("[上下文过大，中间对话已按重要性压缩]", summary)
+
     def test_observer_injection_policy_for_tool_phase(self):
         warn_steer = ObserverDecision(
             verdict="WATCH",

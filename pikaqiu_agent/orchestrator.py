@@ -216,6 +216,123 @@ def _estimate_messages_size(messages: list) -> int:
     return total
 
 
+def _message_text_for_compression(message: Any) -> str:
+    content = message.content if hasattr(message, "content") else str(message)
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for part in content:
+            if isinstance(part, dict):
+                parts.append(str(part.get("text", "")))
+            else:
+                parts.append(str(part))
+        return "\n".join(parts)
+    return str(content)
+
+
+def _fallback_context_summary(middle: list[Any], msg_size: int) -> str:
+    compressed_parts = []
+    for message in middle:
+        text = _message_text_for_compression(message)
+        importance = score_importance(text)
+        if importance >= 3:
+            compressed_parts.append(text[:800] + ("..." if len(text) > 800 else ""))
+        elif importance >= 2:
+            compressed_parts.append(text[:400] + ("..." if len(text) > 400 else ""))
+        else:
+            compressed_parts.append(text[:200] + ("..." if len(text) > 200 else ""))
+    return (
+        "[上下文过大，中间对话已按重要性压缩]\n"
+        f"压缩了 {len(middle)} 条消息（原始约 {msg_size} 字符）。\n"
+        "摘要：\n" + "\n".join(f"- {part}" for part in compressed_parts[-15:])
+    )
+
+
+def _compress_context_middle(
+    *,
+    middle: list[Any],
+    msg_size: int,
+    mission: dict[str, Any],
+    llm: LLMClient,
+    compression_timeout_sec: int,
+    compression_model: str,
+) -> tuple[str, dict[str, Any]]:
+    timeout_sec = max(1, int(compression_timeout_sec or 45))
+    metadata = {
+        "method": "fallback",
+        "model": "",
+        "messages_compressed": len(middle),
+        "original_chars": msg_size,
+        "input_chars": 0,
+        "input_truncated": False,
+        "summary_chars": 0,
+        "timeout_sec": timeout_sec,
+        "duration_ms": 0,
+        "error": "",
+    }
+
+    if llm.has_compression_model:
+        started = time.monotonic()
+        try:
+            middle_text = "\n---\n".join(
+                _message_text_for_compression(message)[:1500]
+                for message in middle
+            )
+            if len(middle_text) > 30000:
+                middle_text = middle_text[:30000] + "\n...[truncated]"
+                metadata["input_truncated"] = True
+            metadata["input_chars"] = len(middle_text)
+
+            mission_ctx = f"目标: {mission.get('target', '?')} | 任务: {mission.get('goal', '?')[:200]}"
+            pool = ThreadPoolExecutor(max_workers=1)
+            try:
+                future = pool.submit(llm.invoke_compression, middle_text, mission_ctx)
+                llm_summary = future.result(timeout=timeout_sec)
+            except (FutureTimeout, TimeoutError):
+                logger.warning("[orchestrator] LLM compression timed out after %ds", timeout_sec)
+                future.cancel()
+                llm_summary = None
+                metadata["error"] = f"model timeout after {timeout_sec}s"
+            finally:
+                pool.shutdown(wait=False, cancel_futures=True)
+
+            metadata["duration_ms"] = int((time.monotonic() - started) * 1000)
+            if llm_summary and len(llm_summary) > 50:
+                compressed_summary = (
+                    "[上下文已由压缩模型智能压缩]\n"
+                    f"压缩了 {len(middle)} 条消息（原始约 {msg_size} 字符）。\n"
+                    f"摘要：\n{llm_summary}"
+                )
+                metadata.update(
+                    {
+                        "method": "model",
+                        "model": compression_model,
+                        "summary_chars": len(llm_summary),
+                        "error": "",
+                    }
+                )
+                logger.info(
+                    "[orchestrator] LLM compression: %d chars -> %d chars",
+                    msg_size,
+                    len(compressed_summary),
+                )
+                return compressed_summary, metadata
+
+            if not metadata["error"]:
+                metadata["error"] = "model returned no usable summary"
+        except Exception as comp_err:
+            metadata["duration_ms"] = int((time.monotonic() - started) * 1000)
+            metadata["error"] = str(comp_err)[:500]
+            logger.warning("[orchestrator] LLM compression failed, using fallback: %s", comp_err)
+    else:
+        metadata["error"] = "compression model unavailable"
+
+    compressed_summary = _fallback_context_summary(middle, msg_size)
+    metadata["summary_chars"] = len(compressed_summary)
+    return compressed_summary, metadata
+
+
 def _observer_should_inject(decision: ObserverDecision, *, phase: str) -> bool:
     """Keep Observer low-noise: UI/event memory always records it, but main-agent
     injection is reserved for stop-the-line issues or clear stalls."""
@@ -2047,78 +2164,38 @@ class OrchestratorManager:
                     if not middle:
                         continue  # nothing to compress
 
-                    compressed_summary = None
-
-                    # Strategy 1: LLM-based compression (cheap model)
-                    if self.llm.has_compression_model:
-                        try:
-                            middle_text = "\n---\n".join(
-                                str(m.content if hasattr(m, "content") else m)[:1500]
-                                for m in middle
-                            )
-                            # Cap input to compression model at ~30K chars
-                            if len(middle_text) > 30000:
-                                middle_text = middle_text[:30000] + "\n...[truncated]"
-                            mission_ctx = f"目标: {mission.get('target', '?')} | 任务: {mission.get('goal', '?')[:200]}"
-                            pool = ThreadPoolExecutor(max_workers=1)
-                            try:
-                                future = pool.submit(
-                                    self.llm.invoke_compression, middle_text, mission_ctx
-                                )
-                                llm_summary = future.result(timeout=self.settings.compression_timeout_sec or 45)
-                            except (FutureTimeout, TimeoutError):
-                                logger.warning("[orchestrator] LLM compression timed out after %ds", self.settings.compression_timeout_sec)
-                                future.cancel()
-                                llm_summary = None
-                            finally:
-                                pool.shutdown(wait=False, cancel_futures=True)
-                            if llm_summary and len(llm_summary) > 50:
-                                compressed_summary = (
-                                    f"[上下文已由压缩模型智能压缩]\n"
-                                    f"压缩了 {len(middle)} 条消息（原始约 {msg_size} 字符）。\n"
-                                    f"摘要：\n{llm_summary}"
-                                )
-                                logger.info(
-                                    "[orchestrator] LLM compression: %d chars → %d chars",
-                                    msg_size, len(compressed_summary),
-                                )
-                        except Exception as comp_err:
-                            logger.warning("[orchestrator] LLM compression failed, using fallback: %s", comp_err)
-
-                    # Strategy 2: Fallback — importance-based truncation
-                    if compressed_summary is None:
-                        compressed_parts = []
-                        for m in middle:
-                            content = m.content if hasattr(m, "content") else str(m)
-                            text = str(content) if not isinstance(content, str) else content
-                            importance = score_importance(text)
-                            if importance >= 3:
-                                compressed_parts.append(text[:800] + ("..." if len(text) > 800 else ""))
-                            elif importance >= 2:
-                                compressed_parts.append(text[:400] + ("..." if len(text) > 400 else ""))
-                            else:
-                                compressed_parts.append(text[:200] + ("..." if len(text) > 200 else ""))
-                        compressed_summary = (
-                            "[上下文过大，中间对话已按重要性压缩]\n"
-                            f"压缩了 {len(middle)} 条消息（原始约 {msg_size} 字符）。\n"
-                            "摘要：\n" + "\n".join(f"- {s}" for s in compressed_parts[-15:])
-                        )
+                    compressed_summary, compression_meta = _compress_context_middle(
+                        middle=middle,
+                        msg_size=msg_size,
+                        mission=mission,
+                        llm=self.llm,
+                        compression_timeout_sec=self.settings.get_compression_timeout_sec(),
+                        compression_model=self.settings.get_compression_model(),
+                    )
 
                     messages = (
                         messages[:kept_head]
                         + [HumanMessage(content=compressed_summary)]
                         + messages[tail_start:]
                     )
+                    compressed_chars = _estimate_messages_size(messages)
+                    compression_meta["compressed_chars"] = compressed_chars
                     logger.info(
-                        "[orchestrator] mid-round context compression: %d chars → %d chars",
-                        msg_size, _estimate_messages_size(messages),
+                        "[orchestrator] mid-round context compression: method=%s %d chars -> %d chars",
+                        compression_meta["method"],
+                        msg_size,
+                        compressed_chars,
                     )
                     self.store.add_event(
                         mission_id=mission_id,
                         round_no=round_no,
                         event_type="system",
                         title="轮内上下文压缩",
-                        content=f"消息总长 {msg_size} 字符超过阈值 {_CONTEXT_COMPRESS_THRESHOLD}，已压缩 {len(middle)} 条中间消息",
+                        content=(
+                            f"消息总长 {msg_size} 字符超过阈值 {_CONTEXT_COMPRESS_THRESHOLD}，"
+                            f"已压缩 {len(middle)} 条中间消息；方式 {compression_meta['method']}"
+                        ),
+                        metadata={"context_compression": compression_meta},
                     )
 
             # === End of tool-calling loop ===
