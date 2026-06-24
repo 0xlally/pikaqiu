@@ -337,8 +337,8 @@ curl -X POST http://127.0.0.1:8001/api/missions `
 | `llm_use_responses_api` | 是否使用 Responses API |
 | `llm_disable_response_storage` | 是否禁用响应存储 |
 | `compression_model` | 轮内上下文语义压缩模型，默认 `gpt-5.5` |
-| `compression_reasoning_effort` | 压缩模型推理强度，默认 `xhigh` |
-| `compression_timeout_sec` | 压缩模型调用超时，默认 60 秒 |
+| `compression_reasoning_effort` | 压缩模型推理强度，默认 `low` |
+| `compression_timeout_sec` | 压缩模型调用超时，默认 180 秒 |
 | `initial_rounds` | 新任务默认最大轮数 |
 | `initial_commands` | 新任务默认每轮命令数 |
 | `command_timeout_sec` | 单条沙箱命令超时 |
