@@ -77,6 +77,55 @@ agent_defaults:
     assert settings.compression_reasoning_effort == "low"
     assert settings.memory_compress_interval == 8
     assert settings.get_compression_model() == "gpt-5.5"
+    assert settings.get_compression_reasoning_effort() == "low"
+
+
+def test_compression_reasoning_effort_does_not_inherit_heavy_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("PIKAQIU_COMPRESSION_REASONING_EFFORT", "xhigh")
+    (tmp_path / "config.yml").write_text(
+        """
+model_pool:
+  - id: main
+    api_key: "test-key"
+    model: "gpt-5.5"
+    reasoning_effort: "xhigh"
+compression:
+  model: "gpt-5.5"
+  reasoning_effort: "xhigh"
+""",
+        encoding="utf-8",
+    )
+
+    settings = load_settings(tmp_path)
+
+    assert settings.llm_reasoning_effort == "xhigh"
+    assert settings.compression_reasoning_effort == "low"
+    assert settings.get_compression_reasoning_effort() == "low"
+    assert settings.to_dict()["effective_compression_reasoning_effort"] == "low"
+
+
+def test_runtime_compression_reasoning_effort_rejects_heavy_values(tmp_path):
+    settings = _settings(tmp_path)
+    store = MissionStore(":memory:")
+    runtime = SimpleNamespace(
+        settings=settings,
+        store=store,
+        orchestrator=SimpleNamespace(
+            thread_alive=lambda _mission_id: False,
+            observer_runtime=SimpleNamespace(llm=None),
+        ),
+        static_root=tmp_path,
+    )
+    app = create_app(runtime)
+    client = app.test_client()
+
+    response = client.post("/api/config", json={"config": {"compression_reasoning_effort": "xhigh"}})
+
+    assert response.status_code == 200
+    config = response.get_json()["config"]
+    assert settings.compression_reasoning_effort == "low"
+    assert config["compression_reasoning_effort"] == "low"
+    assert config["effective_compression_reasoning_effort"] == "low"
 
 
 def test_runtime_config_ignores_masked_secret_roundtrip(tmp_path):

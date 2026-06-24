@@ -245,15 +245,21 @@ class LLMClient:
         if comp_model and comp_key:
             comp_base = settings.get_compression_base_url().rstrip("/")
             comp_timeout = settings.get_compression_timeout_sec()
+            comp_reasoning_effort = settings.get_compression_reasoning_effort()
             self._compression_model = _build_chat_model(
                 comp_base, comp_key, comp_model,
                 timeout=comp_timeout, temperature=0.0,
-                reasoning_effort=settings.get_compression_reasoning_effort(),
+                reasoning_effort=comp_reasoning_effort,
                 use_responses_api=settings.compression_use_responses_api,
                 disable_response_storage=settings.compression_disable_response_storage,
             )
             self._compression_model_name = comp_model
-            logger.info("[llm] Compression model configured: %s", comp_model)
+            logger.info(
+                "[llm] Compression model configured: %s reasoning_effort=%s timeout=%ss",
+                comp_model,
+                comp_reasoning_effort,
+                comp_timeout,
+            )
         else:
             self._compression_model = None
             self._compression_model_name = ""

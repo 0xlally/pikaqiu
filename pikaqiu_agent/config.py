@@ -36,6 +36,7 @@ DEFAULT_LLM_REASONING_EFFORT = "xhigh"
 DEFAULT_COMPRESSION_MODEL = DEFAULT_LLM_MODEL
 DEFAULT_COMPRESSION_REASONING_EFFORT = "low"
 DEFAULT_COMPRESSION_TIMEOUT_SEC = 180
+_ALLOWED_COMPRESSION_REASONING_EFFORTS = {"minimal", "low", "medium"}
 DEFAULT_MEMORY_COMPRESS_INTERVAL = 8
 MAX_AGENT_SLOTS = 5
 DEFAULT_SANDBOX_CONTAINERS = tuple(f"pikaqiu-sandbox-{idx}" for idx in range(1, MAX_AGENT_SLOTS + 1))
@@ -229,7 +230,7 @@ class AgentSettings:
         return self.compression_model or DEFAULT_COMPRESSION_MODEL
 
     def get_compression_reasoning_effort(self) -> str:
-        return self.compression_reasoning_effort or DEFAULT_COMPRESSION_REASONING_EFFORT
+        return _normalize_compression_reasoning_effort(self.compression_reasoning_effort)
 
     def get_compression_timeout_sec(self) -> int:
         try:
@@ -281,6 +282,8 @@ class AgentSettings:
                         value = int(value)
                     elif isinstance(current, str):
                         value = str(value)
+                    if key == "compression_reasoning_effort":
+                        value = _normalize_compression_reasoning_effort(value)
                     setattr(self, key, value)
                 except (ValueError, TypeError) as e:
                     errors[key] = f"invalid value for '{key}': {e}"
@@ -306,6 +309,7 @@ class AgentSettings:
         d["effective_observer_model"] = self.get_observer_model()
         d["effective_chat_model"] = self.get_chat_model()
         d["effective_compression_model"] = self.get_compression_model()
+        d["effective_compression_reasoning_effort"] = self.get_compression_reasoning_effort()
         return d
 
     def get_mission_params(self, overrides: dict[str, Any] | None = None) -> dict[str, int]:
@@ -351,6 +355,18 @@ def _default_if_blank(value: Any, default: Any) -> Any:
     if isinstance(value, str) and not value.strip():
         return default
     return value
+
+
+def _normalize_compression_reasoning_effort(value: Any) -> str:
+    effort = str(_default_if_blank(value, DEFAULT_COMPRESSION_REASONING_EFFORT)).strip().lower()
+    if effort in _ALLOWED_COMPRESSION_REASONING_EFFORTS:
+        return effort
+    logger.warning(
+        "Ignoring unsupported compression reasoning_effort=%r; using %s",
+        value,
+        DEFAULT_COMPRESSION_REASONING_EFFORT,
+    )
+    return DEFAULT_COMPRESSION_REASONING_EFFORT
 
 
 def _string_list(value: Any) -> list[str]:
@@ -430,9 +446,11 @@ def _load_from_env(root: Path) -> AgentSettings:
         compression_base_url=_env("PIKAQIU_COMPRESSION_BASE_URL", default=""),
         compression_api_key=_env("PIKAQIU_COMPRESSION_API_KEY", "OPENAI_API_KEY", default=""),
         compression_model=_env("PIKAQIU_COMPRESSION_MODEL", default=DEFAULT_COMPRESSION_MODEL),
-        compression_reasoning_effort=_env(
-            "PIKAQIU_COMPRESSION_REASONING_EFFORT",
-            default=DEFAULT_COMPRESSION_REASONING_EFFORT,
+        compression_reasoning_effort=_normalize_compression_reasoning_effort(
+            _env(
+                "PIKAQIU_COMPRESSION_REASONING_EFFORT",
+                default=DEFAULT_COMPRESSION_REASONING_EFFORT,
+            )
         ),
         compression_use_responses_api=_env("PIKAQIU_COMPRESSION_USE_RESPONSES_API", default=True, cast=bool),
         compression_disable_response_storage=_env("PIKAQIU_COMPRESSION_DISABLE_RESPONSE_STORAGE", default=True, cast=bool),
@@ -557,11 +575,13 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
         "PIKAQIU_COMPRESSION_MODEL",
         default=_default_if_blank(compression.get("model"), DEFAULT_COMPRESSION_MODEL),
     )
-    compression_reasoning_effort = _env(
-        "PIKAQIU_COMPRESSION_REASONING_EFFORT",
-        default=_default_if_blank(
-            compression.get("reasoning_effort"),
-            DEFAULT_COMPRESSION_REASONING_EFFORT,
+    compression_reasoning_effort = _normalize_compression_reasoning_effort(
+        _env(
+            "PIKAQIU_COMPRESSION_REASONING_EFFORT",
+            default=_default_if_blank(
+                compression.get("reasoning_effort"),
+                DEFAULT_COMPRESSION_REASONING_EFFORT,
+            ),
         ),
     )
     compression_use_responses_api = _env(
