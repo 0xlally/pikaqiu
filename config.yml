@@ -39,12 +39,12 @@ observer:
   disable_response_storage: true
 
 # 鈹€鈹€鈹€ Compression Model 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-# A cheap/fast model for mid-round context compression (optional).
-# Falls back to rule-based truncation if left empty.
+# Dedicated/default model for semantic mid-round context compression.
+# Empty model values fall back to the built-in default; rule fallback is only used if model compression fails.
 compression:
   base_url: ""
   api_key: ""
-  model: ""
+  model: "gpt-5.5"
   reasoning_effort: "xhigh"
   use_responses_api: true
   disable_response_storage: true
@@ -59,7 +59,7 @@ agent_defaults:
   llm_max_retries: 10             # LLM timeout/error auto-retry count
   stdout_limit: 8000              # output truncation (chars); keeps head+tail, drops middle
   context_compress_threshold: 80000  # mid-round compression trigger (chars)
-  memory_compress_interval: 64    # structured memory compression interval (main LLM calls)
+  memory_compress_interval: 32    # structured memory compression interval (main LLM calls)
   knowledge_top_k: 5              # number of knowledge docs to retrieve
   knowledge_dir: "./knowledge"    # directory for knowledge zips/folders (drop .zip or dirs here)
   skills_dir: "./skills"          # directory containing */SKILL.md skill folders

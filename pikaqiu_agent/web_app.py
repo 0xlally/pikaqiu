@@ -230,8 +230,17 @@ def create_app(runtime: AppRuntime | None = None) -> Flask:
             return _json_error("provide 'config' dict with fields to update", 400)
         errors = rt().settings.update(changes)
         # Rebuild LLM client if relevant fields changed
-        llm_fields = {"llm_base_url", "llm_api_key", "llm_model", "llm_timeout_sec",
-                      "observer_base_url", "observer_api_key", "observer_model"}
+        llm_fields = {
+            "llm_base_url", "llm_api_key", "llm_model", "llm_chat_model", "llm_thinking",
+            "llm_timeout_sec", "llm_reasoning_effort", "llm_use_responses_api",
+            "llm_disable_response_storage",
+            "observer_base_url", "observer_api_key", "observer_model", "observer_thinking",
+            "observer_reasoning_effort", "observer_use_responses_api",
+            "observer_disable_response_storage",
+            "compression_base_url", "compression_api_key", "compression_model",
+            "compression_reasoning_effort", "compression_use_responses_api",
+            "compression_disable_response_storage", "compression_timeout_sec",
+        }
         if llm_fields & set(changes.keys()):
             rt().llm = LLMClient(rt().settings)
             rt().orchestrator.llm = rt().llm

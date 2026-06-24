@@ -1,7 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from pikaqiu_agent.config import AgentSettings
+from pikaqiu_agent.config import AgentSettings, load_settings
 from pikaqiu_agent.storage import MissionStore
 from pikaqiu_agent.web_app import _cleanup_mission_workspace, create_app
 
@@ -41,14 +41,53 @@ def test_memory_compress_interval_is_runtime_configurable(tmp_path):
     app = create_app(runtime)
     client = app.test_client()
 
-    assert settings.memory_compress_interval == 64
-    assert client.get("/api/config").get_json()["config"]["memory_compress_interval"] == 64
+    assert settings.memory_compress_interval == 32
+    assert client.get("/api/config").get_json()["config"]["memory_compress_interval"] == 32
 
     response = client.post("/api/config", json={"config": {"memory_compress_interval": 12}})
 
     assert response.status_code == 200
     assert settings.memory_compress_interval == 12
     assert response.get_json()["config"]["memory_compress_interval"] == 12
+
+
+def test_compression_defaults_use_model_based_compression(tmp_path, monkeypatch):
+    monkeypatch.delenv("PIKAQIU_COMPRESSION_MODEL", raising=False)
+    monkeypatch.delenv("PIKAQIU_COMPRESSION_REASONING_EFFORT", raising=False)
+    monkeypatch.delenv("PIKAQIU_MEMORY_COMPRESS_INTERVAL", raising=False)
+    (tmp_path / "config.yml").write_text(
+        """
+model_pool:
+  - id: main
+    base_url: "https://example.test/v1"
+    api_key: "test-key"
+    model: "gpt-5.5"
+compression:
+  model: ""
+  reasoning_effort: ""
+agent_defaults:
+  memory_compress_interval: 32
+""",
+        encoding="utf-8",
+    )
+
+    settings = load_settings(tmp_path)
+
+    assert settings.compression_model == "gpt-5.5"
+    assert settings.compression_reasoning_effort == "xhigh"
+    assert settings.memory_compress_interval == 32
+    assert settings.get_compression_model() == "gpt-5.5"
+
+
+def test_runtime_config_ignores_masked_secret_roundtrip(tmp_path):
+    settings = _settings(tmp_path)
+    settings.compression_api_key = "real-compression-key"
+    masked = settings.to_dict(mask_secrets=True)["compression_api_key"]
+
+    errors = settings.update({"compression_api_key": masked})
+
+    assert errors == {}
+    assert settings.compression_api_key == "real-compression-key"
 
 
 def test_cleanup_mission_workspace_removes_uuid_prefix_in_each_container(tmp_path):

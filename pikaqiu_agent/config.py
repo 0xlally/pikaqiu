@@ -33,6 +33,10 @@ DEFAULT_LLM_BASE_URL = "https://www.inroi.shop"
 DEFAULT_LLM_API_KEY = ""
 DEFAULT_LLM_MODEL = "gpt-5.5"
 DEFAULT_LLM_REASONING_EFFORT = "xhigh"
+DEFAULT_COMPRESSION_MODEL = DEFAULT_LLM_MODEL
+DEFAULT_COMPRESSION_REASONING_EFFORT = "xhigh"
+DEFAULT_COMPRESSION_TIMEOUT_SEC = 60
+DEFAULT_MEMORY_COMPRESS_INTERVAL = 32
 MAX_AGENT_SLOTS = 5
 DEFAULT_SANDBOX_CONTAINERS = tuple(f"pikaqiu-sandbox-{idx}" for idx in range(1, MAX_AGENT_SLOTS + 1))
 
@@ -97,6 +101,10 @@ _RUNTIME_MUTABLE_FIELDS = {
     # Passive Observer
     "observer_base_url", "observer_api_key", "observer_model", "observer_thinking",
     "observer_reasoning_effort", "observer_use_responses_api", "observer_disable_response_storage",
+    # Mid-round context compression
+    "compression_base_url", "compression_api_key", "compression_model",
+    "compression_reasoning_effort", "compression_use_responses_api",
+    "compression_disable_response_storage", "compression_timeout_sec",
     # Agent params
     "initial_rounds", "initial_commands", "max_rounds", "max_commands",
     "command_timeout_sec", "stdout_limit", "knowledge_top_k", "skills_dir",
@@ -108,7 +116,7 @@ _RUNTIME_MUTABLE_FIELDS = {
 }
 
 # Sensitive fields: shown as masked in API responses
-_SENSITIVE_FIELDS = {"llm_api_key", "observer_api_key"}
+_SENSITIVE_FIELDS = {"llm_api_key", "observer_api_key", "compression_api_key"}
 
 
 @dataclass
@@ -130,11 +138,11 @@ class AgentSettings:
     llm_disable_response_storage: bool = True
     llm_timeout_sec: int = 240
     llm_max_retries: int = 10  # LLM timeout/error auto-retry count
-    # Compression LLM (cheap model for context compression; falls back to main LLM if empty)
+    # Compression LLM (semantic mid-round context compression)
     compression_base_url: str = ""
     compression_api_key: str = ""
-    compression_model: str = ""
-    compression_reasoning_effort: str = DEFAULT_LLM_REASONING_EFFORT
+    compression_model: str = DEFAULT_COMPRESSION_MODEL
+    compression_reasoning_effort: str = DEFAULT_COMPRESSION_REASONING_EFFORT
     compression_use_responses_api: bool = True
     compression_disable_response_storage: bool = True
     compression_timeout_sec: int = 60
@@ -152,7 +160,7 @@ class AgentSettings:
     command_timeout_sec: int = 300     # default sandbox command timeout
     stdout_limit: int = 8000
     context_compress_threshold: int = 80000  # chars; mid-round context compression trigger
-    memory_compress_interval: int = 64  # main LLM calls between structured memory compression runs
+    memory_compress_interval: int = DEFAULT_MEMORY_COMPRESS_INTERVAL  # main LLM calls between structured memory compression runs
     knowledge_top_k: int = 6
     knowledge_dir: str = "./knowledge"  # directory for knowledge zips/folders
     skills_dir: str = "./skills"  # directory containing */SKILL.md skill folders
@@ -211,6 +219,25 @@ class AgentSettings:
     def get_observer_model(self) -> str:
         return self.observer_model or self.llm_model
 
+    def get_compression_base_url(self) -> str:
+        return self.compression_base_url or self.llm_base_url
+
+    def get_compression_api_key(self) -> str:
+        return self.compression_api_key or self.llm_api_key
+
+    def get_compression_model(self) -> str:
+        return self.compression_model or DEFAULT_COMPRESSION_MODEL
+
+    def get_compression_reasoning_effort(self) -> str:
+        return self.compression_reasoning_effort or DEFAULT_COMPRESSION_REASONING_EFFORT
+
+    def get_compression_timeout_sec(self) -> int:
+        try:
+            timeout = int(self.compression_timeout_sec)
+        except (TypeError, ValueError):
+            timeout = DEFAULT_COMPRESSION_TIMEOUT_SEC
+        return max(1, timeout)
+
     def get_model_by_id(self, model_id: str) -> ModelPoolEntry | None:
         """Get a model pool entry by ID."""
         for m in self.model_pool:
@@ -235,6 +262,7 @@ class AgentSettings:
     def update(self, changes: dict[str, Any]) -> dict[str, str]:
         """Apply runtime config changes. Returns dict of field→error for bad values."""
         errors: dict[str, str] = {}
+        applied: dict[str, Any] = {}
         with self._lock:
             for key, value in changes.items():
                 if key not in _RUNTIME_MUTABLE_FIELDS:
@@ -245,6 +273,8 @@ class AgentSettings:
                     continue
                 current = getattr(self, key)
                 try:
+                    if key in _SENSITIVE_FIELDS and isinstance(value, str) and value.endswith("***"):
+                        continue
                     if isinstance(current, bool):
                         value = value if isinstance(value, bool) else str(value).lower() not in {"0", "false", "no", "off", ""}
                     elif isinstance(current, int):
@@ -254,8 +284,10 @@ class AgentSettings:
                     setattr(self, key, value)
                 except (ValueError, TypeError) as e:
                     errors[key] = f"invalid value for '{key}': {e}"
-        if changes and not errors:
-            logger.info("Config updated: %s", {k: ("***" if k in _SENSITIVE_FIELDS else v) for k, v in changes.items()})
+                    continue
+                applied[key] = value
+        if applied and not errors:
+            logger.info("Config updated: %s", {k: ("***" if k in _SENSITIVE_FIELDS else v) for k, v in applied.items()})
         return errors
 
     # ── Serialization ─────────────────────────────────────────────────
@@ -273,6 +305,7 @@ class AgentSettings:
         d["use_mock_llm"] = self.use_mock_llm
         d["effective_observer_model"] = self.get_observer_model()
         d["effective_chat_model"] = self.get_chat_model()
+        d["effective_compression_model"] = self.get_compression_model()
         return d
 
     def get_mission_params(self, overrides: dict[str, Any] | None = None) -> dict[str, int]:
@@ -310,6 +343,14 @@ def _env(name: str, *fallback_names: str, default: Any = "", cast: Any = str) ->
         except (ValueError, TypeError):
             continue
     return default
+
+
+def _default_if_blank(value: Any, default: Any) -> Any:
+    if value is None:
+        return default
+    if isinstance(value, str) and not value.strip():
+        return default
+    return value
 
 
 def _string_list(value: Any) -> list[str]:
@@ -386,11 +427,29 @@ def _load_from_env(root: Path) -> AgentSettings:
         observer_reasoning_effort=_env("PIKAQIU_OBSERVER_REASONING_EFFORT", default=DEFAULT_LLM_REASONING_EFFORT),
         observer_use_responses_api=_env("PIKAQIU_OBSERVER_USE_RESPONSES_API", default=True, cast=bool),
         observer_disable_response_storage=_env("PIKAQIU_OBSERVER_DISABLE_RESPONSE_STORAGE", default=True, cast=bool),
+        compression_base_url=_env("PIKAQIU_COMPRESSION_BASE_URL", default=""),
+        compression_api_key=_env("PIKAQIU_COMPRESSION_API_KEY", "OPENAI_API_KEY", default=""),
+        compression_model=_env("PIKAQIU_COMPRESSION_MODEL", default=DEFAULT_COMPRESSION_MODEL),
+        compression_reasoning_effort=_env(
+            "PIKAQIU_COMPRESSION_REASONING_EFFORT",
+            default=DEFAULT_COMPRESSION_REASONING_EFFORT,
+        ),
+        compression_use_responses_api=_env("PIKAQIU_COMPRESSION_USE_RESPONSES_API", default=True, cast=bool),
+        compression_disable_response_storage=_env("PIKAQIU_COMPRESSION_DISABLE_RESPONSE_STORAGE", default=True, cast=bool),
+        compression_timeout_sec=_env(
+            "PIKAQIU_COMPRESSION_TIMEOUT_SEC",
+            default=DEFAULT_COMPRESSION_TIMEOUT_SEC,
+            cast=int,
+        ),
         initial_rounds=_env("PIKAQIU_MAX_ROUNDS", default=4, cast=int),
         initial_commands=_env("PIKAQIU_MAX_COMMANDS_PER_ROUND", default=64, cast=int),
         command_timeout_sec=_env("PIKAQIU_COMMAND_TIMEOUT_SEC", default=300, cast=int),
         stdout_limit=_env("PIKAQIU_STDOUT_LIMIT", default=16000, cast=int),
-        memory_compress_interval=_env("PIKAQIU_MEMORY_COMPRESS_INTERVAL", default=64, cast=int),
+        memory_compress_interval=_env(
+            "PIKAQIU_MEMORY_COMPRESS_INTERVAL",
+            default=DEFAULT_MEMORY_COMPRESS_INTERVAL,
+            cast=int,
+        ),
         knowledge_top_k=_env("PIKAQIU_KNOWLEDGE_TOP_K", default=6, cast=int),
         knowledge_dir=_env("PIKAQIU_KNOWLEDGE_DIR", default="./knowledge"),
         skills_dir=_env("PIKAQIU_SKILLS_DIR", default="./skills"),
@@ -494,10 +553,16 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
     )
     compression_base_url = _env("PIKAQIU_COMPRESSION_BASE_URL", default=compression.get("base_url", ""))
     compression_api_key = _env("PIKAQIU_COMPRESSION_API_KEY", "OPENAI_API_KEY", default=compression.get("api_key", ""))
-    compression_model = _env("PIKAQIU_COMPRESSION_MODEL", default=compression.get("model", ""))
+    compression_model = _env(
+        "PIKAQIU_COMPRESSION_MODEL",
+        default=_default_if_blank(compression.get("model"), DEFAULT_COMPRESSION_MODEL),
+    )
     compression_reasoning_effort = _env(
         "PIKAQIU_COMPRESSION_REASONING_EFFORT",
-        default=compression.get("reasoning_effort", DEFAULT_LLM_REASONING_EFFORT),
+        default=_default_if_blank(
+            compression.get("reasoning_effort"),
+            DEFAULT_COMPRESSION_REASONING_EFFORT,
+        ),
     )
     compression_use_responses_api = _env(
         "PIKAQIU_COMPRESSION_USE_RESPONSES_API",
@@ -551,7 +616,11 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
         compression_reasoning_effort=compression_reasoning_effort,
         compression_use_responses_api=compression_use_responses_api,
         compression_disable_response_storage=compression_disable_response_storage,
-        compression_timeout_sec=compression.get("timeout_sec", 60),
+        compression_timeout_sec=_env(
+            "PIKAQIU_COMPRESSION_TIMEOUT_SEC",
+            default=_default_if_blank(compression.get("timeout_sec"), DEFAULT_COMPRESSION_TIMEOUT_SEC),
+            cast=int,
+        ),
         observer_base_url=observer_base_url,
         observer_api_key=observer_api_key,
         observer_model=observer_model,
@@ -566,7 +635,7 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
         context_compress_threshold=ag.get("context_compress_threshold", 80000),
         memory_compress_interval=_env(
             "PIKAQIU_MEMORY_COMPRESS_INTERVAL",
-            default=ag.get("memory_compress_interval", 64),
+            default=ag.get("memory_compress_interval", DEFAULT_MEMORY_COMPRESS_INTERVAL),
             cast=int,
         ),
         knowledge_top_k=ag.get("knowledge_top_k", 6),

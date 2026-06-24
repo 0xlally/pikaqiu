@@ -239,20 +239,21 @@ class LLMClient:
         self._tool_model = self._main_chat_model
         self._tool_model_name = chat_model_name
 
-        # Compression model (cheap/fast model for mid-round context compression)
-        if settings.compression_model:
-            comp_base = (settings.compression_base_url or base_url).rstrip("/")
-            comp_key = settings.compression_api_key or api_key
-            comp_timeout = settings.compression_timeout_sec or 60
+        # Compression model (semantic mid-round context compression).
+        comp_model = settings.get_compression_model()
+        comp_key = settings.get_compression_api_key()
+        if comp_model and comp_key:
+            comp_base = settings.get_compression_base_url().rstrip("/")
+            comp_timeout = settings.get_compression_timeout_sec()
             self._compression_model = _build_chat_model(
-                comp_base, comp_key, settings.compression_model,
+                comp_base, comp_key, comp_model,
                 timeout=comp_timeout, temperature=0.0,
-                reasoning_effort=settings.compression_reasoning_effort,
+                reasoning_effort=settings.get_compression_reasoning_effort(),
                 use_responses_api=settings.compression_use_responses_api,
                 disable_response_storage=settings.compression_disable_response_storage,
             )
-            self._compression_model_name = settings.compression_model
-            logger.info("[llm] Compression model configured: %s", settings.compression_model)
+            self._compression_model_name = comp_model
+            logger.info("[llm] Compression model configured: %s", comp_model)
         else:
             self._compression_model = None
             self._compression_model_name = ""

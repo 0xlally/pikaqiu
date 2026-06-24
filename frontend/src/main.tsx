@@ -245,6 +245,13 @@ const configFields = [
   { key: "observer_api_key", label: "Observer API Key", type: "password", section: "Observer" },
   { key: "observer_model", label: "Observer 模型", type: "text", section: "Observer" },
   { key: "observer_reasoning_effort", label: "Observer 推理强度", type: "text", section: "Observer" },
+  { key: "compression_base_url", label: "压缩模型 API 地址", type: "text", section: "压缩模型" },
+  { key: "compression_api_key", label: "压缩模型 API Key", type: "password", section: "压缩模型" },
+  { key: "compression_model", label: "压缩模型", type: "text", section: "压缩模型" },
+  { key: "compression_reasoning_effort", label: "压缩推理强度", type: "text", section: "压缩模型" },
+  { key: "compression_timeout_sec", label: "压缩超时秒数", type: "number", section: "压缩模型" },
+  { key: "compression_use_responses_api", label: "压缩 Responses API", type: "checkbox", section: "压缩模型" },
+  { key: "compression_disable_response_storage", label: "压缩禁用响应存储", type: "checkbox", section: "压缩模型" },
   { key: "initial_rounds", label: "默认轮数", type: "number", section: "Agent 参数" },
   { key: "initial_commands", label: "每轮命令数", type: "number", section: "Agent 参数" },
   { key: "command_timeout_sec", label: "命令超时秒数", type: "number", section: "Agent 参数" },
@@ -1382,7 +1389,7 @@ function MemoryTab({ detail }: { detail: MissionDetail }) {
           <Brain />
           <div>
             <h2>任务记忆</h2>
-            <p>默认每 64 次主模型调用后，由 Memory Agent 压缩工具输出；可在设置页调整。</p>
+            <p>默认每 32 次主模型调用后，由 Memory Agent 压缩工具输出；可在设置页调整。</p>
           </div>
         </div>
         <div className="memory-headline">
@@ -1673,7 +1680,12 @@ function SettingsPage() {
     setError("");
     setStatus("");
     try {
-      const response = await api.saveConfig(config);
+      const editableConfig = Object.fromEntries(
+        configFields
+          .map((field) => [field.key, config[field.key]] as const)
+          .filter(([, value]) => value !== undefined)
+      ) as Config;
+      const response = await api.saveConfig(editableConfig);
       setConfig(response.config || {});
       if (response.errors && Object.keys(response.errors).length) {
         setError(Object.entries(response.errors).map(([key, value]) => `${key}: ${value}`).join("; "));

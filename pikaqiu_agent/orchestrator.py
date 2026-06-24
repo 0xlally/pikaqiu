@@ -10,7 +10,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from pikaqiu_agent.config import AgentSettings, MAX_AGENT_SLOTS
+from pikaqiu_agent.config import AgentSettings, DEFAULT_MEMORY_COMPRESS_INTERVAL, MAX_AGENT_SLOTS
 from pikaqiu_agent import flag_capture as _flag_capture
 from pikaqiu_agent import experience as _experience
 from pikaqiu_agent.knowledge import KnowledgeIndexer
@@ -1364,7 +1364,7 @@ class OrchestratorManager:
         total_llm_call_count = 0
         last_memory_compressed_llm_count = 0
         last_memory_compressed_tool_index = 0
-        memory_compress_interval = max(1, int(self.settings.memory_compress_interval or 64))
+        memory_compress_interval = max(1, int(self.settings.memory_compress_interval or DEFAULT_MEMORY_COMPRESS_INTERVAL))
 
         start_round = max(1, self.store.get_max_round_no(mission_id) + 1)
         if start_round > max_rounds:
