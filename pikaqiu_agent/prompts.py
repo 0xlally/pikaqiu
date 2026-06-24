@@ -93,22 +93,28 @@ def _build_skill_catalog_section(skill_catalog: list[dict[str, Any]] | None) -> 
     parts = [
         "## Skill Auto-Use Rules",
         (
-            "Skills are specialized SKILL.md instructions. Do not load all skills at startup. "
-            "Observe the current situation, call `skill_search`, then call `activate_skill` "
-            "only when the match is clearly relevant. If the skill is already listed under "
-            "Enabled Skills, apply it directly instead of activating it again."
+            "Skills are specialized SKILL.md instructions. Default to normal reconnaissance and "
+            "target-specific probing first; do not load or search skills at startup. Use skills only "
+            "after you have an explicit runtime signal from target behavior, tool output, source code, "
+            "or memory. If the skill is already listed under Enabled Skills, apply it directly instead "
+            "of activating it again."
         ),
         (
             "Use `skill_read_reference` only after a skill asks for a bundled reference, "
             "dictionary, template, script, or payload note that is needed for the current step."
         ),
         (
+            "Before calling `skill_search`, name the concrete trigger in the query: product/version, "
+            "protocol, file type, framework error, endpoint behavior, parameter oracle, vulnerability "
+            "class, or a failing tool output. Broad guesses such as \"web\", \"login\", \"WordPress\", "
+            "or \"looks like XSS\" are not enough unless paired with observed evidence."
+        ),
+        (
             "Do not rely on hard-coded skill names. Choose skills from the runtime catalog metadata "
-            "and the current evidence only. A good skill_search query should include the concrete "
-            "signal you observed, such as product/version, protocol, vulnerability class, failing "
-            "tool output, file type, authentication/session behavior, or exploitation phase. If "
-            "skill_search returns no clear match, continue with normal tools instead of inventing "
-            "a skill id."
+            "and the current evidence only. Call `activate_skill` only when one returned skill clearly "
+            "matches the observed trigger and the next step needs that workflow. The activation reason "
+            "must cite the exact signal. If the match is weak, generic, or based only on challenge labels, "
+            "continue with normal tools instead of activating or inventing a skill id."
         ),
     ]
 

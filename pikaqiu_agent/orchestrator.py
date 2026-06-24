@@ -1929,8 +1929,9 @@ class OrchestratorManager:
                         messages.append(HumanMessage(content=(
                             "[系统强制提醒] 你已连续输出纯文本而未调用任何工具，这违反了核心规则。"
                             "你是自主agent，没有人在看你的文本输出。"
-                            "立即调用一个工具（bash_exec/python_exec/knowledge_search/skill_search等）继续推进攻击。"
-                            "如果不确定下一步，先用当前证据做一个最小可观测验证，或用 skill_search 检索相关专项流程；"
+                            "立即调用一个工具（bash_exec/python_exec/knowledge_search等）继续推进攻击。"
+                            "如果不确定下一步，先用当前证据做一个最小可观测验证；"
+                            "只有已经观察到明确产品/版本、端点行为、参数oracle、框架报错、文件类型、漏洞类型或工具失败输出时，才用 skill_search 检索相关专项流程；"
                             "需要具体payload时优先用 knowledge_search/searchsploit 查证后再执行。"
                         )))
                     continue

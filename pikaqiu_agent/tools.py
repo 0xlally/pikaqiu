@@ -84,13 +84,21 @@ class SubmitFlagInput(BaseModel):
 
 
 class SkillSearchInput(BaseModel):
-    query: str = Field(description="Current situation, tool output, vulnerability class, or task to match against available skills")
+    query: str = Field(
+        description=(
+            "Concrete observed signal to match against skills, such as product/version, endpoint behavior, "
+            "parameter oracle, framework error, file type, vulnerability class, or failing tool output"
+        )
+    )
     limit: int = Field(default=5, description="Maximum number of matching skills")
 
 
 class ActivateSkillInput(BaseModel):
     skill_id: str = Field(description="Skill id to activate, such as recon, ffuf-skill, or remote-cmd-execution")
-    reason: str = Field(default="", description="Why this skill is relevant now")
+    reason: str = Field(
+        default="",
+        description="Observed runtime signal that makes this skill clearly relevant now; avoid generic labels or guesses",
+    )
 
 
 class SkillReferenceInput(BaseModel):
@@ -241,9 +249,10 @@ def create_skill_search_tool(skills) -> BaseTool:
     def skill_search(query: str, limit: int = 5) -> str:
         """Search available SKILL.md skills by current situation or technique.
 
-        Use before specialized workflows when the situation suggests a reusable
-        skill may exist. This returns metadata only; call activate_skill for the
-        full instructions when a match is clearly relevant.
+        Use only after ordinary reconnaissance produced a concrete runtime signal,
+        such as product/version, framework error, endpoint behavior, parameter
+        oracle, file type, vulnerability class, or failing tool output. This
+        returns metadata only; call activate_skill only for a clear match.
         """
         try:
             limit = max(1, min(int(limit or 5), 20))
@@ -253,7 +262,10 @@ def create_skill_search_tool(skills) -> BaseTool:
                 "query": query,
                 "stats": stats,
                 "results": results,
-                "next_step": "Call activate_skill(skill_id, reason) when a result matches the current situation.",
+                "next_step": (
+                    "Call activate_skill(skill_id, reason) only if one result clearly matches the observed signal. "
+                    "The reason must cite that signal; otherwise continue with normal tools."
+                ),
             }, ensure_ascii=False, indent=2)
         except Exception as exc:
             logger.exception("[skill_search] failed")
@@ -271,8 +283,9 @@ def create_activate_skill_tool(
     def activate_skill(skill_id: str, reason: str = "") -> str:
         """Activate a skill and return its SKILL.md instructions.
 
-        Use only when skill_search or the current situation makes the skill
-        clearly relevant. Do not activate every skill at startup.
+        Use only when a returned skill clearly matches a concrete observed signal
+        and the next step needs that workflow. Do not activate skills from generic
+        guesses, target labels, or startup assumptions.
         """
         try:
             skills.refresh()
@@ -281,7 +294,7 @@ def create_activate_skill_tool(
                 return json.dumps({
                     "ok": False,
                     "error": f"unknown or disabled skill: {skill_id}",
-                    "hint": "Call skill_search with the current situation to find a valid skill id.",
+                    "hint": "Call skill_search with a concrete observed signal to find a valid skill id.",
                 }, ensure_ascii=False, indent=2)
 
             activated_skills: list[str] = []
@@ -308,7 +321,10 @@ def create_activate_skill_tool(
                 "activated_skills": activated_skills,
                 "skill": skill.to_dict(include_prompt=False, include_references=True),
                 "prompt": prompt,
-                "next_step": "Follow this SKILL.md guidance immediately. Use skill_read_reference for listed reference files only when needed.",
+                "next_step": (
+                    "Follow this SKILL.md guidance only for the observed signal cited in reason. "
+                    "Use skill_read_reference for listed reference files only when needed."
+                ),
             }, ensure_ascii=False, indent=2)
         except Exception as exc:
             logger.exception("[activate_skill] failed")

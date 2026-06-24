@@ -356,10 +356,11 @@ class ObserverRuntime:
             "name the current hypothesis, the exact next verification needed, and the failure boundary only if "
             "the evidence truly supports it. Do not map framework/product names to fixed actions.\n\n"
             "When judging whether the main agent route is correct, combine the current evidence with /experience "
-            "best practices. You may search or load experience as needed. If you think the main agent should use "
-            "a skill, search/load skills only for your own judgement, then output a concise skill_signal; "
-            "do not activate it yourself. If you loaded a skill, name the exact skill id and explain the "
-            "activate_skill(...) handoff inside skill_signal."
+            "best practices. You may search or load experience as needed. Recommend a project skill only when "
+            "the observation contains a concrete runtime signal such as product/version, endpoint behavior, "
+            "parameter oracle, framework error, file type, vulnerability class, or failing tool output. Search/load "
+            "skills only for your own judgement, then output a concise skill_signal that names the exact skill id "
+            "and the signal that justifies activate_skill(...). Do not activate it yourself."
         )
 
     def _build_prompt(
@@ -395,8 +396,9 @@ class ObserverRuntime:
             "4. Is the current route consistent with /experience best practices for methodology, mistakes, hunting, "
             "techniques, or WAF bypass?\n"
             "5. Is the main agent repeating weak actions, skipping a stronger lead, or failing to write key findings/leads?\n"
-            "6. Would a project skill help, based on the evidence? If yes, use observer_skill_search/load_skill for "
-            "your own judgement and finish with a concise skill_signal.\n"
+            "6. Is there a concrete runtime signal that justifies a project skill? If yes, use "
+            "observer_skill_search/load_skill for your own judgement and finish with a concise skill_signal naming "
+            "the skill id and signal; if the signal is generic or speculative, leave skill_signal empty.\n"
             "7. Choose one verdict: OK, WATCH, L1, L2, L3, L4, or ENV. Be conservative: WATCH is for mild drift only; "
             "L-level/ENV requires clear evidence that the next action should change.\n"
             "8. For L/ENV verdicts, name the exact next verification action and the raw evidence the main agent must capture.\n\n"
@@ -526,10 +528,6 @@ class ObserverRuntime:
             if ref not in refs:
                 refs.append(ref)
         skill_signal = str(payload.get("skill_signal") or fallback.skill_signal)
-        if used_skills and not skill_signal:
-            skill_signal = (
-                f"建议 activate_skill({used_skills[-1]})，因为 Observer 判断该 skill 与当前证据相关"
-            )
         decision = ObserverDecision(
             verdict=str(payload.get("verdict") or payload.get("conclusion") or fallback.verdict),
             rationale=str(payload.get("rationale") or payload.get("summary") or fallback.rationale),
