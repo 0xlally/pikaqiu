@@ -386,6 +386,12 @@ def _memory_agent_long_term_review_block(memory: dict[str, Any]) -> tuple[str, d
     return block, metadata
 
 
+def _next_memory_compress_due_after(total_llm_call_count: int, interval: int) -> int:
+    interval = max(1, int(interval or DEFAULT_MEMORY_COMPRESS_INTERVAL))
+    total = max(0, int(total_llm_call_count or 0))
+    return ((total // interval) + 1) * interval
+
+
 def _observer_should_inject(decision: ObserverDecision, *, phase: str) -> bool:
     """Keep Observer low-noise: UI/event memory always records it, but main-agent
     injection is reserved for stop-the-line issues or clear stalls."""
@@ -1532,9 +1538,9 @@ class OrchestratorManager:
         missing_tools_seen: set[str] = _missing_tools_from_memory(memory)
         tool_call_log: list[dict[str, Any]] = []
         total_llm_call_count = 0
-        last_memory_compressed_llm_count = 0
         last_memory_compressed_tool_index = 0
         memory_compress_interval = max(1, int(self.settings.memory_compress_interval or DEFAULT_MEMORY_COMPRESS_INTERVAL))
+        next_memory_compress_due = memory_compress_interval
 
         start_round = max(1, self.store.get_max_round_no(mission_id) + 1)
         if start_round > max_rounds:
@@ -1856,8 +1862,8 @@ class OrchestratorManager:
             )
 
             def maybe_compress_memory_due() -> None:
-                nonlocal memory, last_memory_compressed_llm_count, last_memory_compressed_tool_index
-                if total_llm_call_count - last_memory_compressed_llm_count < memory_compress_interval:
+                nonlocal memory, last_memory_compressed_tool_index, next_memory_compress_due
+                if total_llm_call_count < next_memory_compress_due:
                     return
                 new_tool_calls = tool_call_log[last_memory_compressed_tool_index:]
                 if new_tool_calls:
@@ -1871,7 +1877,10 @@ class OrchestratorManager:
                     )
                     missing_tools_seen.update(_missing_tools_from_memory(memory))
                     last_memory_compressed_tool_index = len(tool_call_log)
-                last_memory_compressed_llm_count = total_llm_call_count
+                next_memory_compress_due = _next_memory_compress_due_after(
+                    total_llm_call_count,
+                    memory_compress_interval,
+                )
 
             while llm_call_count < max_tool_calls_per_round:
                 if self.store.should_stop(mission_id):
@@ -1931,7 +1940,7 @@ class OrchestratorManager:
                             "你是自主agent，没有人在看你的文本输出。"
                             "立即调用一个工具（bash_exec/python_exec/knowledge_search等）继续推进攻击。"
                             "如果不确定下一步，先用当前证据做一个最小可观测验证；"
-                            "只有已经观察到明确产品/版本、端点行为、参数oracle、框架报错、文件类型、漏洞类型或工具失败输出时，才用 skill_search 检索相关专项流程；"
+                            "当当前上下文、观察结果、记忆或工具输出已经指向某类专项流程可能有帮助时，再用 skill_search 检索相关 skill；"
                             "需要具体payload时优先用 knowledge_search/searchsploit 查证后再执行。"
                         )))
                     continue

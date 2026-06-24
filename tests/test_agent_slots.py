@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from pikaqiu_agent.config import AgentSettings
-from pikaqiu_agent.orchestrator import OrchestratorManager
+from pikaqiu_agent.config import AgentSettings, DEFAULT_MEMORY_COMPRESS_INTERVAL
+from pikaqiu_agent.orchestrator import OrchestratorManager, _next_memory_compress_due_after
 from pikaqiu_agent.storage import MissionStore
 
 
@@ -155,3 +155,15 @@ def test_memory_compression_helper_records_current_schema(tmp_path):
     events = manager.store.get_events(mission_id)
     memory_events = [event for event in events if event["type"] == "memory_agent"]
     assert memory_events[-1]["metadata"]["reason"] == "8 main LLM calls"
+
+
+def test_memory_compression_due_uses_repeating_configured_interval():
+    interval = DEFAULT_MEMORY_COMPRESS_INTERVAL
+    assert _next_memory_compress_due_after(0, interval) == interval
+    assert _next_memory_compress_due_after(interval - 1, interval) == interval
+    assert _next_memory_compress_due_after(interval, interval) == interval * 2
+    assert _next_memory_compress_due_after(interval * 2 - 1, interval) == interval * 2
+    assert _next_memory_compress_due_after(interval * 2, interval) == interval * 3
+
+    assert _next_memory_compress_due_after(5, 5) == 10
+    assert _next_memory_compress_due_after(10, 5) == 15

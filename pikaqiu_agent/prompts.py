@@ -93,27 +93,28 @@ def _build_skill_catalog_section(skill_catalog: list[dict[str, Any]] | None) -> 
     parts = [
         "## Skill Auto-Use Rules",
         (
-            "Skills are specialized SKILL.md instructions. Default to normal reconnaissance and "
-            "target-specific probing first; do not load or search skills at startup. Use skills only "
-            "after you have an explicit runtime signal from target behavior, tool output, source code, "
-            "or memory. If the skill is already listed under Enabled Skills, apply it directly instead "
-            "of activating it again."
+            "Skills are specialized SKILL.md instructions. Do not load all skills or pick one reflexively "
+            "at startup. Prefer normal reconnaissance when the situation is still generic, but use "
+            "`skill_search` once the task context, early observations, memory, source hints, target behavior, "
+            "or tool output suggests a reusable specialist workflow may help. If the skill is already listed "
+            "under Enabled Skills, apply it directly instead of activating it again."
         ),
         (
             "Use `skill_read_reference` only after a skill asks for a bundled reference, "
             "dictionary, template, script, or payload note that is needed for the current step."
         ),
         (
-            "Before calling `skill_search`, name the concrete trigger in the query: product/version, "
-            "protocol, file type, framework error, endpoint behavior, parameter oracle, vulnerability "
-            "class, or a failing tool output. Broad guesses such as \"web\", \"login\", \"WordPress\", "
-            "or \"looks like XSS\" are not enough unless paired with observed evidence."
+            "Before calling `skill_search`, include the specific basis in the query: product/version, "
+            "protocol, file type, framework error, endpoint behavior, parameter behavior, likely vulnerability "
+            "class, failing tool output, or the mission phase that makes a workflow relevant. A broad label "
+            "alone such as \"web\", \"login\", or \"WordPress\" is weak; pair it with what has actually been "
+            "seen or what decision the skill would help structure."
         ),
         (
             "Do not rely on hard-coded skill names. Choose skills from the runtime catalog metadata "
-            "and the current evidence only. Call `activate_skill` only when one returned skill clearly "
-            "matches the observed trigger and the next step needs that workflow. The activation reason "
-            "must cite the exact signal. If the match is weak, generic, or based only on challenge labels, "
+            "and the current situation. Call `activate_skill` when one returned skill is a good fit for "
+            "the current phase and is likely to improve the next few actions. The activation reason should "
+            "cite the basis for that fit. If the match is weak, generic, or based only on a challenge label, "
             "continue with normal tools instead of activating or inventing a skill id."
         ),
     ]
