@@ -34,8 +34,8 @@ DEFAULT_LLM_API_KEY = ""
 DEFAULT_LLM_MODEL = "gpt-5.5"
 DEFAULT_LLM_REASONING_EFFORT = "xhigh"
 DEFAULT_COMPRESSION_MODEL = DEFAULT_LLM_MODEL
-DEFAULT_COMPRESSION_REASONING_EFFORT = "xhigh"
-DEFAULT_COMPRESSION_TIMEOUT_SEC = 60
+DEFAULT_COMPRESSION_REASONING_EFFORT = "low"
+DEFAULT_COMPRESSION_TIMEOUT_SEC = 180
 DEFAULT_MEMORY_COMPRESS_INTERVAL = 8
 MAX_AGENT_SLOTS = 5
 DEFAULT_SANDBOX_CONTAINERS = tuple(f"pikaqiu-sandbox-{idx}" for idx in range(1, MAX_AGENT_SLOTS + 1))
@@ -145,7 +145,7 @@ class AgentSettings:
     compression_reasoning_effort: str = DEFAULT_COMPRESSION_REASONING_EFFORT
     compression_use_responses_api: bool = True
     compression_disable_response_storage: bool = True
-    compression_timeout_sec: int = 60
+    compression_timeout_sec: int = DEFAULT_COMPRESSION_TIMEOUT_SEC
     # Passive Observer LLM (falls back to main LLM if empty)
     observer_base_url: str = ""
     observer_api_key: str = ""

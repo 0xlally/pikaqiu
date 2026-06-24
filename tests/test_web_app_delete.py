@@ -74,7 +74,7 @@ agent_defaults:
     settings = load_settings(tmp_path)
 
     assert settings.compression_model == "gpt-5.5"
-    assert settings.compression_reasoning_effort == "xhigh"
+    assert settings.compression_reasoning_effort == "low"
     assert settings.memory_compress_interval == 8
     assert settings.get_compression_model() == "gpt-5.5"
 

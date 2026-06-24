@@ -337,6 +337,30 @@ class LLMClient:
         result = self._invoke(self._main_model, prompt, role="memory")
         return self._ensure_memory_payload(result, previous_memory)
 
+    def invoke_memory_compression(self, prompt: str, previous_memory: dict[str, Any]) -> LLMResult | None:
+        """Compress structured mission memory with the dedicated compression model.
+
+        The main model may be configured for high reasoning effort and long tool
+        calls. Memory compression is a smaller JSON rewrite task, so it uses the
+        compression channel instead of falling back to the slow main model.
+        """
+        if self.settings.use_mock_llm:
+            return self._mock_memory(previous_memory)
+        if not self._compression_model:
+            return None
+
+        system = (
+            "你是任务长期记忆压缩器。只根据输入 JSON 合并长期记忆，输出严格 JSON；"
+            "不要解释，不要 Markdown，第一字符必须是 {。"
+        )
+        result = self._invoke(
+            self._compression_model,
+            prompt,
+            role="memory_compression",
+            system=system,
+        )
+        return self._ensure_memory_payload(result, previous_memory)
+
     def invoke_experience_distill(self, prompt: str) -> str:
         """Use the memory model to distill a successful mission into Markdown."""
         if self.settings.use_mock_llm:

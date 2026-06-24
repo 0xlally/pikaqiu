@@ -1,7 +1,19 @@
 from pathlib import Path
+import time
 
-from pikaqiu_agent.config import AgentSettings, DEFAULT_MEMORY_COMPRESS_INTERVAL
-from pikaqiu_agent.orchestrator import OrchestratorManager, _next_memory_compress_due_after
+from pikaqiu_agent.config import (
+    AgentSettings,
+    DEFAULT_COMPRESSION_REASONING_EFFORT,
+    DEFAULT_COMPRESSION_TIMEOUT_SEC,
+    DEFAULT_MEMORY_COMPRESS_INTERVAL,
+)
+from pikaqiu_agent.llm_client import LLMResult
+from pikaqiu_agent.llm_client import LLMClient
+from pikaqiu_agent.orchestrator import (
+    OrchestratorManager,
+    _memory_compression_timeout_sec,
+    _next_memory_compress_due_after,
+)
 from pikaqiu_agent.storage import MissionStore
 
 
@@ -12,6 +24,11 @@ class _DummyKnowledge:
 class _DummyLLM:
     def __init__(self):
         self.memory_calls = 0
+        self.memory_compression_calls = 0
+
+    @property
+    def has_compression_model(self) -> bool:
+        return True
 
     def invoke_memory(self, prompt, previous_memory):
         self.memory_calls += 1
@@ -24,6 +41,76 @@ class _DummyLLM:
                 "dead_ends": [],
                 "credentials": [],
                 "topology": ["browser -> web"],
+            }
+
+        return _Result()
+
+    def invoke_memory_compression(self, prompt, previous_memory):
+        self.memory_compression_calls += 1
+
+        class _Result:
+            payload = {
+                "summary": "compressed by dedicated model",
+                "findings": ["GET /page returned 200"],
+                "leads": ["test reflected input"],
+                "dead_ends": [],
+                "credentials": [],
+                "topology": [],
+            }
+
+        return _Result()
+
+
+class _LooseCompressionLLM(_DummyLLM):
+    def invoke_memory_compression(self, prompt, previous_memory):
+        self.memory_compression_calls += 1
+        return LLMClient._ensure_memory_payload(
+            self,
+            LLMResult(
+                raw_text="只返回自然语言摘要也应被规范化为 memory payload",
+                payload={},
+                used_mock=False,
+            ),
+            previous_memory,
+        )
+
+
+class _SlowMemoryLLM:
+    def __init__(self, delay_sec: float = 0.1) -> None:
+        self.delay_sec = delay_sec
+        self.memory_calls = 0
+
+    @property
+    def has_compression_model(self) -> bool:
+        return True
+
+    def invoke_memory(self, prompt, previous_memory):
+        self.memory_calls += 1
+        time.sleep(self.delay_sec)
+
+        class _Result:
+            payload = {
+                "summary": "late memory should not be stored after timeout",
+                "findings": ["late"],
+                "leads": [],
+                "dead_ends": [],
+                "credentials": [],
+                "topology": [],
+            }
+
+        return _Result()
+
+    def invoke_memory_compression(self, prompt, previous_memory):
+        time.sleep(self.delay_sec)
+
+        class _Result:
+            payload = {
+                "summary": "late compression should not be stored after timeout",
+                "findings": ["late"],
+                "leads": [],
+                "dead_ends": [],
+                "credentials": [],
+                "topology": [],
             }
 
         return _Result()
@@ -111,7 +198,7 @@ def test_agent_slots_report_idle_when_flag_is_captured(tmp_path):
     assert first["captured_flag_count"] == 1
 
 
-def test_memory_compression_helper_records_current_schema(tmp_path):
+def test_memory_compression_helper_records_current_schema_from_compression_model(tmp_path):
     manager = _manager(tmp_path)
     mission_id = manager.store.create_mission(
         name="memory",
@@ -127,7 +214,7 @@ def test_memory_compression_helper_records_current_schema(tmp_path):
     mission = manager.store.get_mission(mission_id)
     before = manager.store.get_memory(mission_id)
 
-    after = manager._compress_memory_from_tool_calls(
+    after, succeeded = manager._compress_memory_from_tool_calls(
         mission_id=mission_id,
         mission=mission,
         memory=before,
@@ -143,18 +230,152 @@ def test_memory_compression_helper_records_current_schema(tmp_path):
         reason="8 main LLM calls",
     )
 
-    assert manager.llm.memory_calls == 1
+    assert succeeded is True
+    assert manager.llm.memory_compression_calls == 1
+    assert manager.llm.memory_calls == 0
     assert after == {
-        "summary": "login endpoint verified",
-        "findings": ["GET /login returned 200"],
-        "leads": ["POST credentials to /login"],
+        "summary": "compressed by dedicated model",
+        "findings": ["GET /page returned 200"],
+        "leads": ["test reflected input"],
         "dead_ends": [],
         "credentials": [],
-        "topology": ["browser -> web"],
+        "topology": [],
     }
     events = manager.store.get_events(mission_id)
     memory_events = [event for event in events if event["type"] == "memory_agent"]
     assert memory_events[-1]["metadata"]["reason"] == "8 main LLM calls"
+
+
+def test_memory_compression_prefers_dedicated_compression_model(tmp_path):
+    manager = _manager(tmp_path)
+    mission_id = manager.store.create_mission(
+        name="memory-fast",
+        target="http://target",
+        goal="capture flag",
+        scope="http://target",
+        domains=["web"],
+        max_rounds=1,
+        max_commands=1,
+        command_timeout_sec=5,
+        model="mock",
+    )
+    mission = manager.store.get_mission(mission_id)
+    before = manager.store.get_memory(mission_id)
+
+    after, succeeded = manager._compress_memory_from_tool_calls(
+        mission_id=mission_id,
+        mission=mission,
+        memory=before,
+        round_no=1,
+        tool_call_log=[
+            {
+                "tool": "bash_exec",
+                "args_summary": "curl -i http://target/page",
+                "result_summary": "HTTP/1.1 200 OK",
+                "exit_code": 0,
+            }
+        ],
+        reason="8 main LLM calls",
+    )
+
+    assert succeeded is True
+    assert manager.llm.memory_compression_calls == 1
+    assert manager.llm.memory_calls == 0
+    assert after["summary"] == "compressed by dedicated model"
+    memory_events = [event for event in manager.store.get_events(mission_id) if event["type"] == "memory_agent"]
+    assert "method=compression_model" in memory_events[-1]["content"]
+
+
+def test_memory_compression_accepts_loose_model_text(tmp_path):
+    manager = OrchestratorManager(
+        settings=_settings(tmp_path),
+        store=MissionStore(":memory:"),
+        knowledge=_DummyKnowledge(),
+        sandbox=_DummySandbox(),
+        llm=_LooseCompressionLLM(),
+    )
+    mission_id = manager.store.create_mission(
+        name="memory-loose",
+        target="http://target",
+        goal="capture flag",
+        scope="http://target",
+        domains=["web"],
+        max_rounds=1,
+        max_commands=1,
+        command_timeout_sec=5,
+        model="mock",
+    )
+    mission = manager.store.get_mission(mission_id)
+    before = manager.store.get_memory(mission_id)
+
+    after, succeeded = manager._compress_memory_from_tool_calls(
+        mission_id=mission_id,
+        mission=mission,
+        memory=before,
+        round_no=1,
+        tool_call_log=[
+            {
+                "tool": "bash_exec",
+                "args_summary": "curl -i http://target/page",
+                "result_summary": "HTTP/1.1 200 OK",
+                "exit_code": 0,
+            }
+        ],
+        reason="8 main LLM calls",
+    )
+
+    assert succeeded is True
+    assert after["summary"] == "只返回自然语言摘要也应被规范化为 memory payload"
+
+
+def test_memory_compression_timeout_is_visible_and_not_success(tmp_path):
+    settings = _settings(tmp_path)
+    settings.llm_timeout_sec = 1
+    settings.compression_timeout_sec = 1
+    manager = OrchestratorManager(
+        settings=settings,
+        store=MissionStore(":memory:"),
+        knowledge=_DummyKnowledge(),
+        sandbox=_DummySandbox(),
+        llm=_SlowMemoryLLM(delay_sec=2.0),
+    )
+    mission_id = manager.store.create_mission(
+        name="memory-timeout",
+        target="http://target",
+        goal="capture flag",
+        scope="http://target",
+        domains=["web"],
+        max_rounds=1,
+        max_commands=1,
+        command_timeout_sec=5,
+        model="mock",
+    )
+    mission = manager.store.get_mission(mission_id)
+    before = manager.store.get_memory(mission_id)
+
+    after, succeeded = manager._compress_memory_from_tool_calls(
+        mission_id=mission_id,
+        mission=mission,
+        memory=before,
+        round_no=1,
+        tool_call_log=[
+            {
+                "tool": "bash_exec",
+                "args_summary": "curl -i http://target/",
+                "result_summary": "HTTP/1.1 200 OK\n<title>Target</title>",
+                "exit_code": 0,
+            }
+        ],
+        reason="8 main LLM calls",
+    )
+
+    assert succeeded is False
+    assert after == before
+    events = manager.store.get_events(mission_id)
+    memory_events = [event for event in events if event["type"] == "memory_agent"]
+    assert memory_events[-1]["title"] == "Memory compression failed (8 main LLM calls)"
+    assert memory_events[-1]["exit_code"] == 1
+    assert "timed out after 1s" in memory_events[-1]["content"]
 
 
 def test_memory_compression_due_uses_repeating_configured_interval():
@@ -167,3 +388,19 @@ def test_memory_compression_due_uses_repeating_configured_interval():
 
     assert _next_memory_compress_due_after(5, 5) == 10
     assert _next_memory_compress_due_after(10, 5) == 15
+
+
+def test_memory_compression_timeout_respects_compression_timeout(tmp_path):
+    settings = _settings(tmp_path)
+    settings.llm_timeout_sec = 240
+    settings.compression_timeout_sec = 180
+
+    assert _memory_compression_timeout_sec(settings) == 180
+
+    settings.llm_timeout_sec = 30
+    assert _memory_compression_timeout_sec(settings) == 30
+
+
+def test_compression_defaults_are_fast_enough_for_memory_rewrite():
+    assert DEFAULT_COMPRESSION_REASONING_EFFORT == "low"
+    assert DEFAULT_COMPRESSION_TIMEOUT_SEC == 180

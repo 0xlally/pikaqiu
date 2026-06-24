@@ -40,15 +40,15 @@ observer:
 
 # 鈹€鈹€鈹€ Compression Model 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 # Dedicated/default model for semantic mid-round context compression.
-# Empty model values fall back to the built-in default; rule fallback is only used if model compression fails.
+# Empty model values fall back to the built-in default; memory compression uses this fast dedicated model path.
 compression:
   base_url: ""
   api_key: ""
   model: "gpt-5.5"
-  reasoning_effort: "xhigh"
+  reasoning_effort: "low"
   use_responses_api: true
   disable_response_storage: true
-  timeout_sec: 60
+  timeout_sec: 180
 
 # 鈹€鈹€鈹€ Agent Defaults 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 agent_defaults:

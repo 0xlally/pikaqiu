@@ -15,7 +15,12 @@ from pikaqiu_agent import flag_capture as _flag_capture
 from pikaqiu_agent import experience as _experience
 from pikaqiu_agent.knowledge import KnowledgeIndexer
 from pikaqiu_agent.llm_client import LLMClient, format_llm_error, is_non_retryable_llm_error
-from pikaqiu_agent.memory import normalize_memory_enhanced, detect_stall, score_importance, retrieve_forgotten_context
+from pikaqiu_agent.memory import (
+    normalize_memory_enhanced,
+    detect_stall,
+    score_importance,
+    retrieve_forgotten_context,
+)
 from pikaqiu_agent.observer import ObserverAgent, ObserverDecision, should_inject_decision
 from pikaqiu_agent.observer_runtime import ObserverRuntime
 from pikaqiu_agent.prompts import (
@@ -131,8 +136,8 @@ def _tool_call_memory_view(tool_call_log: list[dict[str, Any]], *, limit: int = 
     return [
         {
             "tool": row.get("tool"),
-            "args_summary": row.get("args_summary"),
-            "result_summary": row.get("result_summary"),
+            "args_summary": str(row.get("args_summary") or "")[:220],
+            "result_summary": _observer_result_view(str(row.get("result_summary") or ""), limit=280),
             "result_len": row.get("result_len"),
             "exit_code": row.get("exit_code"),
         }
@@ -390,6 +395,12 @@ def _next_memory_compress_due_after(total_llm_call_count: int, interval: int) ->
     interval = max(1, int(interval or DEFAULT_MEMORY_COMPRESS_INTERVAL))
     total = max(0, int(total_llm_call_count or 0))
     return ((total // interval) + 1) * interval
+
+
+def _memory_compression_timeout_sec(settings: AgentSettings) -> int:
+    llm_timeout = max(1, int(settings.llm_timeout_sec or 1))
+    compression_timeout = max(1, int(settings.get_compression_timeout_sec() or 1))
+    return min(llm_timeout, compression_timeout)
 
 
 def _observer_should_inject(decision: ObserverDecision, *, phase: str) -> bool:
@@ -663,36 +674,70 @@ class OrchestratorManager:
         round_no: int,
         tool_call_log: list[dict[str, Any]],
         reason: str,
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], bool]:
         if not tool_call_log:
-            return memory
+            return memory, False
         memory_prompt = build_tool_memory_prompt(
             mission=mission,
             previous_memory=memory,
             round_no=round_no,
             tool_call_log=_tool_call_memory_view(tool_call_log),
         )
-        try:
-            pool = ThreadPoolExecutor(max_workers=1)
-            try:
-                future = pool.submit(self.llm.invoke_memory, memory_prompt, memory)
-                memory_result = future.result(timeout=self.settings.llm_timeout_sec)
-            finally:
-                pool.shutdown(wait=False)
-            new_memory = normalize_memory_enhanced(memory_result.payload, memory)
-        except Exception as mem_err:
-            logger.warning("[orchestrator] memory compression failed: %s", mem_err)
-            return memory
-        self.store.set_memory(mission_id, new_memory)
-        self.store.add_event(
+        timeout_sec = _memory_compression_timeout_sec(self.settings)
+        started = time.monotonic()
+        method = "compression_model"
+        running_event_id = self.store.add_event(
             mission_id=mission_id,
             round_no=round_no,
             event_type="memory_agent",
-            title=f"Memory compression ({reason})",
-            content=_compact_json(new_memory),
-            metadata={"reason": reason, "tool_call_count": len(tool_call_log)},
+            title=f"Memory compression running ({reason})",
+            content=f"tool_call_count={len(tool_call_log)} timeout_sec={timeout_sec} method={method}",
+            metadata={
+                "reason": reason,
+                "tool_call_count": len(tool_call_log),
+                "timeout_sec": timeout_sec,
+                "status": "running",
+                "method": method,
+            },
         )
-        return self.store.get_memory(mission_id)
+        try:
+            if not self.llm.has_compression_model:
+                raise RuntimeError("compression model is not configured")
+            pool = ThreadPoolExecutor(max_workers=1)
+            try:
+                future = pool.submit(self.llm.invoke_memory_compression, memory_prompt, memory)
+                memory_result = future.result(timeout=timeout_sec)
+                if memory_result is None:
+                    raise RuntimeError("compression model returned no usable memory JSON")
+            finally:
+                pool.shutdown(wait=False, cancel_futures=True)
+            new_memory = normalize_memory_enhanced(memory_result.payload, memory)
+        except Exception as mem_err:
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            if isinstance(mem_err, (FutureTimeout, TimeoutError)):
+                error = f"memory compression timed out after {timeout_sec}s"
+            else:
+                error = str(mem_err).strip() or mem_err.__class__.__name__
+            logger.warning("[orchestrator] memory compression failed: %s", error)
+            self.store.finalize_event(
+                running_event_id,
+                event_type="memory_agent",
+                title=f"Memory compression failed ({reason})",
+                content=(
+                    f"{error}\n\nelapsed_ms={elapsed_ms} "
+                    f"tool_call_count={len(tool_call_log)} method={method}"
+                ),
+                exit_code=1,
+            )
+            return memory, False
+        self.store.set_memory(mission_id, new_memory)
+        self.store.finalize_event(
+            running_event_id,
+            event_type="memory_agent",
+            title=f"Memory compression ({reason})",
+            content=f"method={method}\n{_compact_json(new_memory)}",
+        )
+        return self.store.get_memory(mission_id), True
 
     def _record_completion_memory(
         self,
@@ -1867,7 +1912,7 @@ class OrchestratorManager:
                     return
                 new_tool_calls = tool_call_log[last_memory_compressed_tool_index:]
                 if new_tool_calls:
-                    memory = self._compress_memory_from_tool_calls(
+                    memory, memory_compressed = self._compress_memory_from_tool_calls(
                         mission_id=mission_id,
                         mission=mission,
                         memory=memory,
@@ -1876,7 +1921,8 @@ class OrchestratorManager:
                         reason=f"{memory_compress_interval} main LLM calls",
                     )
                     missing_tools_seen.update(_missing_tools_from_memory(memory))
-                    last_memory_compressed_tool_index = len(tool_call_log)
+                    if memory_compressed:
+                        last_memory_compressed_tool_index = len(tool_call_log)
                 next_memory_compress_due = _next_memory_compress_due_after(
                     total_llm_call_count,
                     memory_compress_interval,

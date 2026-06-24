@@ -370,7 +370,7 @@ def build_tool_memory_prompt(
 ) -> str:
     """Build memory compression prompt for tool-use architecture."""
     return f"""\
-你是 MemoryAgent。你的任务是把本轮工具活动压缩成任务长期记忆。
+你是 MemoryAgent。你的任务是把本轮工具活动合并进任务长期记忆。
 
 规则：
 - 只保留后续利用、验证和复盘有价值的信息，去重并压缩。
@@ -384,6 +384,7 @@ def build_tool_memory_prompt(
 - topology 只在重要时记录已观察到的网络、服务或依赖关系。
 - 不要把本地沙箱行为误写成目标事实。
 - 如果没有新增发现，保留已有记忆中仍有价值的内容。
+- 不要复述完整工具输出，不要展开长 HTML/日志，只抽取决定下一步的事实。
 - 返回严格 JSON，第一字符必须是 {{。
 
 任务：
@@ -392,7 +393,7 @@ def build_tool_memory_prompt(
 上一版记忆：
 {_json(previous_memory)}
 
-最近工具调用：
+最近工具调用（已截断，只保留关键片段）：
 {_json(tool_call_log[-30:])}
 
 返回 JSON：
