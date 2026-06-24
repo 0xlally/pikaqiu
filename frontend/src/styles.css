@@ -480,6 +480,7 @@ pre {
 
 .mini-event {
   display: grid;
+  min-width: 0;
   gap: 6px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
@@ -489,6 +490,8 @@ pre {
 
 .mini-event strong {
   font-size: 13px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .mini-event small {
@@ -1333,6 +1336,7 @@ select:focus {
 
 .brief-item {
   min-height: 92px;
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
@@ -1350,11 +1354,14 @@ select:focus {
 .brief-item p {
   color: var(--text);
   font-size: 13px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .brief-item.mono p {
   font-family: var(--font-mono);
   font-size: 12px;
+  white-space: pre-wrap;
 }
 
 .flag-stack,
@@ -1450,7 +1457,9 @@ select:focus {
 .trace-card summary strong {
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .trace-card summary small {
@@ -1689,6 +1698,8 @@ select:focus {
   color: var(--text);
   font-size: 12px;
   line-height: 1.52;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .observer-info.mono p {
@@ -1876,9 +1887,12 @@ select:focus {
   color: var(--text);
   font-size: 17px;
   padding-left: 12px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .memory-list-card {
+  min-width: 0;
   padding: 16px;
 }
 
@@ -1896,12 +1910,16 @@ select:focus {
 }
 
 .smart-list li {
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
   color: var(--text);
   padding: 9px;
   line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: pre-wrap;
 }
 
 .muted {
