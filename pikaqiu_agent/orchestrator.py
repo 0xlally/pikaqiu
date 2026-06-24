@@ -177,7 +177,6 @@ def _infer_tool_exit_code(result_str: str, display_cmd: str = "") -> int:
         "[tool error]",
         "[unknown tool:",
         "[knowledge_search error]",
-        "[search_cve error]",
         "[skill_read_reference error]",
     )
     if any(marker in lowered for marker in error_markers):
@@ -906,7 +905,7 @@ class OrchestratorManager:
             return (
                 f"[连续 {stall_rounds} 轮无新发现]\n"
                 "请**重新评估攻击方向**，选择一个全新的思路。\n"
-                "如果不确定该尝试什么，回到已验证证据，优先用 knowledge_search/search_cve/searchsploit 或最小可观测探针推进。"
+                "如果不确定该尝试什么，回到已验证证据，优先用 knowledge_search/searchsploit 或最小可观测探针推进。"
             )
         if round_no == 1:
             return f"开始第 {round_no} 轮渗透。目标: {target}。"
@@ -1760,9 +1759,9 @@ class OrchestratorManager:
                         messages.append(HumanMessage(content=(
                             "[系统强制提醒] 你已连续输出纯文本而未调用任何工具，这违反了核心规则。"
                             "你是自主agent，没有人在看你的文本输出。"
-                            "立即调用一个工具（bash_exec/python_exec/knowledge_search/search_cve/skill_search等）继续推进攻击。"
+                            "立即调用一个工具（bash_exec/python_exec/knowledge_search/skill_search等）继续推进攻击。"
                             "如果不确定下一步，先用当前证据做一个最小可观测验证，或用 skill_search 检索相关专项流程；"
-                            "需要具体payload时优先用 knowledge_search/search_cve/searchsploit 查证后再执行。"
+                            "需要具体payload时优先用 knowledge_search/searchsploit 查证后再执行。"
                         )))
                     continue
                 consecutive_no_tool = 0

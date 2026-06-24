@@ -39,7 +39,6 @@ export type KnowledgeStats = {
   total_docs?: number;
   total_chunks?: number;
   domains?: Record<string, number>;
-  cve_poc_entries?: number;
   rag?: {
     available?: boolean;
     error?: string;

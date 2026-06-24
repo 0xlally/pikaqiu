@@ -79,17 +79,6 @@ class WebFetchInput(BaseModel):
     timeout: int = Field(default=20, description="Timeout in seconds, capped by command timeout")
 
 
-class CVESearchInput(BaseModel):
-    product: str = Field(default="", description="Product name (e.g., 'thinkphp', 'shiro', 'weblogic', 'tomcat', 'spring', 'fastjson', 'redis', '致远OA', '泛微OA')")
-    version: str = Field(default="", description="Target version (e.g., '5.0.23', '1.2.4'). Used for version-range matching.")
-    cve_id: str = Field(default="", description="CVE ID (e.g., 'CVE-2021-44228')")
-    vuln_type: str = Field(default="", description="Vulnerability type filter: rce, sqli, xss, ssrf, ssti, deserialization, file_upload, lfi, auth_bypass, unauth, info_leak, privesc")
-    keyword: str = Field(default="", description="Free-text keyword search in title/description")
-    limit: int = Field(default=8, description="Max results")
-
-
-
-
 class SubmitFlagInput(BaseModel):
     flag: str = Field(description="The captured flag string (e.g. flag{...} or CTF{...})")
 
@@ -226,8 +215,8 @@ def create_knowledge_tool(knowledge, top_k: int = 3) -> BaseTool:
     @tool("knowledge_search", args_schema=KnowledgeSearchInput)
     def knowledge_search(query: str, limit: int = top_k) -> str:
         """Search the offline cybersecurity knowledge base.
-        Contains HackTricks, PayloadsAllTheThings, CVE database with PoCs, pentest cheatsheets.
-        Use for payloads, CVE details, and exploitation techniques.
+        Contains payload references, technique notes, and pentest cheatsheets.
+        Use for payloads, vulnerability background, and exploitation techniques.
         Returns full document content for each match.
         """
         try:
@@ -245,93 +234,6 @@ def create_knowledge_tool(knowledge, top_k: int = 3) -> BaseTool:
         except Exception as e:
             return f"[knowledge_search error] {e}"
     return knowledge_search
-
-
-def create_cve_search_tool(store) -> BaseTool:
-    @tool("search_cve", args_schema=CVESearchInput)
-    def search_cve(
-        product: str = "",
-        version: str = "",
-        cve_id: str = "",
-        vuln_type: str = "",
-        keyword: str = "",
-        limit: int = 8,
-    ) -> str:
-        """Search the CVE/POC database for known vulnerabilities.
-        Use when you identify a specific product+version and need matching CVEs/exploits.
-        Examples:
-          search_cve(product="thinkphp", version="5.0.23")
-          search_cve(product="shiro")
-          search_cve(cve_id="CVE-2021-44228")
-          search_cve(product="weblogic", vuln_type="deserialization")
-          search_cve(product="redis", version="5.0.5")
-        """
-        try:
-            results = store.search_cve_poc(
-                product=product,
-                version=version,
-                cve_id=cve_id,
-                vuln_type=vuln_type,
-                keyword=keyword,
-                limit=limit,
-            )
-            if not results:
-                parts = []
-                if product:
-                    parts.append(f"product={product}")
-                if version:
-                    parts.append(f"version={version}")
-                if cve_id:
-                    parts.append(f"cve={cve_id}")
-                if vuln_type:
-                    parts.append(f"type={vuln_type}")
-                if keyword:
-                    parts.append(f"keyword={keyword}")
-                return f"[search_cve] No matches for: {', '.join(parts) or 'empty query'}"
-
-            formatted = []
-            for item in results:
-                lines = []
-                title = item.get("title", "untitled")
-                cve = item.get("cve_id", "")
-                prod = item.get("product", "")
-                ver = item.get("version_info", "")
-                vtype = item.get("vuln_type", "")
-
-                header = f"### {title}"
-                if cve:
-                    header += f" [{cve}]"
-                lines.append(header)
-
-                meta_parts = []
-                if prod:
-                    meta_parts.append(f"Product: {prod}")
-                if ver:
-                    meta_parts.append(f"Version: {ver}")
-                if vtype:
-                    meta_parts.append(f"Type: {vtype}")
-                if meta_parts:
-                    lines.append(" | ".join(meta_parts))
-
-                poc_path = item.get("poc_path", "")
-                poc_url = item.get("poc_url", "")
-                poc_content = item.get("poc_content", "")
-                if poc_path:
-                    lines.append(f"POC: {poc_path} (local)")
-                elif poc_url:
-                    lines.append(f"Ref: {poc_url}")
-
-                if poc_content:
-                    # Truncate very long content to keep response manageable
-                    if len(poc_content) > 8000:
-                        poc_content = poc_content[:8000] + "\n... [truncated]"
-                    lines.append(f"--- POC Content ---\n{poc_content}")
-
-                formatted.append("\n".join(lines))
-            return "\n---\n".join(formatted)
-        except Exception as e:
-            return f"[search_cve error] {e}"
-    return search_cve
 
 
 def create_skill_search_tool(skills) -> BaseTool:
@@ -531,8 +433,6 @@ def create_all_tools(
     ]
     if knowledge:
         tools.append(create_knowledge_tool(knowledge, top_k=knowledge_top_k))
-    if store:
-        tools.append(create_cve_search_tool(store))
     if skills:
         tools.extend([
             create_skill_search_tool(skills),

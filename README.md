@@ -278,7 +278,6 @@ curl http://127.0.0.1:8001/api/skills
 - 目录递归索引
 - ZIP 包自动解压和索引
 - RAG / FTS 检索
-- `cve-poc-index.json` 结构化 CVE / PoC 检索
 - `.pikaqiu_agent/experience_distilled/` 中已经人工批准的成功经验
 
 前端的知识库页调用：
@@ -286,7 +285,6 @@ curl http://127.0.0.1:8001/api/skills
 ```text
 GET /api/knowledge/search
 POST /api/knowledge/reindex
-GET /api/knowledge/cve-search
 GET /api/experience/crafts
 GET /api/experience/crafts/<craft_id>
 POST /api/experience/crafts/<craft_id>/approve

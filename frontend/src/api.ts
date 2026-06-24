@@ -116,15 +116,6 @@ export const api = {
     const params = new URLSearchParams({ q: query, limit: String(limit) });
     return requestJson<{ items: KnowledgeItem[] }>(`/api/knowledge/search?${params.toString()}`);
   },
-  cveSearch: (query: { product?: string; version?: string; cve_id?: string; vuln_type?: string; keyword?: string }) => {
-    const params = new URLSearchParams();
-    Object.entries(query).forEach(([key, value]) => {
-      if (value) params.set(key, value);
-    });
-    return requestJson<{ items: unknown[]; stats: Record<string, unknown> }>(
-      `/api/knowledge/cve-search?${params.toString()}`
-    );
-  },
   reindexKnowledge: () =>
     requestJson<{ ok: boolean; knowledge: Record<string, unknown> }>("/api/knowledge/reindex", {
       method: "POST"

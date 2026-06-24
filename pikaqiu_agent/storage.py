@@ -59,65 +59,6 @@ def _duration_seconds(started_at: str | None, ended_at: str | None) -> int | Non
     return max(0, int(round((end - start).total_seconds())))
 
 
-def _parse_version_tuple(ver_str: str) -> tuple[int, ...]:
-    """Parse a version string like '5.0.23' into (5, 0, 23)."""
-    parts = re.findall(r"\d+", ver_str.split("-")[0].strip())
-    return tuple(int(p) for p in parts) if parts else ()
-
-
-def _score_version_part(part: str, target: tuple[int, ...], target_raw: str) -> float | None:
-    # Exact version mentioned
-    if target_raw in part:
-        return 1.0
-
-    # Range: "5.0.0-5.0.24"
-    range_match = re.match(r"(\d+(?:\.\d+)+)\s*-\s*(\d+(?:\.\d+)+)", part)
-    if range_match:
-        low = _parse_version_tuple(range_match.group(1))
-        high = _parse_version_tuple(range_match.group(2))
-        if low and high and low <= target <= high:
-            return 1.0
-        if low and high:
-            return 0.1
-        return None
-
-    # Comparison: "<=5.0.5", "<5.0.5", ">=3.0", ">3.0"
-    cmp_match = re.match(r"([<>]=?)\s*(\d+(?:\.\d+)+)", part)
-    if cmp_match:
-        op = cmp_match.group(1)
-        ver = _parse_version_tuple(cmp_match.group(2))
-        if not ver:
-            return None
-        if op == "<=" and target <= ver:
-            return 1.0
-        if op == "<" and target < ver:
-            return 1.0
-        if op == ">=" and target >= ver:
-            return 0.9
-        if op == ">" and target > ver:
-            return 0.9
-        return 0.1
-
-    # Wildcard: "5.x"
-    wild_match = re.match(r"(\d+)\.x", part)
-    if wild_match:
-        major = int(wild_match.group(1))
-        if target and target[0] == major:
-            return 0.9
-        return 0.1
-
-    single_ver = _parse_version_tuple(part)
-    if not single_ver:
-        return None
-    if single_ver == target:
-        return 1.0
-    if len(single_ver) >= 2 and len(target) >= 2 and single_ver[:2] == target[:2]:
-        return 0.7
-    if single_ver and target and single_ver[0] == target[0]:
-        return 0.5
-    return None
-
-
 def _knowledge_relevance_score(row: dict[str, Any], tokens: list[str], body_limit: int) -> float:
     title_lower = (row.get("title") or "").lower()
     body_lower = (row.get("body") or row.get("snippet") or "").lower()[:body_limit]
@@ -127,67 +68,6 @@ def _knowledge_relevance_score(row: dict[str, Any], tokens: list[str], body_limi
     source = (row.get("source") or "").lower()
     source_boost = 2.0 if "pentest-wiki" in source else 0.0
     return hit_count + title_hits * 0.5 + source_boost
-
-
-def _build_cve_search_conditions(
-    *,
-    product: str,
-    cve_id: str,
-    vuln_type: str,
-    keyword: str,
-) -> tuple[list[str], list[Any]]:
-    conditions: list[str] = []
-    params: list[Any] = []
-
-    if cve_id:
-        conditions.append("cve_id LIKE ?")
-        params.append(f"%{cve_id.upper().strip()}%")
-
-    if product:
-        conditions.append("product LIKE ?")
-        params.append(f"%{product.lower().strip()}%")
-
-    if vuln_type:
-        conditions.append("vuln_type LIKE ?")
-        params.append(f"%{vuln_type.lower().strip()}%")
-
-    if keyword:
-        kw = keyword.strip()
-        conditions.append("(title LIKE ? OR description LIKE ?)")
-        params.extend([f"%{kw}%", f"%{kw}%"])
-
-    return conditions, params
-
-
-def _version_match_score(version_info: str, target: tuple[int, ...], target_raw: str) -> float:
-    """Score how well a CVE's version_info matches the target version.
-
-    Returns 0.0-1.0:
-      1.0 = definite match (target in range)
-      0.5 = possible match (can't determine, or no version info)
-      0.0 = definite mismatch (target outside range)
-    """
-    if not version_info:
-        return 0.5  # No version info → might match
-    if not target:
-        return 0.5
-
-    info = version_info.lower().strip()
-    best_score = 0.3  # Default: has version info but doesn't match well
-
-    for part in info.split(","):
-        part = part.strip()
-        if not part:
-            continue
-
-        part_score = _score_version_part(part, target, target_raw)
-        if part_score is None:
-            continue
-        if part_score >= 0.9:
-            return part_score
-        best_score = max(best_score, part_score)
-
-    return best_score
 
 
 class MissionStore:
@@ -342,24 +222,6 @@ class MissionStore:
                   tokenize='unicode61'
                 );
 
-                CREATE TABLE IF NOT EXISTS cve_poc_index (
-                  id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  cve_id TEXT,
-                  product TEXT NOT NULL,
-                  version_info TEXT,
-                  vuln_type TEXT,
-                  title TEXT NOT NULL,
-                  description TEXT NOT NULL,
-                  poc_path TEXT,
-                  poc_url TEXT,
-                  category TEXT,
-                  has_local_poc INTEGER DEFAULT 0,
-                  poc_content TEXT DEFAULT ''
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_cve_product ON cve_poc_index(product);
-                CREATE INDEX IF NOT EXISTS idx_cve_id ON cve_poc_index(cve_id);
-                CREATE INDEX IF NOT EXISTS idx_cve_vuln ON cve_poc_index(vuln_type);
                 CREATE INDEX IF NOT EXISTS idx_events_mission ON events(mission_id);
                 CREATE INDEX IF NOT EXISTS idx_experiment_records_updated ON experiment_records(updated_at);
                 CREATE INDEX IF NOT EXISTS idx_human_guidance_mission ON human_guidance(mission_id, id);
@@ -387,11 +249,6 @@ class MissionStore:
             # Migration: add per-mission human collaboration toggle
             try:
                 self._conn.execute("ALTER TABLE missions ADD COLUMN human_collab_enabled INTEGER NOT NULL DEFAULT 0")
-            except sqlite3.OperationalError:
-                pass  # Column already exists
-            # Migration: add poc_content column to cve_poc_index
-            try:
-                self._conn.execute("ALTER TABLE cve_poc_index ADD COLUMN poc_content TEXT DEFAULT ''")
             except sqlite3.OperationalError:
                 pass  # Column already exists
             self._rebuild_memories_table_if_needed()
@@ -1356,15 +1213,9 @@ class MissionStore:
             rows = self._conn.execute(
                 "SELECT domain, COUNT(*) AS n FROM knowledge_docs GROUP BY domain ORDER BY n DESC"
             ).fetchall()
-            cve_total = 0
-            try:
-                cve_total = self._conn.execute("SELECT COUNT(*) AS n FROM cve_poc_index").fetchone()["n"]
-            except sqlite3.OperationalError:
-                pass
         return {
             "total_docs": total,
             "domains": {row["domain"]: row["n"] for row in rows},
-            "cve_poc_entries": cve_total,
         }
 
     def get_knowledge_doc(self, doc_id: int) -> dict[str, Any] | None:
@@ -1401,132 +1252,6 @@ class MissionStore:
                 (source, path),
             ).fetchone()
         return int(row["id"]) if row else None
-
-    # ── CVE POC Index Methods ────────────────────────────────────────────
-
-    def replace_cve_index(self, entries: Iterable[dict[str, Any]]) -> int:
-        """Replace all entries in cve_poc_index table."""
-        with self._lock, self._conn:
-            self._conn.execute("DELETE FROM cve_poc_index")
-            count = 0
-            for entry in entries:
-                products = entry.get("products", [])
-                cve_ids = entry.get("cve_ids", [])
-                vuln_types = entry.get("vuln_types", [])
-                # Create one row per product (or one with empty product if none)
-                product_list = products if products else [""]
-                cve_str = ",".join(cve_ids)
-                vuln_str = ",".join(vuln_types)
-                for product in product_list:
-                    self._conn.execute(
-                        """
-                        INSERT INTO cve_poc_index(
-                            cve_id, product, version_info, vuln_type,
-                            title, description, poc_path, poc_url,
-                            category, has_local_poc, poc_content
-                        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            cve_str,
-                            product,
-                            entry.get("version_info", ""),
-                            vuln_str,
-                            entry.get("title", ""),
-                            entry.get("description", ""),
-                            entry.get("poc_path", ""),
-                            entry.get("poc_url", ""),
-                            entry.get("category", ""),
-                            1 if entry.get("has_local_poc") else 0,
-                            entry.get("poc_content", ""),
-                        ),
-                    )
-                    count += 1
-        return count
-
-    def search_cve_poc(
-        self,
-        product: str = "",
-        version: str = "",
-        cve_id: str = "",
-        vuln_type: str = "",
-        keyword: str = "",
-        limit: int = 10,
-    ) -> list[dict[str, Any]]:
-        """Two-layer CVE search: product/CVE filter → version ranking.
-
-        Args:
-            product: Product name (e.g., "thinkphp", "shiro", "weblogic")
-            version: Target version for matching (e.g., "5.0.23")
-            cve_id: CVE ID to search (e.g., "CVE-2021-44228")
-            vuln_type: Vulnerability type filter (e.g., "rce", "sqli")
-            keyword: Free-text keyword search in title/description
-            limit: Max results to return
-        """
-        conditions, params = _build_cve_search_conditions(
-            product=product,
-            cve_id=cve_id,
-            vuln_type=vuln_type,
-            keyword=keyword,
-        )
-
-        if not conditions:
-            return []
-
-        where = " AND ".join(conditions)
-        fetch_limit = limit * 3  # Fetch extra for version filtering
-        params.append(fetch_limit)
-
-        try:
-            with self._lock:
-                rows = self._conn.execute(
-                    f"""
-                    SELECT id, cve_id, product, version_info, vuln_type,
-                           title, description, poc_path, poc_url,
-                           category, has_local_poc, poc_content
-                    FROM cve_poc_index
-                    WHERE {where}
-                    LIMIT ?
-                    """,
-                    params,
-                ).fetchall()
-        except sqlite3.OperationalError:
-            rows = []
-
-        results = [dict(row) for row in rows]
-
-        if not version or not results:
-            # No version to filter — rank by relevance heuristics
-            results.sort(key=lambda r: (r.get("has_local_poc", 0), bool(r.get("cve_id"))), reverse=True)
-            return results[:limit]
-
-        # Version-aware scoring
-        target_ver = _parse_version_tuple(version)
-        scored: list[tuple[float, dict[str, Any]]] = []
-        for row in results:
-            score = _version_match_score(row.get("version_info", ""), target_ver, version)
-            scored.append((score, row))
-        scored.sort(key=lambda x: x[0], reverse=True)
-        return [row for _, row in scored[:limit]]
-
-    def get_cve_index_stats(self) -> dict[str, Any]:
-        """Get stats about the CVE POC index."""
-        with self._lock:
-            try:
-                total = self._conn.execute("SELECT COUNT(*) AS n FROM cve_poc_index").fetchone()["n"]
-                products = self._conn.execute(
-                    "SELECT product, COUNT(*) AS n FROM cve_poc_index WHERE product != '' "
-                    "GROUP BY product ORDER BY n DESC LIMIT 20"
-                ).fetchall()
-                with_cve = self._conn.execute(
-                    "SELECT COUNT(*) AS n FROM cve_poc_index WHERE cve_id != ''"
-                ).fetchone()["n"]
-            except sqlite3.OperationalError:
-                return {"total": 0, "products": {}, "with_cve": 0}
-        return {
-            "total": total,
-            "products": {row["product"]: row["n"] for row in products},
-            "with_cve": with_cve,
-        }
 
     def _query_tokens(self, query: str) -> list[str]:
         seen: set[str] = set()

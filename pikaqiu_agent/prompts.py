@@ -234,7 +234,7 @@ def build_tool_system_prompt(
         (
             "## 沙箱约束\n"
             "Kali Linux Docker（host网络），可监听端口，**允许访问外网**。"
-            "需要公开资料时，优先用 `search_cve`、`knowledge_search`、`searchsploit`；已有明确URL时再用 `web_fetch` 抓取正文。\n"
+            "需要公开资料时，优先用 `knowledge_search`、`searchsploit`；已有明确URL时再用 `web_fetch` 抓取正文。\n"
             "⚠️ **非交互式**：每次bash_exec/python_exec是独立docker exec，执行完即退出。"
             "无法给运行中进程追加输入。后台进程(`nohup &`)可存活但无法交互stdin。"
             "**每次python_exec是独立进程**——变量/session/cookies不保留。"
@@ -260,7 +260,6 @@ def build_tool_system_prompt(
             "- **python_exec**: Python代码（独立进程，不保存状态）\n"
             "- **web_fetch**: 抓取已知公开URL并提取正文；优先抓官方公告、NVD、Exploit-DB、GitHub PoC、厂商文档\n"
             "- **knowledge_search**: 离线渗透知识库（2-4个核心关键词）\n"
-            "- **search_cve**: CVE/POC库，**产品名+版本号**匹配。例：`search_cve(product=\"thinkphp\", version=\"5.0.23\")`\n"
             "- **skill_search**: 在进入专项流程前检索可用 SKILL.md 元数据\n"
             "- **activate_skill**: 只在命中明确时加载一个相关 skill，并持久化到当前任务\n"
             "- **skill_read_reference**: 仅在已激活 skill 需要引用附带文件时读取\n"
@@ -270,7 +269,7 @@ def build_tool_system_prompt(
         ),
         (
             "## 工具选择速查\n"
-            "- **Web发现/参数/漏洞**：先用 `curl`/浏览器响应确认具体入口、状态码、参数和差异；只有已有明确输入点或候选路径时，才用 `ffuf`/`arjun`/`nuclei`/`sqlmap` 做小范围验证。识别到 WordPress/CMS 时，先用 `wpscan --url http://TARGET --enumerate vp,vt,u --plugins-detection aggressive --no-update` 做最小枚举；XSS/DOM/JS 执行类问题需要运行时证据，具体工具按当前环境和已激活 skill 选择；产品版本漏洞先 `search_cve` / `searchsploit`。\n"
+            "- **Web发现/参数/漏洞**：先用 `curl`/浏览器响应确认具体入口、状态码、参数和差异；只有已有明确输入点或候选路径时，才用 `ffuf`/`arjun`/`nuclei`/`sqlmap` 做小范围验证。识别到 WordPress/CMS 时，先用 `wpscan --url http://TARGET --enumerate vp,vt,u --plugins-detection aggressive --no-update` 做最小枚举；XSS/DOM/JS 执行类问题需要运行时证据，具体工具按当前环境和已激活 skill 选择；产品版本漏洞先 `knowledge_search` / `searchsploit`。\n"
             "- **端口/内网探测**：单目标服务识别用 `nmap -sV -sC`；内网网段快速发现用 `fscan`；发现私网IP后优先结合隧道再访问内网Web。\n"
             "- **SMB/AD枚举**：SMB共享和凭据验证用 `netexec`、`smbmap`；LDAP/域对象用 `ldapdomaindump`、`powerview`；Kerberos用户枚举/喷洒用 `kerbrute`。\n"
             "- **Kerberos/ADCS/Relay**：ASREPRoast用 `asreproast`/`impacket-GetNPUsers`；Kerberoast用 `impacket-GetUserSPNs`；ADCS用 `certipy-ad`；NTLM relay用 `impacket-ntlmrelayx`；强制认证链用 `coercer`、`mitm6`、`PetitPotam`、`printerbug`、`DFSCoerce`、`ShadowCoerce`。\n"
@@ -326,7 +325,7 @@ def build_tool_system_prompt(
             "## 核心原则\n"
             "1. **聚焦攻击面**：充分了解环境后，判断最可能导向flag的功能入口，专注深入，不广撒网\n"
             "2. **漏洞坚持**：发现漏洞迹象后持续深挖；如果连续失败/重复/不确定是否跑偏，回到可观测证据做最小验证；Observer 会按周期被动审核并注入纠偏建议\n"
-            "3. **先查资料再攻击**：识别产品+版本→先 `search_cve`；识别漏洞类型→`knowledge_search`；bash可用`searchsploit`，WordPress/CMS 用 `wpscan` 做定向枚举；已有明确公开URL时用 `web_fetch` 抓正文。**不要凭记忆构造payload**\n"
+            "3. **先查资料再攻击**：识别产品+版本→先 `knowledge_search` / `searchsploit`；识别漏洞类型→`knowledge_search`；WordPress/CMS 用 `wpscan` 做定向枚举；已有明确公开URL时用 `web_fetch` 抓正文。**不要凭记忆构造payload**\n"
             "4. **Session管理**：python_exec无跨调用会话——每次脚本内完成登录→操作。有注册页面直接注册新号。操作cookie前先`Session().get(target)`获取全部cookie，只替换目标cookie保留其余\n"
             "5. **遇阻先调试**：获取原始信息（状态码/响应头/响应体/错误栈），确认问题本质后再决策\n"
             "6. **系统性绕过**：确认过滤机制后，先枚举过滤规则（测哪些字符被拦哪些没），再构造绕过\n"

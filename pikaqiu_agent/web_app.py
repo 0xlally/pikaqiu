@@ -508,22 +508,6 @@ def create_app(runtime: AppRuntime | None = None) -> Flask:
             "items": rt().knowledge.search(q, domains=domains or None, limit=limit)
         })
 
-    @app.route("/api/knowledge/cve-search")
-    def api_cve_search():
-        product = request.args.get("product", "")
-        version = request.args.get("version", "")
-        cve_id = request.args.get("cve_id", "")
-        vuln_type = request.args.get("vuln_type", "")
-        keyword = request.args.get("keyword", "")
-        limit = _clamp_int(request.args.get("limit", "10"), 10, minimum=1, maximum=100)
-        return jsonify({
-            "items": rt().store.search_cve_poc(
-                product=product, version=version, cve_id=cve_id,
-                vuln_type=vuln_type, keyword=keyword, limit=limit,
-            ),
-            "stats": rt().store.get_cve_index_stats(),
-        })
-
     @app.route("/api/knowledge/doc")
     def api_knowledge_doc():
         raw_id = request.args.get("id", "").strip()

@@ -47,14 +47,12 @@ SKILL_ERROR_RE = re.compile(
 SCOPE_SAFE_TOOLS = {
     "web_fetch",
     "knowledge_search",
-    "search_cve",
     "skill_search",
     "activate_skill",
     "skill_read_reference",
 }
 EVIDENCE_AUDIT_EXEMPT_TOOLS = {
     "knowledge_search",
-    "search_cve",
     "skill_search",
     "activate_skill",
     "skill_read_reference",
@@ -187,7 +185,7 @@ STRONG_EVIDENCE_RULES = (
         re.compile(r"\bCVE-\d{4}-\d{4,7}\b|(?:wordpress|drupal|joomla|next\.js|flask|django|apache|nginx)[^\n]{0,80}\b\d+\.\d+(?:\.\d+)?", re.I),
         "产品/版本或 CVE 线索已足够具体",
         (
-            "围绕产品版本/CVE 做定向验证：先查本地 search_cve/knowledge，再用一个最小 PoC 验证决定性响应；"
+            "围绕产品版本/CVE 做定向验证：先查本地 knowledge_search/searchsploit，再用一个最小 PoC 验证决定性响应；"
             "不要继续泛扫无关端点。"
         ),
         "保留版本来源、CVE/PoC 来源、最小验证请求和原始响应差异。",
@@ -610,7 +608,7 @@ class ObserverAgent:
             evidence=[f"命令中出现疑似越界主机：{risky[0]}"],
             guidance=(
                 f"停止用执行工具访问 `{risky[0]}`。回到范围内目标 `{target}`。"
-                "公开资料抓取只能在已有明确 URL 时使用 web_fetch；漏洞资料优先用 search_cve/knowledge_search/searchsploit。"
+                "公开资料抓取只能在已有明确 URL 时使用 web_fetch；漏洞资料优先用 knowledge_search/searchsploit。"
             ),
             required_evidence="下一次执行必须指向声明的任务范围",
         )

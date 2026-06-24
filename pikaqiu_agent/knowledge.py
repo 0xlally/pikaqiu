@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import importlib
-import json
 import logging
 import os
 import re
@@ -52,7 +51,6 @@ class KnowledgeIndexer:
         if not kb_path.is_absolute():
             kb_path = workspace_root / kb_path
         self.kb_root = kb_path.resolve()
-        self.cve_index_path = self.kb_root / "cve-poc-index.json"
         self._rag_dir = self.workspace_root / "rag"
         self._rag_index_dir = self._rag_dir / "faiss_db"
         self._rag_client: Any | None = None
@@ -70,7 +68,6 @@ class KnowledgeIndexer:
             rebuilt_docs = self.store.replace_knowledge_docs(docs)
             self.store.set_meta("knowledge_signature", signature)
 
-        self._ensure_cve_index()
         self._ensure_rag_ready(signature)
 
         stats = self.get_stats()
@@ -116,23 +113,6 @@ class KnowledgeIndexer:
         if direct.is_file():
             return self._read_text(direct) or fallback
         return fallback
-
-    def _ensure_cve_index(self) -> None:
-        """Load CVE POC index from JSON if not already loaded."""
-        if not self.cve_index_path.exists():
-            return
-        stat = self.cve_index_path.stat()
-        sig = f"{stat.st_mtime_ns}:{stat.st_size}"
-        if self.store.get_meta("cve_index_signature") == sig:
-            return
-        try:
-            data = json.loads(self.cve_index_path.read_text(encoding="utf-8"))
-            entries = data.get("entries", [])
-            count = self.store.replace_cve_index(entries)
-            self.store.set_meta("cve_index_signature", sig)
-            self.store.set_meta("cve_index_count", str(count))
-        except Exception as exc:
-            logger.warning("Failed to refresh cve index %s: %s", self.cve_index_path, exc)
 
     def _ensure_rag_ready(self, signature: str) -> None:
         if not self._rag_dir.is_dir():
