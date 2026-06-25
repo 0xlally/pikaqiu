@@ -34,16 +34,18 @@ def test_python_exec_uses_mission_timeout_when_omitted():
     assert sandbox.calls == [("run_python", "print('ok')", 300, "/work")]
 
 
-def test_explicit_tool_timeout_can_shorten_but_not_exceed_mission_timeout():
+def test_explicit_tool_timeout_can_shorten_quick_probes_but_not_batch_probes():
     sandbox = FakeSandbox()
     bash_tool = create_bash_tool(sandbox, "/work", max_timeout=300)
     python_tool = create_python_tool(sandbox, "/work", max_timeout=300)
 
-    bash_tool.invoke({"command": "sleep 1", "timeout": 40})
+    bash_tool.invoke({"command": "sleep 1", "timeout": 30})
+    bash_tool.invoke({"command": "batch probe", "timeout": 70})
     python_tool.invoke({"code": "print('ok')", "timeout": 999})
 
     assert sandbox.calls == [
-        ("run", "sleep 1", 40, "/work"),
+        ("run", "sleep 1", 30, "/work"),
+        ("run", "batch probe", 300, "/work"),
         ("run_python", "print('ok')", 300, "/work"),
     ]
 

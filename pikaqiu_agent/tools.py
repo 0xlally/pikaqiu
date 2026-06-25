@@ -18,7 +18,10 @@ def _clamp_timeout(timeout: int, max_timeout: int, min_timeout: int = 1) -> int:
 def _resolve_timeout(timeout: int | None, max_timeout: int, min_timeout: int = 1) -> int:
     if timeout is None:
         return max(min_timeout, int(max_timeout))
-    return _clamp_timeout(timeout, max_timeout, min_timeout)
+    timeout = _clamp_timeout(timeout, max_timeout, min_timeout)
+    if timeout > 30 and timeout < max_timeout:
+        return max(min_timeout, int(max_timeout))
+    return timeout
 
 
 def _format_sandbox_result(prefix: str, result) -> str:
@@ -55,6 +58,7 @@ class BashInput(BaseModel):
         default=None,
         description=(
             "Optional timeout in seconds. Omit to use the mission command timeout. "
+            "Only set a shorter timeout for quick probes (30s or less); medium values are ignored. "
             "For long tools like sqlmap/nmap, prefer background jobs that write logs."
         ),
     )
@@ -64,7 +68,10 @@ class PythonInput(BaseModel):
     code: str = Field(description="Python source code to execute")
     timeout: int | None = Field(
         default=None,
-        description="Optional timeout in seconds. Omit to use the mission command timeout.",
+        description=(
+            "Optional timeout in seconds. Omit to use the mission command timeout. "
+            "Only set a shorter timeout for quick probes (30s or less); medium values are ignored."
+        ),
     )
 
 

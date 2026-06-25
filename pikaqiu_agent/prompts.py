@@ -306,7 +306,7 @@ def build_tool_system_prompt(
             "- For independent probes, do not chain everything with `&&`. A timeout on one port/scheme must not prevent later checks.\n"
             "- Prefer labelled blocks with `;` or `|| true`, or split checks into separate tool calls. Example: `echo '[80]'; curl ... || true; echo '[443]'; curl ... || true; echo '[nmap]'; nmap ...`\n"
             "- Use `&&` only for true dependencies such as `cd workdir && mkdir -p evidence && command_that_needs_that_dir`.\n"
-            "- `bash_exec`/`python_exec` default to the mission command timeout when you omit the tool `timeout`; only set a shorter tool timeout when you have a concrete reason.\n"
+            "- `bash_exec`/`python_exec` default to the mission command timeout when you omit the tool `timeout`; only set a shorter tool timeout for quick probes (30s or less). Do not use 40/60/70s medium tool timeouts for batch probes.\n"
             "- For batch probes, the tool timeout must cover the internal per-item timeout times item count plus overhead; otherwise the result is not attributable to a specific payload.\n"
             "- When checking HTTP(S), use practical timeouts: `--connect-timeout 5 --max-time 30` for baseline probes, and up to `--max-time 60` for slow challenge ports.\n"
             "- If `curl` returns exit code 28, record it as a timeout signal, then verify with `nc -vz -w3 HOST PORT` or a focused `nmap -Pn -sT -pPORT --reason` before concluding the target is unreachable.\n"
@@ -327,7 +327,7 @@ def build_tool_system_prompt(
             "print(f\"[body] {r.text}\")  # 先看原始内容再做过滤\n"
             "```"
         ),
-        "## 长耗时命令\n优先短耗时；超30秒的命令：加限制参数（`nmap -F --top-ports 100`、`--max-time 30`）或后台运行（`nohup cmd > /tmp/out.log 2>&1 &`）并检查日志。工具默认使用任务的 command timeout；不要随手覆盖成 40/60 秒。",
+        "## 长耗时命令\n优先短耗时；超30秒的命令：加限制参数（`nmap -F --top-ports 100`、`--max-time 30`）或后台运行（`nohup cmd > /tmp/out.log 2>&1 &`）并检查日志。工具默认使用任务的 command timeout；不要随手覆盖成 40/60/70 秒。",
         (
             "## 核心原则\n"
             "1. **聚焦攻击面**：充分了解环境后，判断最可能导向flag的功能入口，专注深入，不广撒网\n"
