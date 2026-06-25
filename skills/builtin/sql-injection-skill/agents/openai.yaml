@@ -1,4 +1,4 @@
 interface:
   display_name: "SQL Injection"
-  short_description: "SQL/NoSQL 注入验证与数据提取"
-  default_prompt: "Use $sql-injection-skill to verify SQL or NoSQL injection, build a stable oracle, and extract the minimum target data with reproducible evidence."
+  short_description: "SQL/NoSQL/ORM 注入验证与最小提取"
+  default_prompt: "Use $sql-injection-skill to verify SQL/NoSQL/ORM injection, build a stable oracle, and extract only the minimum target data with reproducible evidence."
