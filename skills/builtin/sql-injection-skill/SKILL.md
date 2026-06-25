@@ -5,24 +5,20 @@ description: 面向授权 CTF/靶场/渗透测试的 SQL/NoSQL/ORM 注入专项�
 
 # sql-injection-skill
 
-目标：把可疑输入点推进成可复现结论：排除、候选、已验证注入，或已拿到目标数据。先建稳定 oracle，再提取最小目标；每次只改变一个变量。
+目标：把可疑输入点推进成可利用的 SQL/NoSQL/ORM 注入原语，并拿到登录态、目标字段、凭据、token、flag 或下一阶段入口。
 
-## 最短闭环
+## 最小思路
 
-1. 固定基线：记录方法、URL、参数、Cookie、角色、Content-Type、状态码、长度、关键文本、跳转和耗时。
-2. 定位上下文：用少量代表性探针区分数字、字符串、括号、排序/标识符、INSERT/UPDATE、JSON 对象、GraphQL 参数、ORM 查询 DSL、二阶触发或二次查询。
-3. 建立 oracle：用成对请求证明 true/false、row/no-row、error/no-error、delay/no-delay 或字段存在/不存在差分。
-4. 选择路线：有回显走 UNION；无回显走布尔/错误/时间盲注；认证点优先控制返回行；对象查询转向 NoSQL/GraphQL。
-5. 提取目标：只取推进所需的库名、表列、用户名、密码/哈希、token、role、flag 字段或下一阶段入口。
-6. 闭环验证：保留最小请求对和响应信号；登录或权限变化后继续检查上传、导出、管理面、文件读取等新功能面。
+1. 找到输入进入查询的位置：SQL 字符串、排序/字段名、登录查询、INSERT/UPDATE、二阶触发、NoSQL 对象、GraphQL/ORM 查询 DSL。
+2. 建立一个稳定原语：布尔差分、错误差分、时间差分、排序差分、返回行控制或对象操作符保留。
+3. 按目标选择利用方式：UNION 回显、盲注提取、认证绕过、二阶触发、NoSQL/GraphQL 字段提取或 ORM/DSL 绕过。
+4. 只提取推进链条需要的数据；拿到登录态或权限变化后，继续看新功能面。
 
-## 选择引用
+## 参考
 
-- 已确认 SQL 上下文、过滤点、UNION/盲注、登录绕过、排序注入、二阶或二次查询时，读 `references/sql-playbook.md`。
-- 输入是 JSON、URL 嵌套参数、MongoDB/MongoEngine、GraphQL schema/filter/search 或字段选择时，读 `references/nosql-graphql.md`。
-- 输入进入 Django/Prisma/Ransack/OData/动态字段选择等 ORM 或查询 DSL 时，读 `references/orm-query-dsl.md`。
-- 已有稳定可疑参数，需要用 sqlmap 复核、加速枚举或处理复杂请求时，读 `references/sqlmap-verification.md`。
+- SQL 上下文、UNION、盲注、登录绕过、排序注入、二阶查询：`references/sql-playbook.md`
+- JSON、MongoDB/MongoEngine、GraphQL、字段选择：`references/nosql-graphql.md`
+- Django/Prisma/Ransack/OData/动态查询 DSL：`references/orm-query-dsl.md`
+- sqlmap 复核或复杂请求加速：`references/sqlmap-verification.md`
 
-## 记录卡点
-
-失败时写链条位置，不写“SQLi 失败”。例如：入口已确认；字符串闭合未确定；`'` 报错但 true/false 无差分；排序参数可控但 CASE 无稳定 marker；GraphQL 可请求 `flag` 字段但 filter 对象未证明进入 Mongo；下一步比较一对最小请求。
+主文件只给方向，不限制具体打法；根据现场 oracle 和目标选择最短路线。
