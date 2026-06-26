@@ -58,7 +58,6 @@ EVIDENCE_AUDIT_EXEMPT_TOOLS = {
     "activate_skill",
     "skill_read_reference",
     "submit_flag",
-    "give_up",
 }
 EVIDENCE_MARKER_RE = re.compile(
     r"(\[EXIT_CODE:\s*\d+\]|\[STDERR\]|\bHTTP/\d|\bstatus(?:_code)?\s*[:=]\s*\d{3}|"
@@ -804,61 +803,6 @@ class ObserverAgent:
             ),
             required_evidence="本地脚本成功执行，以及原始目标/工具输出",
         )
-
-    def audit_give_up(
-        self,
-        *,
-        reason: str,
-        mission: dict[str, Any],
-        memory: dict[str, Any],
-        tool_call_log: list[dict[str, Any]],
-        captured_flags: list[str],
-    ) -> ObserverDecision:
-        if captured_flags:
-            return ObserverDecision(
-                verdict="OK",
-                rationale="已捕获至少一个 flag，停止请求可以接受。",
-                observer_enforcement_state="allow_stop",
-            ).normalised()
-
-        recent = tool_call_log[-6:] if tool_call_log else []
-        has_concrete = any(self._has_concrete_evidence(row) for row in recent)
-        failure_count = sum(1 for row in recent if FAILURE_RE.search(_tool_result_text(row)))
-        dead_ends = [
-            str(item).strip()
-            for item in memory.get("dead_ends", []) or []
-            if str(item).strip()
-        ]
-        has_boundary = bool(
-            str(reason or "").strip()
-            and (
-                memory.get("failure_boundary")
-                or memory.get("required_next_evidence")
-                or dead_ends
-                or failure_count >= 3
-            )
-        )
-        if has_concrete and has_boundary:
-            return ObserverDecision(
-                verdict="OK",
-                rationale="已有证据和失败边界记录，停止请求可以接受。",
-                failure_boundary=str(memory.get("failure_boundary") or (dead_ends[-1] if dead_ends else "已记录边界")),
-                observer_enforcement_state="allow_stop",
-            ).normalised()
-
-        lead = self.last_good_lead(memory) or str(mission.get("target") or "current target")
-        return ObserverDecision(
-            verdict="L2",
-            rationale="give_up 请求缺少足够可复现证据或明确失败边界。",
-            evidence=["在记录足够证据前请求 give_up"],
-            guidance=(
-                "暂时不要停止。围绕当前最强线索运行一次定向验证并保留原始输出；或携带 failure_boundary 和 required_evidence 再次调用 give_up。"
-            ),
-            next_verification=lead,
-            failure_boundary="缺少证据",
-            required_evidence="证明当前线索已耗尽的原始状态码、响应头、响应体或 stdout/stderr",
-            observer_enforcement_state="blocked",
-        ).normalised()
 
     def audit_override(
         self,

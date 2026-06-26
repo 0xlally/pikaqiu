@@ -106,7 +106,6 @@ _missing_tool_name = _success_guards.missing_tool_name
 _known_missing_tool_blocks = _success_guards.known_missing_tool_blocks
 _missing_tools_from_memory = _success_guards.missing_tools_from_memory
 _missing_tool_block_message = _success_guards.missing_tool_block_message
-_low_evidence_stop_block_message = _success_guards.low_evidence_stop_block_message
 _stale_observer_steer_block_message = _success_guards.stale_observer_steer_block_message
 
 
@@ -441,19 +440,6 @@ def _observer_should_inject(decision: ObserverDecision, *, phase: str) -> bool:
     """Keep Observer low-noise: UI/event memory always records it, but main-agent
     injection is reserved for stop-the-line issues or clear stalls."""
     return should_inject_decision(decision, phase=phase)
-
-
-def _human_guidance_allows_stop(text: str) -> bool:
-    lowered = str(text or "").lower()
-    if any(term in lowered for term in ("不要停止", "不要放弃", "继续", "do not stop", "keep going")):
-        return False
-    return bool(re.search(
-        r"(允许|同意|可以|确认|批准).{0,8}(停止|放弃|结束)|"
-        r"(停止|放弃|结束).{0,8}(任务|mission)|"
-        r"approve\s+give\s+up|allow\s+stop|stop\s+mission|give\s+up",
-        lowered,
-        re.I,
-    ))
 
 
 class OrchestratorManager:
@@ -1562,38 +1548,6 @@ class OrchestratorManager:
             )
         return injected
 
-    def _audit_give_up_request(
-        self,
-        *,
-        mission_id: str,
-        round_no: int,
-        mission: dict[str, Any],
-        memory: dict[str, Any],
-        tool_call_log: list[dict[str, Any]],
-        captured_flags: list[str],
-        reason: str,
-    ) -> tuple[bool, ObserverDecision, dict[str, Any]]:
-        decision = self.observer.audit_give_up(
-            reason=reason,
-            mission=mission,
-            memory=memory,
-            tool_call_log=tool_call_log,
-            captured_flags=captured_flags,
-        ).normalised()
-        self._record_observer_decision(
-            mission_id=mission_id,
-            round_no=round_no,
-            decision=decision,
-            phase="give_up",
-        )
-        patched = self._apply_observer_memory_patch(
-            mission_id=mission_id,
-            round_no=round_no,
-            memory=memory,
-            decision=decision,
-        )
-        return decision.observer_enforcement_state == "allow_stop", decision, patched
-
     def _update_pending_observer_steer(
         self,
         current: ObserverDecision | None,
@@ -1812,75 +1766,6 @@ class OrchestratorManager:
                     return f"[FLAG_CAPTURED] {flag} - all {expected_flags} flag(s) found; mission complete."
                 return f"[FLAG_CAPTURED] {flag} - {remaining} flag(s) still needed; continue from this exact lead."
 
-            def on_give_up(reason: str) -> str:
-                nonlocal memory
-                allowed, decision, patched_memory = self._audit_give_up_request(
-                    mission_id=mission_id,
-                    round_no=round_no,
-                    mission=mission,
-                    memory=memory,
-                    tool_call_log=tool_call_log,
-                    captured_flags=captured_flags,
-                    reason=reason,
-                )
-                memory = patched_memory
-                if not allowed:
-                    human_correction = self._ask_human_before_observer_correction(
-                        mission_id=mission_id,
-                        round_no=round_no,
-                        decision=decision,
-                        phase="give_up",
-                        reason=reason,
-                    )
-                    if human_correction and _human_guidance_allows_stop("\n".join(human_correction)):
-                        self.store.add_event(
-                            mission_id=mission_id,
-                            round_no=round_no,
-                            event_type="system",
-                            title="AI gave up after human approval",
-                            content="Human correction approved stopping the mission.",
-                            metadata={"observer": decision.to_dict(), "human_correction": human_correction},
-                        )
-                        self.store.request_stop(mission_id)
-                        return "[GIVE_UP] Mission marked to stop after human approval."
-                    if human_correction:
-                        guidance_text = "\n".join(f"- {item}" for item in human_correction)
-                        self.store.add_event(
-                            mission_id=mission_id,
-                            round_no=round_no,
-                            event_type="human_guidance",
-                            title="Human correction returned to agent",
-                            content=guidance_text,
-                            metadata={"observer": decision.to_dict(), "phase": "give_up"},
-                        )
-                        return (
-                            "[GIVE_UP_REJECTED_BY_HUMAN]\n"
-                            "人类协同已接管本次 Observer 纠偏。停止请求未被批准，下一步按人工指令执行：\n"
-                            + guidance_text
-                        )
-                    self.store.add_event(
-                        mission_id=mission_id,
-                        round_no=round_no,
-                        event_type="warning",
-                        title="Give up rejected by Observer",
-                        content=decision.guidance or _low_evidence_stop_block_message(memory),
-                        metadata={"observer": decision.to_dict()},
-                    )
-                    return (
-                        "[GIVE_UP_REJECTED]\n"
-                        + (decision.guidance or _low_evidence_stop_block_message(memory))
-                    )
-                self.store.add_event(
-                    mission_id=mission_id,
-                    round_no=round_no,
-                    event_type="system",
-                    title="AI gave up",
-                    content=f"Reason: {reason}\nObserver boundary: {decision.failure_boundary}",
-                    metadata={"observer": decision.to_dict()},
-                )
-                self.store.request_stop(mission_id)
-                return "[GIVE_UP] Mission marked to stop."
-
             # Streaming state: event_id updated per tool call so on_chunk knows where to write
             _streaming: dict[str, Any] = {"event_id": None, "display_cmd": ""}
             _streaming_lock = threading.Lock()
@@ -1992,7 +1877,6 @@ class OrchestratorManager:
                 skills=self.skills if self.settings.skills_auto_use else None,
                 mission=mission,
                 on_flag=on_flag,
-                on_give_up=on_give_up,
                 stop_fn=lambda: self.store.should_stop(mission_id),
                 on_chunk=_on_chunk,
                 knowledge_top_k=self.settings.knowledge_top_k,
@@ -2522,21 +2406,7 @@ class OrchestratorManager:
                     content="本轮没有任何工具调用，检查 LLM 响应或 API 连接。",
                 )
 
-        memory = self.store.get_memory(mission_id)
-        stop_allowed, stop_decision, memory = self._audit_give_up_request(
-            mission_id=mission_id,
-            round_no=max_rounds,
-            mission=mission,
-            memory=memory,
-            tool_call_log=tool_call_log,
-            captured_flags=captured_flags,
-            reason="max_rounds reached; Observer failure-boundary audit required before stopped status",
-        )
-        stop_message = (
-            "Reached max_rounds with Observer failure-boundary audit."
-            if stop_allowed
-            else "Reached max_rounds; Observer recorded missing failure-boundary evidence."
-        )
+        stop_message = "Reached max_rounds."
         self.store.update_mission_status(
             mission_id, "stopped",
             error_message=stop_message,
@@ -2547,5 +2417,4 @@ class OrchestratorManager:
             event_type="system",
             title="Max rounds reached",
             content=stop_message,
-            metadata={"observer": stop_decision.to_dict()},
         )

@@ -192,18 +192,6 @@ def missing_tool_block_message(tool: str) -> str:
     )
 
 
-def low_evidence_stop_block_message(memory: dict[str, Any]) -> str:
-    lead = next_verification_hint(memory) or "the current strongest lead"
-    return (
-        "[LOW_EVIDENCE_STOP_BLOCKED]\n"
-        "Stopping is blocked because the latest evidence is too weak to conclude the mission. "
-        "Run one targeted verification tied to memory, preserve the decisive raw output, or call give_up again "
-        "with a concrete failure boundary, blocked prerequisite, and required next evidence.\n"
-        f"Next targeted lead: {lead}\n"
-        "[EXIT_CODE: 0]"
-    )
-
-
 def stale_observer_steer_block_message(memory: dict[str, Any]) -> str:
     lead = next_verification_hint(memory) or "the current strongest lead"
     return (
@@ -311,7 +299,6 @@ _missing_tool_name = missing_tool_name
 _known_missing_tool_blocks = known_missing_tool_blocks
 _missing_tools_from_memory = missing_tools_from_memory
 _missing_tool_block_message = missing_tool_block_message
-_low_evidence_stop_block_message = low_evidence_stop_block_message
 _stale_observer_steer_block_message = stale_observer_steer_block_message
 _summarize_guidance_result = summarize_guidance_result
 _route_guard_guidance = route_guard_guidance

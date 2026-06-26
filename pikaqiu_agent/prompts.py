@@ -240,7 +240,6 @@ def build_tool_system_prompt(
             "a valid returned skill id; the Observer does not activate skills for you. If Observer verdict is "
             "L1/L2/L3/L4/ENV or includes `next_verification`, the next action must either run that verification, produce "
             "new observable evidence that disproves it, or record a clear failure_boundary with required_next_evidence. "
-            "Do not rely on your own statement that a route is exhausted; Observer audits stop eligibility."
         ),
         "\n".join(mission_lines),
         _build_skill_catalog_section(skill_catalog),
@@ -277,9 +276,7 @@ def build_tool_system_prompt(
             "- **skill_search**: 在进入专项流程前检索可用 SKILL.md 元数据\n"
             "- **activate_skill**: 只在命中明确时加载一个相关 skill，并持久化到当前任务\n"
             "- **skill_read_reference**: 仅在已激活 skill 需要引用附带文件时读取\n"
-            "- **Runtime Observer**: 被动运行时审核，不是可调用工具；系统会按配置周期注入审计建议\n"
-            "- **submit_flag**: 找到flag后立即提交\n"
-            "- **give_up**: request Observer stop audit only; stopping is allowed only with failure_boundary, blocked_prerequisite, and required_next_evidence."
+            "- **submit_flag**: 找到flag后立即提交"
         ),
         (
             "## 工具选择速查\n"

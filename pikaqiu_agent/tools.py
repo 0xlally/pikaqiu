@@ -413,34 +413,6 @@ def create_submit_flag_tool(on_flag: Callable[[str], str]) -> BaseTool:
         return submit_flag
 
 
-class GiveUpInput(BaseModel):
-    reason: str = Field(description="详细说明已尝试过的所有攻击方法及其失败原因")
-
-
-def create_give_up_tool(on_give_up: Callable[[str], str]) -> BaseTool:
-    @tool("give_up", args_schema=GiveUpInput)
-    def give_up(reason: str) -> str:
-        """放弃当前渗透测试任务。
-
-        ⚠️ 严格限制 — 仅在以下条件全部满足时才可调用：
-        1. 你已尝试了所有可能的攻击向量，包括但不限于：
-           端口/服务扫描、目录枚举、SQL注入、XSS、命令注入、文件包含/上传、
-           SSRF、反序列化、认证绕过、信息泄露、已知CVE利用等
-        2. 每种方法都已实际执行并确认失败（不是"觉得不行"就跳过）
-        3. 你已参考了提示信息（如有）并按提示方向深入尝试
-        4. 确实无法取得任何进展
-
-        禁止在以下情况调用：
-        - 才尝试了几种方法就想放弃
-        - 遇到一两次报错就认为做不了
-        - 没有按照提示方向充分探索
-
-        调用时必须在reason中列出所有已尝试的方法和失败原因。
-        """
-        return on_give_up(reason.strip())
-    return give_up
-
-
 def create_all_tools(
     sandbox,
     workdir: str,
@@ -449,7 +421,6 @@ def create_all_tools(
     skills=None,
     mission: dict | None = None,
     on_flag: Callable[[str], str] | None = None,
-    on_give_up: Callable[[str], str] | None = None,
     stop_fn: Callable[[], bool] | None = None,
     on_chunk: Callable[[str], None] | None = None,
     knowledge_top_k: int = 3,
@@ -483,6 +454,4 @@ def create_all_tools(
         ])
     if on_flag:
         tools.append(create_submit_flag_tool(on_flag))
-    if on_give_up:
-        tools.append(create_give_up_tool(on_give_up))
     return tools
