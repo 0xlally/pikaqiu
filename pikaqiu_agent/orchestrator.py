@@ -40,6 +40,31 @@ logger = logging.getLogger(__name__)
 _EXIT_CODE_RE = re.compile(r"\[EXIT_CODE:\s*(-?\d+)\]")
 
 
+class _StopRequested(Exception):
+    """Internal control-flow signal for cooperative mission cancellation."""
+
+
+def _future_result_with_stop(
+    future,
+    *,
+    timeout_sec: int,
+    stop_fn,
+    poll_interval: float = 0.5,
+):
+    deadline = time.monotonic() + max(1, int(timeout_sec))
+    while True:
+        if stop_fn and stop_fn():
+            future.cancel()
+            raise _StopRequested()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise FutureTimeout()
+        try:
+            return future.result(timeout=min(poll_interval, remaining))
+        except FutureTimeout:
+            continue
+
+
 def _compact_json(obj: Any, max_len: int = 400) -> str:
     """Serialize obj to compact JSON, truncating if too long."""
     try:
@@ -262,6 +287,7 @@ def _compress_context_middle(
     llm: LLMClient,
     compression_timeout_sec: int,
     compression_model: str,
+    stop_fn=None,
 ) -> tuple[str, dict[str, Any]]:
     timeout_sec = max(1, int(compression_timeout_sec or 45))
     metadata = {
@@ -293,7 +319,15 @@ def _compress_context_middle(
             pool = ThreadPoolExecutor(max_workers=1)
             try:
                 future = pool.submit(llm.invoke_compression, middle_text, mission_ctx)
-                llm_summary = future.result(timeout=timeout_sec)
+                llm_summary = _future_result_with_stop(
+                    future,
+                    timeout_sec=timeout_sec,
+                    stop_fn=stop_fn,
+                )
+            except _StopRequested:
+                future.cancel()
+                llm_summary = None
+                metadata["error"] = "cancelled by stop request"
             except (FutureTimeout, TimeoutError):
                 logger.warning("[orchestrator] LLM compression timed out after %ds", timeout_sec)
                 future.cancel()
@@ -636,13 +670,26 @@ class OrchestratorManager:
 
     def stop_mission(self, mission_id: str) -> None:
         self.store.request_stop(mission_id)
+        self.store.add_event(
+            mission_id=mission_id,
+            round_no=0,
+            event_type="system",
+            title="Stop requested",
+            content="Operator requested mission stop. Running LLM/tool work will exit at the next cooperative checkpoint.",
+            metadata={"stop_requested": True},
+        )
 
     def thread_alive(self, mission_id: str) -> bool:
         with self._lock:
             thread = self._threads.get(mission_id)
         return bool(thread and thread.is_alive())
 
-    def _collect_env_info(self, mission_id: str, sandbox: SandboxExecutor | None = None) -> str:
+    def _collect_env_info(
+        self,
+        mission_id: str,
+        sandbox: SandboxExecutor | None = None,
+        stop_fn=None,
+    ) -> str:
         """Run env-info script in sandbox once and return the JSON output."""
         sbx = sandbox or self.sandbox
         try:
@@ -650,6 +697,7 @@ class OrchestratorManager:
                 "python3 /opt/pikaqiu-tools/env-info 2>/dev/null",
                 workdir="/tmp",
                 timeout_sec=15,
+                stop_fn=stop_fn,
             )
             output = (result.stdout or "").strip()
             if result.exit_code == 0 and output:
@@ -706,12 +754,26 @@ class OrchestratorManager:
             pool = ThreadPoolExecutor(max_workers=1)
             try:
                 future = pool.submit(self.llm.invoke_memory_compression, memory_prompt, memory)
-                memory_result = future.result(timeout=timeout_sec)
+                memory_result = _future_result_with_stop(
+                    future,
+                    timeout_sec=timeout_sec,
+                    stop_fn=lambda: self.store.should_stop(mission_id),
+                )
                 if memory_result is None:
                     raise RuntimeError("compression model returned no usable memory JSON")
             finally:
                 pool.shutdown(wait=False, cancel_futures=True)
             new_memory = normalize_memory_enhanced(memory_result.payload, memory)
+        except _StopRequested:
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            self.store.finalize_event(
+                running_event_id,
+                event_type="memory_agent",
+                title=f"Memory compression cancelled ({reason})",
+                content=f"stop requested\n\nelapsed_ms={elapsed_ms} tool_call_count={len(tool_call_log)} method={method}",
+                exit_code=-15,
+            )
+            return memory, False
         except Exception as mem_err:
             elapsed_ms = int((time.monotonic() - started) * 1000)
             if isinstance(mem_err, (FutureTimeout, TimeoutError)):
@@ -921,9 +983,16 @@ class OrchestratorManager:
             pool = ThreadPoolExecutor(max_workers=1)
             try:
                 future = pool.submit(current_model.invoke, messages)
-                response: AIMessage = future.result(timeout=llm_timeout)
+                response: AIMessage = _future_result_with_stop(
+                    future,
+                    timeout_sec=llm_timeout,
+                    stop_fn=lambda: self.store.should_stop(mission_id),
+                )
                 pool.shutdown(wait=False)
                 return response, None  # success with original model
+            except _StopRequested:
+                pool.shutdown(wait=False, cancel_futures=True)
+                return None, None
             except FutureTimeout:
                 pool.shutdown(wait=False)
                 err_msg = f"LLM响应超时 ({llm_timeout}s), 第{attempt}/{max_retries}次重试 | model={model_name}"
@@ -979,9 +1048,16 @@ class OrchestratorManager:
                 pool = ThreadPoolExecutor(max_workers=1)
                 try:
                     future = pool.submit(fallback_bound.invoke, messages)
-                    response = future.result(timeout=llm_timeout)
+                    response = _future_result_with_stop(
+                        future,
+                        timeout_sec=llm_timeout,
+                        stop_fn=lambda: self.store.should_stop(mission_id),
+                    )
                     pool.shutdown(wait=False)
                     return response, fallback_bound  # fallback succeeded — caller must persist
+                except _StopRequested:
+                    pool.shutdown(wait=False, cancel_futures=True)
+                    return None, None
                 except Exception as e:
                     pool.shutdown(wait=False)
                     detail = format_llm_error(e, model=fallback_name, messages=messages)
@@ -1032,11 +1108,20 @@ class OrchestratorManager:
         mission = self.store.get_mission(mission_id)
         if not mission:
             return
+        if self.store.should_stop(mission_id):
+            self.store.update_mission_status(mission_id, "stopped")
+            return
 
         # Allocate a dedicated sandbox for this mission
         mission_sandbox = self._allocate_sandbox(mission_id)
 
+        if self.store.should_stop(mission_id):
+            self.store.update_mission_status(mission_id, "stopped")
+            return
         self.store.update_mission_status(mission_id, "running")
+        if self.store.should_stop(mission_id):
+            self.store.update_mission_status(mission_id, "stopped")
+            return
         self.observer_runtime.ensure_session(mission_id)
         self.store.add_event(
             mission_id=mission_id,
@@ -1047,6 +1132,9 @@ class OrchestratorManager:
         )
 
         try:
+            if self.store.should_stop(mission_id):
+                self.store.update_mission_status(mission_id, "stopped")
+                return
             kb_stats = self.knowledge.ensure_ready()
             self.store.add_event(
                 mission_id=mission_id,
@@ -1056,7 +1144,7 @@ class OrchestratorManager:
                 content=f"docs={kb_stats.get('total_docs', 0)} domains={kb_stats.get('domains', {})}",
                 metadata=kb_stats,
             )
-            sandbox_check = mission_sandbox.ensure_workspace()
+            sandbox_check = mission_sandbox.ensure_workspace(stop_fn=lambda: self.store.should_stop(mission_id))
             self.store.add_event(
                 mission_id=mission_id,
                 round_no=0,
@@ -1069,7 +1157,17 @@ class OrchestratorManager:
                 ended_at=sandbox_check.ended_at,
             )
             # Collect sandbox environment info once and cache for prompt injection
-            env_info = self._collect_env_info(mission_id, sandbox=mission_sandbox)
+            if self.store.should_stop(mission_id):
+                self.store.update_mission_status(mission_id, "stopped")
+                return
+            env_info = self._collect_env_info(
+                mission_id,
+                sandbox=mission_sandbox,
+                stop_fn=lambda: self.store.should_stop(mission_id),
+            )
+            if self.store.should_stop(mission_id):
+                self.store.update_mission_status(mission_id, "stopped")
+                return
             # Delegate to tool-use loop
             self._run_mission_tool_use(mission_id, mission, env_info=env_info, sandbox=mission_sandbox)
         except Exception as exc:
@@ -1825,9 +1923,13 @@ class OrchestratorManager:
                         pool = ThreadPoolExecutor(max_workers=1)
                         try:
                             future = pool.submit(self.llm.invoke_memory, cleaning_prompt, memory)
-                            cleaning_result = future.result(timeout=self.settings.llm_timeout_sec)
+                            cleaning_result = _future_result_with_stop(
+                                future,
+                                timeout_sec=self.settings.llm_timeout_sec,
+                                stop_fn=lambda: self.store.should_stop(mission_id),
+                            )
                         finally:
-                            pool.shutdown(wait=False)
+                            pool.shutdown(wait=False, cancel_futures=True)
                         cleaned_memory = normalize_memory_enhanced(cleaning_result.payload, memory)
                         memory = cleaned_memory
                         self.store.set_memory(mission_id, memory)
@@ -1846,6 +1948,9 @@ class OrchestratorManager:
                             expected_flags=mission.get("expected_flags", 1),
                             experience_hints=self._build_experience_hints(mission, memory),
                         )
+                    except _StopRequested:
+                        self.store.update_mission_status(mission_id, "stopped")
+                        return
                     except Exception as clean_err:
                         logger.warning("[orchestrator] memory cleaning failed: %s", clean_err)
 
@@ -1908,6 +2013,8 @@ class OrchestratorManager:
 
             def maybe_compress_memory_due() -> None:
                 nonlocal memory, last_memory_compressed_tool_index, next_memory_compress_due
+                if self.store.should_stop(mission_id):
+                    return
                 if total_llm_call_count < next_memory_compress_due:
                     return
                 new_tool_calls = tool_call_log[last_memory_compressed_tool_index:]
@@ -1975,6 +2082,9 @@ class OrchestratorManager:
 
                 if not response.tool_calls:
                     maybe_compress_memory_due()
+                    if self.store.should_stop(mission_id):
+                        self.store.update_mission_status(mission_id, "stopped")
+                        return
                     consecutive_no_tool += 1
                     if consecutive_no_tool >= 5:
                         # Model made 5 consecutive responses without calling tools — round done
@@ -2254,6 +2364,9 @@ class OrchestratorManager:
                             pending_observer_steer = None
 
                 maybe_compress_memory_due()
+                if self.store.should_stop(mission_id):
+                    self.store.update_mission_status(mission_id, "stopped")
+                    return
 
                 # Mid-round context monitoring: if messages are getting too large,
                 # use LLM compression (if available) or fallback to importance-based scoring
@@ -2280,7 +2393,11 @@ class OrchestratorManager:
                         llm=self.llm,
                         compression_timeout_sec=self.settings.get_compression_timeout_sec(),
                         compression_model=self.settings.get_compression_model(),
+                        stop_fn=lambda: self.store.should_stop(mission_id),
                     )
+                    if self.store.should_stop(mission_id):
+                        self.store.update_mission_status(mission_id, "stopped")
+                        return
 
                     memory_review, memory_review_meta = _memory_agent_long_term_review_block(memory)
                     messages = (
@@ -2332,6 +2449,9 @@ class OrchestratorManager:
                 return
 
             memory_before_observer = memory
+            if self.store.should_stop(mission_id):
+                self.store.update_mission_status(mission_id, "stopped")
+                return
             round_observer_decision = self.observer_runtime.review_round(
                 mission_id=mission_id,
                 round_no=round_no,
@@ -2343,7 +2463,11 @@ class OrchestratorManager:
                 llm_call_count=llm_call_count,
                 stall_rounds=_stall_rounds,
                 captured_flags=captured_flags,
+                stop_fn=lambda: self.store.should_stop(mission_id),
             )
+            if self.store.should_stop(mission_id):
+                self.store.update_mission_status(mission_id, "stopped")
+                return
             self._record_observer_decision(
                 mission_id=mission_id,
                 round_no=round_no,

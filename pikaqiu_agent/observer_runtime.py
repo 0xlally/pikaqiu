@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from pikaqiu_agent import experience as _experience
 from pikaqiu_agent.config import AgentSettings
@@ -45,6 +47,31 @@ PREFERRED_EXPERIENCE_REFS = [
     "experience/route-rules/techniques.md",
     "experience/route-rules/waf-bypass-protocol.md",
 ]
+
+
+class _StopRequested(Exception):
+    """Internal control-flow signal for cooperative Observer cancellation."""
+
+
+def _future_result_with_stop(
+    future,
+    *,
+    timeout_sec: int,
+    stop_fn: Callable[[], bool] | None,
+    poll_interval: float = 0.5,
+):
+    deadline = time.monotonic() + max(1, int(timeout_sec))
+    while True:
+        if stop_fn and stop_fn():
+            future.cancel()
+            raise _StopRequested()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise FutureTimeout()
+        try:
+            return future.result(timeout=min(poll_interval, remaining))
+        except FutureTimeout:
+            continue
 
 
 def _compact_json(value: Any, limit: int = 4000) -> str:
@@ -119,6 +146,7 @@ class ObserverRuntime:
         llm_call_count: int,
         stall_rounds: int,
         captured_flags: list[str],
+        stop_fn: Callable[[], bool] | None = None,
     ) -> ObserverDecision:
         rule_decision = self.observer.review_round(
             mission=mission,
@@ -148,6 +176,7 @@ class ObserverRuntime:
             observation=observation,
             rule_decision=rule_decision,
             memory_after=memory_after,
+            stop_fn=stop_fn,
         )
 
     def _run_observer_loop(
@@ -159,6 +188,7 @@ class ObserverRuntime:
         observation: dict[str, Any],
         rule_decision: ObserverDecision,
         memory_after: dict[str, Any],
+        stop_fn: Callable[[], bool] | None = None,
     ) -> ObserverDecision:
         self.ensure_session(mission_id)
         rule_decision = rule_decision.normalised()
@@ -197,17 +227,33 @@ class ObserverRuntime:
 
         try:
             for step in range(1, MAX_OBSERVER_STEPS + 1):
+                if stop_fn and stop_fn():
+                    self._set_status(mission_id, "waiting_next_round", phase=phase, stop_requested=True)
+                    return ObserverDecision.none()
                 self._set_status(mission_id, "thinking", phase=phase, step=step)
-                result = self.llm.invoke_observer_runtime(
-                    self._build_prompt(
-                        observation=observation,
-                        transcript=transcript,
-                        step=step,
-                        used_experience=used_experience,
-                        used_skills=used_skills,
-                    ),
-                    system=self._system_prompt(),
-                )
+                pool = ThreadPoolExecutor(max_workers=1)
+                try:
+                    future = pool.submit(
+                        self.llm.invoke_observer_runtime,
+                        self._build_prompt(
+                            observation=observation,
+                            transcript=transcript,
+                            step=step,
+                            used_experience=used_experience,
+                            used_skills=used_skills,
+                        ),
+                        system=self._system_prompt(),
+                    )
+                    result = _future_result_with_stop(
+                        future,
+                        timeout_sec=self.settings.llm_timeout_sec,
+                        stop_fn=stop_fn,
+                    )
+                except _StopRequested:
+                    self._set_status(mission_id, "waiting_next_round", phase=phase, stop_requested=True)
+                    return ObserverDecision.none()
+                finally:
+                    pool.shutdown(wait=False, cancel_futures=True)
                 tool_name, args = self._parse_tool_call(result.payload, result.raw_text)
                 if tool_name == "observer_finish":
                     decision = self._normalise_runtime_decision(

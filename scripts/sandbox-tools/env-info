@@ -315,7 +315,12 @@ wl_paths = [
     ("/usr/share/wordlists", "wordlists"),
     ("/usr/share/wordlists/rockyou.txt", "rockyou"),
     ("/usr/share/seclists/Discovery/Web-Content/common.txt", "common.txt"),
-    ("/usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt", "dirlist-medium"),
+    ("/usr/share/seclists/Discovery/Web-Content/DirBuster-2007_directory-list-2.3-small.txt", "dirlist-small"),
+    ("/usr/share/seclists/Discovery/Web-Content/DirBuster-2007_directory-list-2.3-medium.txt", "dirlist-medium"),
+    ("/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt", "dns-top5000"),
+    ("/usr/share/seclists/Passwords/Common-Credentials", "common-credentials"),
+    ("/usr/share/seclists/Passwords/Default-Credentials", "default-credentials"),
+    ("/usr/share/seclists/Usernames", "usernames"),
 ]
 for path, name in wl_paths:
     if os.path.exists(path):

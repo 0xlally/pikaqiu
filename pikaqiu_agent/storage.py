@@ -556,12 +556,26 @@ class MissionStore:
                 (target, scope or target, _now(), mission_id),
             )
 
-    def request_stop(self, mission_id: str) -> None:
+    def request_stop(self, mission_id: str) -> bool:
         with self._lock, self._conn:
-            self._conn.execute(
-                "UPDATE missions SET stop_requested = 1, updated_at = ? WHERE id = ?",
+            cur = self._conn.execute(
+                """
+                UPDATE missions
+                SET stop_requested = 1,
+                    status = CASE
+                        WHEN status IN ('queued', 'running') THEN 'stopped'
+                        ELSE status
+                    END,
+                    error_message = CASE
+                        WHEN status IN ('queued', 'running') THEN 'Stop requested by operator.'
+                        ELSE error_message
+                    END,
+                    updated_at = ?
+                WHERE id = ?
+                """,
                 (_now(), mission_id),
             )
+            return cur.rowcount > 0
 
     def set_human_collab_enabled(self, mission_id: str, enabled: bool) -> None:
         with self._lock, self._conn:

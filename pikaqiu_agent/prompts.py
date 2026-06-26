@@ -3,6 +3,13 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from pikaqiu_agent.flag_paths import (
+    FLAG_FILE_CAT_COMMAND,
+    FLAG_FILE_FIND_COMMAND,
+    FLAG_FILE_GREP_COMMAND,
+    FLAG_HTTP_PATH_HINT,
+)
+
 
 def _json(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2)
@@ -254,7 +261,7 @@ def build_tool_system_prompt(
             "s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n"
             "s.bind(('0.0.0.0', PORT)); s.listen(1); s.settimeout(TIMEOUT)\n"
             "conn, addr = s.accept()\n"
-            "for cmd in ['id', 'cat /flag', 'find / -name \"*flag*\" 2>/dev/null']:\n"
+            f"for cmd in ['id', 'env', {FLAG_FILE_CAT_COMMAND!r}, {FLAG_FILE_FIND_COMMAND!r}]:\n"
             "    conn.send((cmd + '\\n').encode()); time.sleep(2)\n"
             "    print(f\"[{cmd}] {conn.recv(65536).decode()}\")\n"
             "conn.close(); s.close()\n"
@@ -341,7 +348,7 @@ def build_tool_system_prompt(
             "9. **禁止伪造flag**：只能提交从目标HTTP响应/文件/数据库/cookie中真实提取的flag\n"
             "10. **跳过无意义扫描**：URL已指定端口时直接访问，不做nmap全端口扫描\n"
             "11. **RCE确认流程**：①`id`或`cat /etc/passwd`测试 ②理解输出通道（盲打/过滤/重定向）③写入webroot或用反弹shell。有回显优先回显，不依赖外部服务\n"
-            "12. **flag搜索流程**（RCE后）：`env` → `cat /flag /flag.txt /app/flag` → `find / -maxdepth 3 -name '*flag*' -type f 2>/dev/null` → `grep -r 'flag{{' /app/ /var/www/ /opt/ 2>/dev/null`。flag位置不固定，不要预设\n"
+            f"12. **flag搜索流程**：Web入口先小范围访问 `{FLAG_HTTP_PATH_HINT}`；RCE后：`env` → `{FLAG_FILE_CAT_COMMAND}` → `{FLAG_FILE_FIND_COMMAND}` → `{FLAG_FILE_GREP_COMMAND}`。flag位置不固定，不要预设\n"
             "13. **区分本地与远程**：`ls`/`cat`看到的是沙箱文件系统，只有curl/requests获取的才是远程目标\n"
             "14. **不完全相信记忆**：记忆可能不完整或误导，实际结果优先\n"
             "15. **上轮影响**：上轮agent可能改变了环境。页面、日志或测试信息里的诱饵字符串不能直接当作凭据、flag或账号候选，必须先有目标行为证据支撑\n"

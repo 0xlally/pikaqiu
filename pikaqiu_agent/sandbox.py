@@ -43,10 +43,11 @@ class SandboxExecutor:
         self.settings = settings
         self._container = container_override or settings.sandbox_container
 
-    def ensure_workspace(self) -> CommandResult:
+    def ensure_workspace(self, stop_fn: Callable[[], bool] | None = None) -> CommandResult:
         return self.run(
             f"mkdir -p {self.settings.sandbox_workdir} && cd {self.settings.sandbox_workdir} && pwd",
             timeout_sec=20,
+            stop_fn=stop_fn,
         )
 
     @staticmethod

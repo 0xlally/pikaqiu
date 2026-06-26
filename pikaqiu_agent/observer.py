@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass, field
 from difflib import SequenceMatcher
 from typing import Any
 
+from pikaqiu_agent.flag_paths import FLAG_FILE_CAT_COMMAND, FLAG_FILE_FIND_COMMAND, FLAG_FILE_GREP_COMMAND
 from pikaqiu_agent.memory_rules import normalize_dead_ends
 
 
@@ -112,8 +113,8 @@ STRONG_EVIDENCE_RULES = (
         re.compile(r"\buid=\d+\([^)]+\)\s+gid=\d+\([^)]+\)|\buid=\d+\s+gid=\d+", re.I),
         "命令执行已返回 uid/gid",
         (
-            "围绕已验证 RCE 收束：先确认当前目录和环境变量，再读取 /flag、/flag.txt、/app/flag，"
-            "必要时 find / -maxdepth 3 -iname '*flag*'。"
+            f"围绕已验证 RCE 收束：先确认当前目录和环境变量，再执行 `{FLAG_FILE_CAT_COMMAND}`；"
+            f"必要时执行 `{FLAG_FILE_FIND_COMMAND}`，并用 `{FLAG_FILE_GREP_COMMAND}` 做小范围内容检索。"
         ),
         "保留命令回显中的 uid/gid、当前目录、flag 文件读取结果或 find 命中路径。",
     ),

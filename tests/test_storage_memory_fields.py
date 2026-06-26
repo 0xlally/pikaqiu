@@ -99,6 +99,19 @@ class StorageMemoryFieldsTests(unittest.TestCase):
             ],
         )
 
+    def test_request_stop_immediately_marks_running_mission_stopped(self):
+        store = MissionStore(":memory:")
+        mission_id = self._create_mission(store)
+        store.update_mission_status(mission_id, "running")
+
+        updated = store.request_stop(mission_id)
+        mission = store.get_mission(mission_id)
+
+        self.assertTrue(updated)
+        self.assertTrue(mission["stop_requested"])
+        self.assertEqual(mission["status"], "stopped")
+        self.assertEqual(mission["error_message"], "Stop requested by operator.")
+
 
 if __name__ == "__main__":
     unittest.main()

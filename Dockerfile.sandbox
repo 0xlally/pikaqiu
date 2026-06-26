@@ -95,6 +95,7 @@ RUN printf 'wireshark-common wireshark-common/install-setuid boolean true\n' | d
     exploitdb \
     trivy \
     wordlists \
+    seclists \
     openjdk-21-jdk-headless \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
@@ -292,6 +293,10 @@ RUN if [ ! -s /usr/share/wordlists/rockyou.txt ]; then \
       gunzip -k /usr/share/wordlists/rockyou.txt.gz; \
     fi \
     && test -s /usr/share/wordlists/rockyou.txt
+RUN test -s /usr/share/seclists/Discovery/Web-Content/DirBuster-2007_directory-list-2.3-small.txt \
+    && test -s /usr/share/seclists/Discovery/Web-Content/common.txt \
+    && test -s /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt \
+    && test -d /usr/share/seclists/Passwords
 RUN playwright install --with-deps chromium
 RUN netexec --help >/dev/null 2>&1; crackmapexec --help >/dev/null 2>&1; exit 0
 
