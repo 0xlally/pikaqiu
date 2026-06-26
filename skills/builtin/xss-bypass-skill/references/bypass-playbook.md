@@ -1,64 +1,64 @@
 # XSS Bypass Playbook
 
-按“已证明的阻塞点”选择策略。不要一次叠加多类绕过；每个候选都要能解释当前证据。
+Choose a strategy from the proven blocker. Do not stack many bypass classes at once; each candidate should explain the current evidence.
 
-## HTML 与 Parser
+## HTML And Parser Contexts
 
-- `<` 被禁：转向属性逃逸、JS 字符串逃逸、URL sink、上传预览或 DOM decode sink。实体/URL 编码只有在后续解码证据存在时才有意义。
-- tag 被禁：先找能存活的最小 tag，再加执行面。优先枚举 `x`、`svg`、`math`、`details`、`input`、`body`、`style`、`image/img`、`video/source`、`iframe/srcdoc`、`meta refresh`、`base`。
-- 边界标签：如果过滤器是字母范围、首字母或黑名单正则，先求补集而不是背常见标签。例：`<[a-yA-Y/]+` 拦 `<a>` 到 `<y>` 和闭合标签，但 `<z autofocus onfocus=...>` 可作为自定义标签存活。黑盒时用 `<a>`、`<m>`、`<y>`、`<z>`、`<zz>` 做最小差异探测。
-- 少数标签白名单：如果只允许一个或少数标签，固定允许 tag 后选择对应执行面，不要重新泛扫。图片/资源类优先 `src=x onerror=...`，部分 parser 会把 `<image>` 归入图片元素语义；文档/容器类如 `body`、可触发加载的 `style` 优先 `onload`；可聚焦或自定义元素优先 `autofocus/onfocus`，尤其配合 harness 主动触发 focus。
-- 状态变化优先级高于标签枚举：当某个最小标签只改变 challenge 状态而没有保留原始 payload 或产生浏览器执行证据时，先围绕这个状态做最小差分；不要继续堆更多特殊标签。重点比较 raw HTML、最终 DOM、状态文本、是否有 flag、是否需要下一阶段输入或 bot/harness 触发。
-- event 被禁：固定 tag 后只换触发方式。常见无交互信号包括 `onerror`、`onload`、`autofocus/onfocus`、`open/ontoggle`、`onanimationstart`、`ontransitionend`、media `source/onerror`、popover/toggle。
-- 挑战 harness：检查 `check.js`、bot 脚本或页面辅助 JS 是否会主动触发 `[autofocus]`、`[onfocus]`、click、mouseover、toggle、animation 等事件。如果 harness 会触发 focus，自定义 tag + `autofocus onfocus=...` 是高优先级候选。
-- 空格被禁：测试 `/`、tab、换行、form-feed、回车和无引号属性；只换分隔符，不换载体。对 HTML tag 属性，优先把 `tag attr=value event=...` 变成 `tag/attr=value/event=...`，用 raw HTML 和最终 DOM 确认浏览器仍拆成属性。
-- raw-text/RCDATA：在 `script/style/textarea/title/xmp/plaintext` 中优先测试对应闭合标签，再进入 HTML 载体。
-- parser 差异：保留“服务端输出 -> sanitizer 输出 -> 最终 DOM”三态。只有最终 DOM 产生 active markup 才算进入 mXSS 阶段。
-- DOM clobbering：当代码读取 `window.foo`、`document.foo`、form/name/id、配置对象或 sanitizer wrapper 时，测试 `id/name` 是否能覆盖对象引用，再连接后续 sink。
+- If `<` is blocked, move to attribute escape, JavaScript string escape, URL sinks, upload preview, or DOM decode sinks. URL encoding matters only when a later decode step is proven.
+- If a tag is blocked, first find the smallest surviving tag, then add an execution surface. Prioritize `x`, `svg`, `math`, `details`, `input`, `body`, `style`, `image/img`, `video/source`, `iframe/srcdoc`, `meta refresh`, and `base`.
+- For boundary tag filters, look for complement sets rather than memorized tags. Example: a filter like `<[a-yA-Y/]+` blocks `<a>` through `<y>` and closing tags, but `<z autofocus onfocus=...>` may survive as a custom element. In black-box testing, compare `<a>`, `<m>`, `<y>`, `<z>`, and `<zz>`.
+- With a small tag allowlist, keep the allowed tag fixed and choose its execution surface. For image-like resources, try `src=x onerror=...`; some parsers normalize `<image>` into image semantics. For `body` or loadable `style`, test `onload`. For focusable or custom elements, test `autofocus/onfocus`, especially if the harness triggers focus.
+- Prioritize state changes over tag enumeration. If one minimal tag changes the challenge state without preserving the raw payload or showing browser execution, make a minimal differential proof around that state before adding exotic tags.
+- If events are blocked, keep the tag fixed and swap only the trigger: `onerror`, `onload`, `autofocus/onfocus`, `open/ontoggle`, `onanimationstart`, `ontransitionend`, media `source/onerror`, or popover/toggle.
+- Inspect `check.js`, bot scripts, or helper JavaScript for active triggering of `[autofocus]`, `[onfocus]`, click, mouseover, toggle, or animation events. If focus is triggered, custom tag plus `autofocus onfocus=...` is high priority.
+- If spaces are blocked, test `/`, tab, newline, form-feed, carriage return, and unquoted attributes. For HTML attributes, prefer turning `tag attr=value event=...` into `tag/attr=value/event=...`, then verify raw HTML and final DOM.
+- In `script/style/textarea/title/xmp/plaintext`, first test the matching closing tag, then re-enter the HTML parser.
+- Preserve three states when parser differences matter: server output, sanitizer output, and final DOM. mXSS begins only when the final DOM contains active markup.
+- For DOM clobbering, test whether `id/name` can overwrite `window.foo`, `document.foo`, form references, config objects, or sanitizer wrappers before connecting the overwritten object to a sink.
 
-## JavaScript 上下文
+## JavaScript Contexts
 
-- 字符串逃逸：分别处理单引号、双引号、反引号模板、反斜杠转义、换行和注释闭合。保持原脚本语法有效比 payload 花哨更重要。
-- script block：如果能写 `</script>`，可转回 HTML parser；如果不能，留在 JS 字符串/表达式内解决。
-- JSON-in-script：先判断数据是否只被 `JSON.parse` 使用，还是会被拼进 HTML/JS。纯 JSON 反射不是执行证据。
-- 无括号：测试 tagged template、事件 handler、`throw` + `onerror`、导航型 `javascript:`，不要一开始上 JSFuck 系。
-- 无空格：优先压缩表达式、使用换行/tab 或属性 `/` 分隔；必要时用 `terser` 先缩短 proof。
-- 禁数字：用 `print()`、字符串 marker、`+[]`、`+!+[]` 等构造，先只替换数字。
-- 禁字母：只有 JS 表达式可执行且 `[]()+!` 等字符可用时，用 `jscrewit` 生成最小 proof，并核对长度和字符集合。
-- token 被禁：`alert` 被禁时轮换到 `console.log`、`document.title`、`window.xss_proof`、image/beacon 或同源状态变化。
+- For string escape, handle single quotes, double quotes, template literals, backslash escaping, newlines, and comment closure separately. Keeping the surrounding script syntactically valid matters more than payload cleverness.
+- In a script block, use `</script>` to return to the HTML parser when possible. If not, stay inside the JavaScript expression or string context.
+- For JSON-in-script, determine whether the value is only consumed by `JSON.parse` or later concatenated into HTML/JS. Pure JSON reflection is not execution evidence.
+- Without parentheses, test tagged templates, event handlers, `throw` plus `onerror`, or navigation-style `javascript:` before reaching for JSFuck-style encoders.
+- Without spaces, minify expressions, use newline/tab where valid, or use `/` separators in attributes. Use `terser` to shrink proof code when needed.
+- If digits are blocked, build them with `+[]`, `+!+[]`, string markers, or boolean arithmetic; replace only the number first.
+- If letters are blocked, use `jscrewit` only when the context is executable JavaScript and characters such as `[]()+!` are available. Always verify generated length and character set.
+- If a token such as `alert` is blocked, switch the success signal to `console.log`, `document.title`, `window.xss_proof`, image/beacon requests, or same-origin state mutation.
 
-## URL、协议与导航
+## URL, Protocol, And Navigation
 
-- `javascript:` 只对导航 sink 有意义；对 `fetch/src/import` 等资源加载 sink 通常不是脚本执行。
-- `data:`、`blob:`、`srcdoc` 依赖 CSP、sandbox 和目标属性；必须用真实浏览器或挑战 harness 验证。
-- URL 过滤弱点：大小写、tab/newline/control char、实体编码、URL 编码、双重解码、协议相对 URL、userinfo、路径归一化、open redirect。
-- `<base>`：当 CSP `base-uri` 缺失且页面有相对脚本/链接时，测试 base tag 是否能改变加载路径。
-- admin bot URL 校验：先证明 bot 会跟随 URL，再区分当前页面 CSP 和新导航页面 CSP。
+- `javascript:` matters for navigation sinks; it usually does not execute in resource-loading sinks such as `fetch`, `src`, or `import`.
+- `data:`, `blob:`, and `srcdoc` depend on CSP, sandbox, and the target attribute. Verify in a real browser or challenge harness.
+- URL filter weak points include case, tab/newline/control characters, HTML entities, URL encoding, double decoding, protocol-relative URLs, userinfo, path normalization, and open redirects.
+- If `base-uri` is missing and the page uses relative script/link URLs, test whether `<base>` can change loading paths.
+- For admin bot URL validation, first prove the bot follows the URL, then separate the CSP of the current page from the CSP of any navigated page.
 
-## CSS 与 Scriptless
+## CSS And Scriptless Impact
 
-- 现代浏览器通常不会从 CSS `javascript:` 直接执行脚本；把 CSS 当作执行证据前必须用真实浏览器或挑战 harness 验证。
-- `<style>` 内如果 `<` 可用，优先 `</style>` 逃逸到 HTML。
-- 纯 CSS 可用于 import/load beacon、UI redress、CSS exfil 或触发挑战状态，但要标注为 scriptless impact，不要冒充 JS XSS。
-- CSS 上下文转义用 `cssesc`，但它只解决 CSS 语法，不提供执行能力。
+- Modern browsers usually do not execute JavaScript directly from CSS `javascript:`. Verify with a real browser before treating CSS as execution.
+- Inside `<style>`, if `<` is available, prefer `</style>` to escape into HTML.
+- Pure CSS can still create import/load beacons, UI redress, CSS exfiltration, or challenge state changes. Label it scriptless impact, not JavaScript XSS.
+- Use `cssesc` for CSS string or identifier escaping; it fixes CSS syntax, not execution capability.
 
-## CSP、Sandbox、Trusted Types
+## CSP, Sandbox, And Trusted Types
 
-先收集完整 header/meta，再判断 directive：
+Collect complete header/meta policy before choosing a bypass:
 
-- 核对 `default-src`、`script-src`、`script-src-elem`、`script-src-attr`、`object-src`、`base-uri`、`frame-src`、`img-src`、`connect-src`、`form-action`、`navigate-to`。
-- inline/event 被禁：寻找允许来源外链、JSONP/callback、现有 script gadget、nonce 可复用或 hash 匹配。
-- `strict-dynamic`：nonce script 是否能加载后续脚本取决于现有 trusted script 行为。
-- `unsafe-hashes`：只影响匹配 hash 的 inline handler，不等于所有 event 可用。
-- `script-src-attr` 和 `script-src-elem` 分开测：event handler 与 script tag 不要混为一谈。
-- `base-uri` 缺失：结合相对 script URL 测 `<base>`。
-- `connect-src` 禁外连：用 `img-src`、`form-action`、同源状态变化或 challenge callback 替代 exfil 信号。
-- sandbox：没有 `allow-scripts` 就不要声称 JS 执行；没有 `allow-same-origin` 时执行也可能读不到同源敏感数据。
-- Trusted Types：找已有 `trustedTypes.createPolicy`、弱 sanitizer wrapper、非 TT sink、URL navigation、`srcdoc`、服务端 HTML 或 TT 前模板渲染。
+- Compare `default-src`, `script-src`, `script-src-elem`, `script-src-attr`, `object-src`, `base-uri`, `frame-src`, `img-src`, `connect-src`, `form-action`, and `navigate-to`.
+- If inline/event execution is blocked, look for allowed external sources, JSONP/callbacks, existing script gadgets, reusable nonces, or matching hashes.
+- With `strict-dynamic`, whether a nonce script can load follow-up scripts depends on existing trusted script behavior.
+- `unsafe-hashes` affects matching inline handlers only; it does not make every event handler valid.
+- Test `script-src-attr` and `script-src-elem` separately. Event handlers and script tags are different surfaces.
+- If `base-uri` is absent, combine relative script URLs with a `<base>` test.
+- If `connect-src` blocks exfiltration, use `img-src`, `form-action`, same-origin state changes, or a challenge callback.
+- In sandboxed frames, do not claim JavaScript execution without `allow-scripts`. Without `allow-same-origin`, code may execute but fail to read same-origin secrets.
+- For Trusted Types, look for existing `trustedTypes.createPolicy`, weak sanitizer wrappers, non-TT sinks, URL navigation, `srcdoc`, server-rendered HTML, or pre-TT template rendering.
 
-## DOM、Framework 与 Sanitizer
+## DOM, Frameworks, And Sanitizers
 
-DOM source：
+DOM sources:
 
 ```text
 location.href/search/hash
@@ -70,7 +70,7 @@ API response
 uploaded file metadata
 ```
 
-危险 sink：
+Dangerous sinks:
 
 ```text
 innerHTML / outerHTML / insertAdjacentHTML / document.write
@@ -83,41 +83,41 @@ Angular ng-bind-html / template expression
 Markdown/HTML renderer output
 ```
 
-DOMPurify/mXSS：
+DOMPurify/mXSS:
 
-- 记录 input、sanitized output、final browser DOM。
-- 检查配置和 hooks：允许 tag/attr、URI 正则、自定义元素、profile、返回 Trusted Types 的方式。
-- 重点方向：SVG/MathML namespace、`template`、raw-text close tag、畸形 table/form、URL protocol、DOM clobbering、sanitizer 后二次拼接。
-- 不要只因为版本旧就套 payload；必须证明配置、插入方式和最终 DOM 都匹配。
+- Record input, sanitized output, and final browser DOM.
+- Check configuration and hooks: allowed tags/attributes, URI regexes, custom elements, profiles, and Trusted Types return mode.
+- Focus on SVG/MathML namespaces, `template`, raw-text closing tags, table/form foster parenting, URL protocols, DOM clobbering, and concatenation after sanitization.
+- Do not paste old-version payloads just because the version is old; prove configuration, insertion method, and final DOM all match.
 
-Framework/CSTI：
+Framework/CSTI:
 
-- React 默认转义文本；只有 raw HTML、第三方 renderer、URL sink 或 dangerouslySetInnerHTML 才继续。
-- Vue/Angular 看模板编译边界：用户输入是否进入模板，而不是只进入文本节点。
-- jQuery 老代码重点看 `$()`、`.html()`、`.append()`、selector injection 和 hash router。
+- React escapes text by default. Continue only on raw HTML, third-party renderers, URL sinks, or `dangerouslySetInnerHTML`.
+- In Vue/Angular, check whether user input reaches template compilation rather than a text node.
+- In older jQuery code, inspect `$()`, `.html()`, `.append()`, selector injection, and hash routers.
 
-## 文件上传与 Admin Bot
+## File Upload And Admin Bot
 
-上传：
+Uploads:
 
-- 先确认渲染位置、origin、Content-Type、`X-Content-Type-Options`、`Content-Disposition`、sandbox 和是否 inline。
-- 候选面：SVG、HTML、Markdown HTML passthrough、PDF/HTML 转换、文件名、EXIF/metadata、压缩包预览、source map 或 admin preview。
-- 如果只在下载附件中存在 payload，不算浏览器执行；需要 preview、inline render 或 bot 打开。
+- Confirm render location, origin, `Content-Type`, `X-Content-Type-Options`, `Content-Disposition`, sandbox, and whether rendering is inline.
+- Candidate surfaces: SVG, HTML, Markdown HTML passthrough, PDF/HTML conversion, filename, EXIF/metadata, archive preview, source map, or admin preview.
+- Payload in a downloaded attachment is not browser execution; you need preview, inline rendering, or a bot opening it.
 
-Admin bot：
+Admin bot:
 
-- 先用无害 beacon/title/state change 证明 bot visit。
-- 再证明权限：能读 admin-only DOM/API，或能执行 privileged action。
-- 外连被禁时，优先写同源可回读位置：profile、draft、logs、notifications、report result、webhook history。
-- 本地浏览器自动化只能证明路线，最终还要 bot callback、挑战返回、同源状态变化或 flag。
+- First prove the bot visit with a harmless beacon, title change, or state change.
+- Then prove privilege: read admin-only DOM/API or perform a privileged action.
+- If outbound connections are blocked, write to same-origin readable places: profile, draft, logs, notifications, report result, or webhook history.
+- Local browser automation proves the route, not real bot equivalence. Final evidence still needs bot callback, challenge response, same-origin state mutation, or flag.
 
-## 最小工具集
+## Minimal Toolset
 
-- `jscrewit`：JSFuck 系默认工具，仅在 JS 表达式可执行且允许 `[]()+!` 时使用。
-- `he`：HTML entity 编解码，用于验证实体是否会被后续 parser/DOM sink 解码。
-- `jsesc`：JS 字符串/Unicode 转义。
-- `cssesc`：CSS 字符串/标识符转义。
-- `terser`：压缩、去空格、缩短 proof。
+- `jscrewit`: JSFuck-family generator; use only when JavaScript expressions execute and `[]()+!` are allowed.
+- `he`: HTML entity encode/decode for checking whether entities are decoded by later parsers or DOM sinks.
+- `jsesc`: JavaScript string and Unicode escaping.
+- `cssesc`: CSS string and identifier escaping.
+- `terser`: minify, remove spaces, and shrink proof code.
 
 ```bash
 npx jscrewit "window.xss_proof=1" > payload.js

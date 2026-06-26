@@ -1,24 +1,24 @@
 ---
 name: sql-injection-skill
-description: 面向授权 CTF/靶场/渗透测试的 SQL/NoSQL/ORM 注入专项技能。用于存在明确注入信号的场景：SQL/ORM 错误、引号/括号/布尔/时间差分、登录/搜索/排序/筛选/INSERT/UPDATE/二阶查询异常、UNION/盲注迹象、标识符或 ORDER BY 可控、JSON/URL 嵌套对象被保留、MongoDB 操作符、MongoEngine __raw__、GraphQL 字段或 filter 参数进入数据库查询、Django/Prisma/Ransack/OData 等查询 DSL 可控。Use when Codex needs focused SQL/NoSQL/ORM injection validation, oracle modeling, minimal data extraction, or sqlmap-assisted verification without broad payload spraying.
+description: Focused SQL/NoSQL/ORM injection skill for authorized CTF, lab, and pentest targets. Use for SQL/ORM errors, quote/boolean/time differences, login/search/sort/filter/INSERT/UPDATE/second-order anomalies, UNION or blind behavior, controllable ORDER BY or identifiers, JSON/URL nested objects, MongoDB operators, MongoEngine __raw__, GraphQL filters, Django/Prisma/Ransack/OData query DSLs, oracle modeling, minimal extraction, auth bypass validation, and sqlmap verification.
 ---
 
 # sql-injection-skill
 
-目标：把可疑输入点推进成可利用的 SQL/NoSQL/ORM 注入原语，并拿到登录态、目标字段、凭据、token、flag 或下一阶段入口。
+Goal: turn a suspicious input into one usable primitive, then extract only the state, credential, token, flag, or entry needed.
 
-## 最小思路
+## Minimal Approach
 
-1. 找到输入进入查询的位置：SQL 字符串、排序/字段名、登录查询、INSERT/UPDATE、二阶触发、NoSQL 对象、GraphQL/ORM 查询 DSL。
-2. 建立一个稳定原语：布尔差分、错误差分、时间差分、排序差分、返回行控制或对象操作符保留。
-3. 按目标选择利用方式：UNION 回显、盲注提取、认证绕过、二阶触发、NoSQL/GraphQL 字段提取或 ORM/DSL 绕过。
-4. 只提取推进链条需要的数据；拿到登录态或权限变化后，继续看新功能面。
+1. Locate where input reaches a query: SQL string, sort field, login lookup, INSERT/UPDATE path, second-order trigger, NoSQL object, GraphQL argument, or ORM DSL.
+2. Build one stable primitive: boolean, error, time, sort, returned-row, or object-operator difference.
+3. Choose the shortest path from that primitive: UNION echo, blind extraction, auth bypass, second-order trigger, NoSQL/GraphQL extraction, or ORM/DSL bypass.
+4. Extract the smallest useful data. After login or privilege changes, inspect newly reachable functionality instead of dumping broadly.
 
-## 参考
+## References
 
-- SQL 上下文、UNION、盲注、登录绕过、排序注入、二阶查询：`references/sql-playbook.md`
-- JSON、MongoDB/MongoEngine、GraphQL、字段选择：`references/nosql-graphql.md`
-- Django/Prisma/Ransack/OData/动态查询 DSL：`references/orm-query-dsl.md`
-- sqlmap 复核或复杂请求加速：`references/sqlmap-verification.md`
+- SQL contexts, UNION, blind injection, login bypass, sort injection, and second-order queries: `references/sql-playbook.md`
+- JSON, MongoDB/MongoEngine, GraphQL, and field selection: `references/nosql-graphql.md`
+- Django, Prisma, Ransack, OData, and dynamic query DSLs: `references/orm-query-dsl.md`
+- sqlmap recheck or complex request acceleration: `references/sqlmap-verification.md`
 
-主文件只给方向，不限制具体打法；根据现场 oracle 和目标选择最短路线。
+The main file gives direction, not a fixed playbook. Select the shortest route from the live oracle.

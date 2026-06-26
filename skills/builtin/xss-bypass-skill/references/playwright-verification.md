@@ -1,26 +1,26 @@
 # Playwright Verification
 
-HTTP 响应只能证明服务端输出；以下情况必须用 Playwright 证明浏览器语义和影响：
+An HTTP response proves server output only. Use Playwright to prove browser semantics and impact for:
 
-- DOM source/sink、postMessage、前端路由、storage、window.name。
-- 事件触发、focus/click/toggle/animation/media error。
-- CSP、Trusted Types、sandbox、iframe、mXSS、DOMPurify。
-- 文件上传预览、Markdown/HTML renderer、admin preview。
-- admin bot、report/share/review 流程的本地近似验证。
+- DOM source/sink flows, postMessage, frontend routing, storage, and `window.name`.
+- Event triggering, focus/click/toggle/animation/media error behavior.
+- CSP, Trusted Types, sandbox, iframe, mXSS, and DOMPurify behavior.
+- File upload previews, Markdown/HTML renderers, and admin preview pages.
+- Local approximation of admin bot, report, share, or review flows.
 
-## 证据清单
+## Evidence Checklist
 
-尽量保留：
+Keep as much as possible:
 
-- 最终 URL、状态码、响应头和关键响应片段。
-- console、dialog、pageerror、request/response、request failure。
-- CSP/Trusted Types/sandbox 相关错误。
-- JavaScript 执行后的 DOM 片段。
-- `document.title`、`window.xss_proof`、DOM marker、同源状态变化。
-- 资源请求列表，尤其是 script/img/connect/frame/form 请求。
-- bot 场景下的 callback、挑战返回、同源可回读状态变化或 flag。
+- Final URL, status code, response headers, and decisive response snippets.
+- Console, dialog, pageerror, request/response, and request failure logs.
+- CSP, Trusted Types, and sandbox errors.
+- DOM snippet after JavaScript execution.
+- `document.title`, `window.xss_proof`, DOM markers, and same-origin state changes.
+- Resource requests, especially script, image, connect, frame, and form requests.
+- For bot cases: callback, challenge response, same-origin readable state change, or flag.
 
-## 最小模板
+## Minimal Template
 
 ```javascript
 import { chromium } from "playwright";
@@ -57,9 +57,9 @@ console.log("[proof]", await page.evaluate(() => ({
 await browser.close();
 ```
 
-## DOM Source/Sink 验证
+## DOM Source/Sink Verification
 
-一次只改变一个 source：
+Change only one source at a time:
 
 ```text
 location.hash
@@ -71,7 +71,7 @@ API response
 uploaded file metadata
 ```
 
-记录 source 到 sink 的链条：
+Record the source-to-sink chain:
 
 ```text
 source:
@@ -82,7 +82,7 @@ runtime_signal:
 blocked_by:
 ```
 
-危险 sink 重点看：
+Dangerous sinks:
 
 ```text
 innerHTML / outerHTML / insertAdjacentHTML / document.write
@@ -97,28 +97,28 @@ Markdown/HTML renderer output
 
 ## CSP / Trusted Types / Sandbox
 
-收集：
+Collect:
 
-- 完整 CSP header/meta。
-- `script-src`、`script-src-elem`、`script-src-attr`、`base-uri`、`object-src`、`frame-src`、`connect-src`、`form-action`。
-- script nonce/hash、meta CSP、sandbox flags、iframe origin。
-- Trusted Types 是否启用、policy 名称、wrapper 或 sanitizer 行为。
+- Full CSP header/meta.
+- `script-src`, `script-src-elem`, `script-src-attr`, `base-uri`, `object-src`, `frame-src`, `connect-src`, and `form-action`.
+- Script nonce/hash values, meta CSP, sandbox flags, and iframe origin.
+- Whether Trusted Types is enabled, policy names, wrappers, and sanitizer behavior.
 
-判断：
+Judge carefully:
 
-- 没有 callback 不等于未执行；可能是 `connect-src` 或外连被禁。
-- 没有 dialog 不等于未执行；可能是 dialog token 被过滤或 API 被重写。
-- 没有 `allow-scripts` 的 sandbox 不应声称 JS 执行。
-- 没有 `allow-same-origin` 时，即使执行也可能读不到同源敏感数据。
+- No callback does not mean no execution; `connect-src` or outbound networking may be blocked.
+- No dialog does not mean no execution; dialog tokens may be filtered or APIs may be overwritten.
+- Without `allow-scripts`, do not claim JavaScript execution in a sandbox.
+- Without `allow-same-origin`, code may execute but fail to read same-origin secrets.
 
 ## Admin Bot
 
-本地 Playwright 只证明路线，不能直接等价真实 bot。最终证据必须来自：
+Local Playwright only proves the route; it is not equivalent to the real bot. Final evidence must come from:
 
-- bot callback。
-- challenge response。
-- 同源可回读状态变化。
-- admin-only 内容。
-- flag 或题目定义的成功文本。
+- Bot callback.
+- Challenge response.
+- Same-origin readable state change.
+- Admin-only content.
+- Flag or challenge-defined success text.
 
-外连被禁时，优先找同源可回读位置：profile、draft、logs、notifications、report result、webhook history。
+If outbound connections are blocked, prefer same-origin readable locations: profile, draft, logs, notifications, report result, or webhook history.

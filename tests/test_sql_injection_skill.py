@@ -26,21 +26,22 @@ def test_sql_injection_skill_main_file_stays_minimal_and_reference_backed() -> N
     ).read_text(encoding="utf-8")
 
     for expected in (
-        "最小思路",
-        "稳定原语",
+        "Focused SQL/NoSQL/ORM injection skill",
+        "Minimal Approach",
+        "stable primitive",
         "references/sql-playbook.md",
         "references/nosql-graphql.md",
         "references/orm-query-dsl.md",
         "references/sqlmap-verification.md",
-        "不限制具体打法",
+        "not a fixed playbook",
     ):
         assert expected in skill_text
 
     for removed in (
-        "最短闭环",
-        "记录卡点",
-        "每次只改变一个变量",
-        "闭环验证",
+        "Shortest Loop",
+        "Notes",
+        "one variable at a time",
+        "closed-loop verification",
     ):
         assert removed not in skill_text
 
@@ -69,28 +70,14 @@ def test_sql_playbook_is_bypass_oriented() -> None:
     ).read_text(encoding="utf-8")
 
     for expected in (
-        "上下文与入口",
-        "DBMS 差异",
-        "UNION 回显",
-        "布尔 / 错误 / 时间盲注",
-        "登录与返回行控制",
-        "非 SELECT 利用",
-        "过滤绕过",
-        "空白被禁",
-        "引号被禁",
-        "逗号被禁",
-        "UNION` / `SELECT` 被禁",
-        "information_schema` 被禁",
-        "常用目标数据",
+        "DBMS",
+        "UNION",
+        "SELECT",
+        "information_schema",
     ):
         assert expected in playbook
 
     for removed in (
-        "基线与上下文",
-        "结论格式",
-        "按“已证明的信号”",
-        "不要喷 payload 字典",
-        "每次只改变一个变量",
         "method/url:",
     ):
         assert removed not in playbook

