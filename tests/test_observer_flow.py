@@ -32,6 +32,26 @@ def test_observer_detects_flag_in_full_tail() -> None:
     assert "flag{tail_flag_value}" in " ".join(decision.evidence)
 
 
+def test_observer_ignores_fake_flag_prefixes() -> None:
+    observer = ObserverAgent()
+
+    decision = observer.observe_tool_call(
+        mission={"target": "http://target.local"},
+        tool_call_log=[
+            {
+                "tool": "bash_exec",
+                "args_summary": "cat /flag",
+                "result_full": "dasctf{fake_flag_value}\nfLaG{fake_flag_value}\n",
+            }
+        ],
+        memory={},
+        captured_flags=[],
+    ).normalised()
+
+    assert decision.verdict != "L4"
+    assert "fake_flag_value" not in " ".join(decision.evidence)
+
+
 def test_long_tail_exit_code_is_concrete_evidence() -> None:
     observer = ObserverAgent()
     row = {

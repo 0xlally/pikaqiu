@@ -5,7 +5,8 @@ import re
 from typing import Callable
 
 
-FLAG_RE = re.compile(r"\b(?:flag|ctf|dasctf)\{[^}\s]{4,200}\}", re.I)
+VALID_FLAG_PREFIXES = ("flag", "FLAG", "ctf", "CTF")
+FLAG_RE = re.compile(r"\b(?:flag|FLAG|ctf|CTF)\{[^}\s]{4,200}\}")
 TRUSTED_FLAG_CAPTURE_TOOLS = {"bash_exec", "python_exec"}
 PLACEHOLDER_FLAG_BODIES = {
     "example",
@@ -39,6 +40,10 @@ def is_placeholder_flag(flag: str) -> bool:
     if "your" in compact and "flag" in compact:
         return True
     return False
+
+
+def is_valid_flag(flag: str) -> bool:
+    return bool(FLAG_RE.fullmatch(str(flag or "").strip()))
 
 
 def extract_flag_candidates(text: str) -> list[str]:

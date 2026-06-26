@@ -8,7 +8,9 @@ from pikaqiu_agent.flag_capture import (
     _flag_context,
     _trusted_tool_flag_candidates,
     _truncate_middle,
+    is_valid_flag,
 )
+from pikaqiu_agent.tools import create_submit_flag_tool
 
 
 class FlagAutoCaptureTests(unittest.TestCase):
@@ -36,6 +38,29 @@ class FlagAutoCaptureTests(unittest.TestCase):
         self.assertEqual(_trusted_tool_flag_candidates("python_exec", "flag{example}"), [])
         self.assertEqual(_trusted_tool_flag_candidates("bash_exec", "flag{test_value}"), [])
         self.assertEqual(_trusted_tool_flag_candidates("python_exec", "flag{your_flag_here}"), [])
+
+    def test_flag_prefixes_are_limited_to_flag_and_ctf_variants(self):
+        text = "flag{one123} FLAG{two456} ctf{three789} CTF{four012} dasctf{fake123} fLaG{fake456}"
+
+        self.assertEqual(
+            _extract_flag_candidates(text),
+            ["flag{one123}", "FLAG{two456}", "ctf{three789}", "CTF{four012}"],
+        )
+        for flag in ["flag{one123}", "FLAG{two456}", "ctf{three789}", "CTF{four012}"]:
+            self.assertTrue(is_valid_flag(flag))
+        for fake in ["dasctf{fake123}", "fLaG{fake456}", "FLAG_fake", "flagless{fake123}"]:
+            self.assertFalse(is_valid_flag(fake))
+
+    def test_submit_flag_tool_rejects_fake_prefixes(self):
+        submitted = []
+        tool = create_submit_flag_tool(lambda flag: submitted.append(flag) or f"[FLAG_CAPTURED] {flag}")
+
+        accepted = tool.invoke({"flag": "CTF{real123}"})
+        rejected = tool.invoke({"flag": "dasctf{fake123}"})
+
+        self.assertEqual(submitted, ["CTF{real123}"])
+        self.assertEqual(accepted, "[FLAG_CAPTURED] CTF{real123}")
+        self.assertIn("[FLAG_REJECTED]", rejected)
 
     def test_flag_summary_survives_middle_truncation(self):
         flag = "flag{98d2361b-f883-4daa-93f7-cb5c91a32c69}"

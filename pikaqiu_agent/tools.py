@@ -8,6 +8,8 @@ from typing import Any, Callable
 from langchain_core.tools import tool, BaseTool
 from pydantic import BaseModel, Field
 
+from pikaqiu_agent.flag_capture import is_valid_flag
+
 logger = logging.getLogger(__name__)
 
 
@@ -87,7 +89,7 @@ class WebFetchInput(BaseModel):
 
 
 class SubmitFlagInput(BaseModel):
-    flag: str = Field(description="The captured flag string (e.g. flag{...} or CTF{...})")
+    flag: str = Field(description="The captured flag string. Accepted prefixes: flag{...}, FLAG{...}, ctf{...}, CTF{...}")
 
 
 class SkillSearchInput(BaseModel):
@@ -392,6 +394,7 @@ def create_submit_flag_tool(on_flag: Callable[[str], str]) -> BaseTool:
                 CRITICAL RULES:
                 - Only call this with a flag string you ACTUALLY FOUND in the target's response,
                     file system, database output, or cookie value — obtained through exploitation.
+                - Accepted prefixes are exactly flag{...}, FLAG{...}, ctf{...}, or CTF{...}.
                 - NEVER fabricate, invent, or guess a flag to test this tool.
                 - NEVER submit flag{test_...}, flag{example}, or any string you made up.
                 - This is NOT a way to probe whether flags are accepted. Only call it when
@@ -399,7 +402,13 @@ def create_submit_flag_tool(on_flag: Callable[[str], str]) -> BaseTool:
 
                 If you found a string matching the flag format in the target response, submit it here.
                 """
-                return on_flag(flag.strip())
+                candidate = flag.strip()
+                if not is_valid_flag(candidate):
+                        return (
+                                "[FLAG_REJECTED] Invalid flag format. Only flag{...}, FLAG{...}, "
+                                "ctf{...}, and CTF{...} are accepted; other prefixes are fake flags."
+                        )
+                return on_flag(candidate)
 
         return submit_flag
 

@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass, field
 from difflib import SequenceMatcher
 from typing import Any
 
+from pikaqiu_agent.flag_capture import FLAG_RE
 from pikaqiu_agent.flag_paths import FLAG_FILE_CAT_COMMAND, FLAG_FILE_FIND_COMMAND, FLAG_FILE_GREP_COMMAND
 from pikaqiu_agent.memory_rules import normalize_dead_ends
 
@@ -32,7 +33,6 @@ VERDICT_PRIORITY = {
     "L4": 4,
 }
 
-FLAG_RE = re.compile(r"\b(?:flag|ctf|dasctf)\{[^}\s]{4,200}\}", re.I)
 FAILURE_RE = re.compile(
     r"(timeout|timed out|403|404|connection (?:failed|refused|reset)|"
     r"command not found|no results?|empty response|not found|forbidden|"
@@ -63,7 +63,7 @@ EVIDENCE_AUDIT_EXEMPT_TOOLS = {
 EVIDENCE_MARKER_RE = re.compile(
     r"(\[EXIT_CODE:\s*\d+\]|\[STDERR\]|\bHTTP/\d|\bstatus(?:_code)?\s*[:=]\s*\d{3}|"
     r"\b(?:200|201|204|301|302|400|401|403|404|500)\b|<html|set-cookie|content-type|"
-    r"response body|request body|headers?|stdout|stderr|traceback|flag\{|ctf\{|dasctf\{|"
+    r"response body|request body|headers?|stdout|stderr|traceback|"
     r"/api/|CVE-\d{4}-\d+|\bopen\b|\bclosed\b|\bfiltered\b|uid=|gid=|root:|"
     r"nginx|apache|tomcat|mysql|postgres|redis|ssh|ftp|port|response|status code|echo)",
     re.I,
@@ -86,7 +86,7 @@ STRONG_EVIDENCE_RULES = (
     ),
     (
         "flag_file_read",
-        re.compile(r"\b(?:flag|ctf|dasctf)\{[^}\s]{4,200}\}|/(?:flag|flag\.txt)\b[^\n]{0,120}(?:200|contents?|read|found)", re.I),
+        re.compile(r"\b(?:flag|FLAG|ctf|CTF)\{[^}\s]{4,200}\}|(?i:/(?:flag|flag\.txt)\b[^\n]{0,120}(?:200|contents?|read|found))"),
         "响应中已出现 flag 内容或 flag 文件读取线索",
         (
             "围绕已出现的 flag 证据收束：确认该值来自目标原始输出；若已经是完整 flag，立即提交，"
@@ -734,6 +734,8 @@ class ObserverAgent:
 
     def _has_concrete_evidence(self, row: dict[str, Any]) -> bool:
         result = _tool_result_text(row)
+        if FLAG_RE.search(result):
+            return True
         if EVIDENCE_MARKER_RE.search(result):
             return True
         tool = str(row.get("tool", ""))

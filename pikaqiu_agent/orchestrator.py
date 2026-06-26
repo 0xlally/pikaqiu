@@ -1789,6 +1789,12 @@ class OrchestratorManager:
             )
 
             def on_flag(flag: str) -> str:
+                flag = str(flag or "").strip()
+                if not _flag_capture.is_valid_flag(flag):
+                    return (
+                        "[FLAG_REJECTED] Invalid flag format. Only flag{...}, FLAG{...}, "
+                        "ctf{...}, and CTF{...} are accepted; other prefixes are fake flags."
+                    )
                 for existing in captured_flags:
                     if flag.lower() == existing.lower():
                         return f"[FLAG_DUPLICATE] {flag} already submitted"
