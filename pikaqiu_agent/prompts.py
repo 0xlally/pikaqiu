@@ -280,21 +280,13 @@ def build_tool_system_prompt(
         ),
         (
             "## 工具选择速查\n"
-            "- **Web发现/参数/漏洞**：先用 `curl`/浏览器响应确认具体入口、状态码、参数和差异；只有已有明确输入点或候选路径时，才用 `ffuf`/`arjun`/`nuclei`/`sqlmap` 做小范围验证。识别到 WordPress/CMS 时，先用 `wpscan --url http://TARGET --enumerate vp,vt,u --plugins-detection aggressive --no-update` 做最小枚举；XSS/DOM/JS 执行类问题需要运行时证据，具体工具按当前环境和已激活 skill 选择；产品版本漏洞先 `knowledge_search` / `searchsploit`。\n"
-            "- **端口/内网探测**：单目标服务识别用 `nmap -sV -sC`；内网网段快速发现用 `fscan`；发现私网IP后优先结合隧道再访问内网Web。\n"
-            "- **SMB/AD枚举**：SMB共享和凭据验证用 `netexec`、`smbmap`；LDAP/域对象用 `ldapdomaindump`、`powerview`；Kerberos用户枚举/喷洒用 `kerbrute`。\n"
-            "- **Kerberos/ADCS/Relay**：ASREPRoast用 `asreproast`/`impacket-GetNPUsers`；Kerberoast用 `impacket-GetUserSPNs`；ADCS用 `certipy-ad`；NTLM relay用 `impacket-ntlmrelayx`；强制认证链用 `coercer`、`mitm6`、`PetitPotam`、`printerbug`、`DFSCoerce`、`ShadowCoerce`。\n"
-            "- **密码/JWT/凭据**：在线登录爆破用 `hydra`；离线hash/JWT密钥破解用 `hashcat`；JWT结构、篡改和攻击模式用 `jwt_tool`。\n"
-            "- **云/容器/K8s**：云配置审计用 `prowler`；镜像/文件系统/依赖/IaC扫描用 `trivy`；Kubernetes暴露面用 `kube-hunter`。\n"
-            "- **Windows/后渗透资源**：Windows原生工具在 `/opt/windows-tools`，域内源码/脚本在 `/opt/ad-tools`；有Windows执行条件时再考虑 `mimikatz`、`Rubeus`、`SharpDPAPI`、`SharpHound`、`Certify`、`AdFind`。\n"
-            "- **详细语法**：先看自动注入的 `tool_guidance`；仍不确定就运行 `<tool> -h`，或用 `knowledge_search` 查询工具名。"
-        ),
-        (
-            "## XSS/DOM 运行时验证\n"
-            "- 涉及 XSS、DOM XSS、HTML 注入到浏览器语境、事件属性、CSP、cookie/localStorage、admin bot 或页面成功分支时，需要浏览器、挑战 harness、bot callback、同源状态变化或题目返回等运行时证据。\n"
-            "- 不要把 `curl`/`requests` 的反射结果当成 XSS 成功证据；它们适合枚举过滤器、确认反射位置、保存原始响应，但看到响应里有 `<script>` 只说明反射，不说明浏览器执行或命中成功条件。\n"
-            "- 运行时证据至少记录当前 URL、dialog/alert 或替代成功信号、关键 DOM/页面文本、console/pageerror、资源请求或同源状态变化；工具选择由当前环境和已激活 skill 决定。\n"
-            "- 如果使用 JSFuck 或其他编码生成器，先生成实际 payload 并核对字符集；payload 必须有可观察副作用，如 dialog、DOM 写入、跳转、请求回连、同源状态变化或页面成功文本，不能只执行空函数。\n"
+            "- **Web发现/参数/漏洞**：`curl`、`httpx`、`ffuf`、`arjun`、`nuclei`、`sqlmap`、`wpscan`、`searchsploit`、`knowledge_search`。\n"
+            "- **端口/内网探测**：`nmap`、`fscan`。\n"
+            "- **SMB/AD枚举**：`netexec`、`smbmap`、`ldapdomaindump`、`powerview`、`kerbrute`。\n"
+            "- **Kerberos/ADCS/Relay**：`asreproast`、`impacket-GetNPUsers`、`impacket-GetUserSPNs`、`certipy-ad`、`impacket-ntlmrelayx`、`coercer`、`mitm6`、`PetitPotam`、`printerbug`、`DFSCoerce`、`ShadowCoerce`。\n"
+            "- **密码/JWT/凭据**：`hydra`、`hashcat`、`jwt_tool`。\n"
+            "- **云/容器/K8s**：`prowler`、`trivy`、`kube-hunter`。\n"
+            "- **Windows/后渗透资源**：`/opt/windows-tools`、`/opt/ad-tools`、`mimikatz`、`Rubeus`、`SharpDPAPI`、`SharpHound`、`Certify`、`AdFind`。"
         ),
         (
             "## 最小高效扫描\n"
@@ -359,7 +351,7 @@ def build_tool_system_prompt(
             "    - ⚠️ 不要在webshell中curl内网IP期望回显——用隧道后在本地proxychains执行才能看到响应\n"
             "    - ⚠️ 传输工具前必须先在沙箱启动文件服务"
         ),
-        "# 减少token消耗：精简输出，只输出最有价值的信息，无需冗余总结",
+       
     ]
 
     return "\n\n".join(section.strip("\n") for section in sections if section)
