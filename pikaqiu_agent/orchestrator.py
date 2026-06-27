@@ -1491,6 +1491,7 @@ class OrchestratorManager:
         round_no: int,
         memory: dict[str, Any],
         decision: ObserverDecision,
+        source: str = "observer",
     ) -> dict[str, Any]:
         if not decision.memory_patch:
             return memory
@@ -1498,13 +1499,27 @@ class OrchestratorManager:
         if changed:
             self.store.set_memory(mission_id, patched)
             patched = self.store.get_memory(mission_id)
+            patch_source = (source or "observer").strip() or "observer"
+            is_observer_patch = patch_source == "observer"
+            event_type = "observer_agent" if is_observer_patch else "memory_agent"
+            title = (
+                "Observer memory sync applied"
+                if is_observer_patch
+                else "Missing tool memory sync applied"
+                if patch_source == "missing_tool"
+                else "Memory sync applied"
+            )
+            metadata_key = "observer_memory_patch" if is_observer_patch else "memory_patch"
             self.store.add_event(
                 mission_id=mission_id,
                 round_no=round_no,
-                event_type="observer_agent",
-                title="Observer memory sync applied",
+                event_type=event_type,
+                title=title,
                 content=_compact_json(decision.memory_patch, max_len=2000),
-                metadata={"observer_memory_patch": decision.memory_patch},
+                metadata={
+                    metadata_key: decision.memory_patch,
+                    "memory_patch_source": patch_source,
+                },
             )
             return patched
         return memory
@@ -2107,6 +2122,7 @@ class OrchestratorManager:
                             mission_id=mission_id,
                             round_no=round_no,
                             memory=memory,
+                            source="missing_tool",
                             decision=ObserverDecision(
                                 verdict="OK",
                                 rationale="Sandbox missing-tool observation recorded in memory.",

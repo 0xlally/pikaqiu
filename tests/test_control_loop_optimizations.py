@@ -174,6 +174,80 @@ class ControlLoopOptimizationTests(unittest.TestCase):
         self.assertFalse(should_inject_decision(signal, phase="tool"))
         self.assertTrue(should_inject_decision(signal, phase="round"))
 
+    def test_missing_tool_memory_patch_is_not_labeled_as_observer(self):
+        store = MissionStore(":memory:")
+        mission_id = store.create_mission(
+            name="m",
+            target="http://x",
+            goal="flag",
+            scope="http://x",
+            domains=["web"],
+            max_rounds=1,
+            max_commands=1,
+            command_timeout_sec=1,
+            model="mock",
+        )
+        harness = ObserverCorrectionRoutingHarness(store)
+
+        memory = harness._apply_observer_memory_patch(
+            mission_id=mission_id,
+            round_no=1,
+            memory=store.get_memory(mission_id),
+            source="missing_tool",
+            decision=ObserverDecision(
+                verdict="OK",
+                memory_patch={"dead_ends": ["post is unavailable in the sandbox"]},
+            ),
+        )
+        events = store.get_events(mission_id)
+
+        self.assertIn("`post`", memory["dead_ends"][0])
+        self.assertIn("is unavailable in the sandbox", memory["dead_ends"][0])
+        self.assertEqual(events[0]["type"], "memory_agent")
+        self.assertEqual(events[0]["title"], "Missing tool memory sync applied")
+        self.assertNotIn("Observer", events[0]["title"])
+        self.assertEqual(events[0]["metadata"]["memory_patch_source"], "missing_tool")
+        self.assertEqual(
+            events[0]["metadata"]["memory_patch"],
+            {"dead_ends": ["post is unavailable in the sandbox"]},
+        )
+        self.assertNotIn("observer_memory_patch", events[0]["metadata"])
+
+    def test_observer_memory_patch_keeps_observer_event_label(self):
+        store = MissionStore(":memory:")
+        mission_id = store.create_mission(
+            name="m",
+            target="http://x",
+            goal="flag",
+            scope="http://x",
+            domains=["web"],
+            max_rounds=1,
+            max_commands=1,
+            command_timeout_sec=1,
+            model="mock",
+        )
+        harness = ObserverCorrectionRoutingHarness(store)
+
+        harness._apply_observer_memory_patch(
+            mission_id=mission_id,
+            round_no=1,
+            memory=store.get_memory(mission_id),
+            decision=ObserverDecision(
+                verdict="WATCH",
+                memory_patch={"leads": ["verify /admin with browser"]},
+            ),
+        )
+        events = store.get_events(mission_id)
+
+        self.assertEqual(events[0]["type"], "observer_agent")
+        self.assertEqual(events[0]["title"], "Observer memory sync applied")
+        self.assertEqual(events[0]["metadata"]["memory_patch_source"], "observer")
+        self.assertEqual(
+            events[0]["metadata"]["observer_memory_patch"],
+            {"leads": ["verify /admin with browser"]},
+        )
+        self.assertNotIn("memory_patch", events[0]["metadata"])
+
     def test_human_collaboration_intercepts_observer_correction(self):
         store = MissionStore(":memory:")
         mission_id = store.create_mission(
