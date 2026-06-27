@@ -6,6 +6,25 @@
   },
   "categories": [
     {
+      "id": "local_artifact_analysis",
+      "title": "Local source, filesystem, and artifact search",
+      "when": "Use when challenge files, extracted source, logs, mounted volumes, or a shell/RCE filesystem need fast focused search.",
+      "examples": [
+        "rg -n \"flag|password|secret|token\" .",
+        "rg --files . | rg -i 'flag|config|env|backup'",
+        "cat /opt/pikaqiu-tools/flag-paths.txt"
+      ],
+      "tools": [
+        {
+          "name": "rg",
+          "commands": ["rg"],
+          "purpose": "Fast recursive text and file-name search.",
+          "first_commands": ["rg -n \"flag|password|secret|token\" .", "rg --files . | rg -i 'flag|config|env|backup'"],
+          "notes": "Prefer rg for focused local searches. The sandbox flag path dictionary is /opt/pikaqiu-tools/flag-paths.txt."
+        }
+      ]
+    },
+    {
       "id": "web_discovery",
       "title": "Web discovery, fuzzing, and vulnerability checks",
       "when": "Use when the target exposes HTTP/HTTPS, APIs, parameters, directories, virtual hosts, known products, or reflected input.",

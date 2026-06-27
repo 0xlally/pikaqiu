@@ -14,6 +14,8 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 CATALOG_PATH = SCRIPT_DIR / "tool_catalog.json"
+FLAG_PATHS_PATH = SCRIPT_DIR / "flag-paths.txt"
+SANDBOX_FLAG_PATHS_PATH = "/opt/pikaqiu-tools/flag-paths.txt"
 
 
 def ver(cmd, timeout=5):
@@ -56,6 +58,29 @@ def load_tool_catalog():
         return json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     except Exception:
         return {}
+
+
+def load_flag_path_dictionary():
+    try:
+        lines = [
+            line.strip()
+            for line in FLAG_PATHS_PATH.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+    except Exception:
+        return {}
+
+    absolute_paths = [line for line in lines if line.startswith("/")]
+    relative_paths = [line for line in lines if not line.startswith("/")]
+    return {
+        "path": str(FLAG_PATHS_PATH),
+        "sandbox_path": SANDBOX_FLAG_PATHS_PATH,
+        "count": len(lines),
+        "absolute_count": len(absolute_paths),
+        "relative_count": len(relative_paths),
+        "sample": lines[:12],
+        "usage": "Small first-pass CTF flag path dictionary for targeted HTTP checks or shell/RCE file reads before broad find/grep.",
+    }
 
 
 def first_existing_path(paths):
@@ -128,6 +153,9 @@ def compact_tool_guidance(catalog):
 
 
 info = {}
+flag_path_dictionary = load_flag_path_dictionary()
+if flag_path_dictionary:
+    info["flag_path_dictionary"] = flag_path_dictionary
 info["tool_guidance"] = compact_tool_guidance(load_tool_catalog())
 
 # ── Language Runtimes ─────────────────────────────────────────────────────
@@ -221,7 +249,7 @@ categories = {
                    "privexchange", "bloodhound-python", "evil-winrm"],
     "web_tools": ["jwt_tool", "flask-unsign", "dalfox", "arjun"],
     "cloud_container": ["prowler", "trivy", "kube-hunter"],
-    "misc": ["git", "jq", "xxd", "base64", "strings", "file", "binwalk", "foremost"],
+    "misc": ["git", "rg", "jq", "xxd", "base64", "strings", "file", "binwalk", "foremost"],
 }
 for cat, tools in categories.items():
     found = [t for t in tools if shutil.which(t)]

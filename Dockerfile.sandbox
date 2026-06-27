@@ -58,6 +58,7 @@ RUN printf 'wireshark-common wireshark-common/install-setuid boolean true\n' | d
     php-curl \
     php-mbstring \
     jq \
+    ripgrep \
     file \
     tesseract-ocr \
     imagemagick \
@@ -306,6 +307,7 @@ RUN netexec --help >/dev/null 2>&1; crackmapexec --help >/dev/null 2>&1; exit 0
 COPY scripts/sandbox-tools/ /opt/pikaqiu-tools/
 RUN chmod +x /opt/pikaqiu-tools/env-info \
     && find /opt/pikaqiu-tools -type f -exec sed -i 's/\r//' {} + \
+    && test -s /opt/pikaqiu-tools/flag-paths.txt \
     && ln -sf /opt/pikaqiu-tools/env-info /usr/local/bin/env-info
 
 # Workspace.

@@ -41,6 +41,7 @@ Generated from `scripts/sandbox-tools/tool_catalog.json`.
 - [nuclei](kali-tools/nuclei.md)
 - [powerview](kali-tools/powerview.md)
 - [prowler](kali-tools/prowler.md)
+- [rg](kali-tools/rg.md)
 - [searchsploit](kali-tools/searchsploit.md)
 - [smartbrute](kali-tools/smartbrute.md)
 - [smbmap](kali-tools/smbmap.md)
@@ -89,6 +90,7 @@ Generated from `scripts/sandbox-tools/tool_catalog.json`.
 - nuclei
 - powerview
 - prowler
+- rg
 - searchsploit
 - smartbrute
 - smbmap
