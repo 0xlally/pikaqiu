@@ -15,13 +15,110 @@ def _json(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
+def _compact_sequence(value: Any, limit: int = 8) -> list[str]:
+    if isinstance(value, dict):
+        items = list(value.keys())
+    elif isinstance(value, (list, tuple, set)):
+        items = list(value)
+    else:
+        return []
+    return [str(item) for item in items[:limit] if str(item)]
+
+
+def _compact_mapping(value: Any, limit: int = 12) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for key, item in list(value.items())[:limit]:
+        if isinstance(item, dict):
+            path = item.get("path") or item.get("sandbox_path") or item.get("modules_path")
+            out[str(key)] = path if path else _compact_sequence(item, limit=6)
+        elif isinstance(item, (list, tuple, set)):
+            out[str(key)] = _compact_sequence(item, limit=12)
+        else:
+            out[str(key)] = item
+    return out
+
+
+def _compact_tool_guidance(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, Any] = {}
+    if value.get("rule"):
+        out["rule"] = value["rule"]
+    categories = []
+    for category in value.get("categories", []) or []:
+        if not isinstance(category, dict):
+            continue
+        item: dict[str, Any] = {
+            "id": category.get("id", ""),
+            "tools": _compact_sequence(category.get("tools"), limit=12),
+        }
+        if category.get("source_or_windows_tools"):
+            item["source_or_windows_tools"] = _compact_sequence(
+                category.get("source_or_windows_tools"),
+                limit=6,
+            )
+        if category.get("examples"):
+            examples = _compact_sequence(category.get("examples"), limit=1)
+            if examples:
+                item["example"] = examples[0]
+        categories.append({k: v for k, v in item.items() if v})
+    if categories:
+        out["categories"] = categories
+    return out
+
+
+def _compact_env_info_for_prompt(env_info: str, max_chars: int = 3200) -> str:
+    try:
+        data = json.loads(env_info)
+    except Exception:
+        return env_info if len(env_info) <= max_chars else env_info[:max_chars] + "\n... (truncated)"
+    if not isinstance(data, dict):
+        return env_info if len(env_info) <= max_chars else env_info[:max_chars] + "\n... (truncated)"
+
+    flag_paths = data.get("flag_path_dictionary")
+    if not isinstance(flag_paths, dict):
+        flag_paths = {}
+    summary: dict[str, Any] = {
+        "flag_path_dictionary": {
+            "sandbox_path": flag_paths.get("sandbox_path") or flag_paths.get("path"),
+            "count": flag_paths.get("count"),
+            "sample": _compact_sequence(flag_paths.get("sample"), limit=8),
+        },
+        "tool_guidance": _compact_tool_guidance(data.get("tool_guidance")),
+        "pentest_tools": _compact_mapping(data.get("pentest_tools")),
+        "wordlists": _compact_mapping(data.get("wordlists")),
+        "offline_databases": _compact_mapping(data.get("offline_databases")),
+        "runtimes": {
+            "python": _compact_mapping(data.get("python"), limit=5),
+            "node": _compact_mapping(data.get("node"), limit=5),
+            "java": _compact_mapping(data.get("java"), limit=5),
+            "scripting": _compact_mapping(data.get("scripting"), limit=8),
+            "build": _compact_mapping(data.get("build"), limit=8),
+        },
+        "python_packages": _compact_sequence(data.get("python_packages"), limit=24),
+        "transferable_tools": _compact_mapping(data.get("transferable_tools"), limit=6),
+        "exploit_tools": _compact_mapping(data.get("exploit_tools"), limit=8),
+    }
+    summary = {key: value for key, value in summary.items() if value}
+    text = json.dumps(summary, ensure_ascii=False, separators=(",", ":"))
+    if len(text) <= max_chars:
+        return text
+
+    for optional in ("python_packages", "transferable_tools", "exploit_tools", "runtimes"):
+        summary.pop(optional, None)
+        text = json.dumps(summary, ensure_ascii=False, separators=(",", ":"))
+        if len(text) <= max_chars:
+            return text
+    return text[:max_chars] + "\n... (truncated)"
+
+
 def _build_env_info_section(env_info: str) -> str:
     """Build the sandbox environment info section for the system prompt."""
     if not env_info:
         return "## 沙箱环境\n（环境信息未采集，可运行 `env-info` 获取可用工具和版本信息）"
-    # Truncate if too long to avoid bloating context
-    if len(env_info) > 4000:
-        env_info = env_info[:4000] + "\n... (truncated)"
+    env_info = _compact_env_info_for_prompt(env_info)
     return f"## 沙箱环境 (已自动采集)\n以下是沙箱中可用的工具、语言版本和资源，无需再运行 env-info：\n```json\n{env_info}\n```"
 
 
