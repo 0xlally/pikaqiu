@@ -120,6 +120,7 @@ _RUNTIME_MUTABLE_FIELDS = {
     "command_timeout_sec", "stdout_limit", "knowledge_top_k", "skills_dir",
     "skills_auto_use", "skill_catalog_limit", "skill_prompt_max_chars", "skill_reference_max_chars",
     "context_compress_threshold", "memory_compress_interval",
+    "disable_memory_rebase",
     "extra_rounds_per_flag", "extra_commands_per_flag",
     # Mock
     "mock",
@@ -192,7 +193,7 @@ class AgentSettings:
     # Model pool (populated from config.yml)
     model_pool: list[ModelPoolEntry] = field(default_factory=list)
     multi_flag_scaling: MultiFlagScaling = field(default_factory=MultiFlagScaling)
-    disable_memory_cleaning: bool = False  # skip memory cleaning on stall (keep all confirmed findings)
+    disable_memory_rebase: bool = False  # skip MemoryAgent rebase on stall
 
     # Thread-safe lock for runtime updates
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
@@ -275,6 +276,10 @@ class AgentSettings:
         applied: dict[str, Any] = {}
         with self._lock:
             for key, value in changes.items():
+                if key == "disable_memory_cleaning":
+                    if "disable_memory_rebase" in changes:
+                        continue
+                    key = "disable_memory_rebase"
                 if key not in _RUNTIME_MUTABLE_FIELDS:
                     errors[key] = f"field '{key}' is not runtime-mutable"
                     continue
@@ -487,6 +492,12 @@ def _load_from_env(root: Path) -> AgentSettings:
         skill_catalog_limit=_env("PIKAQIU_SKILL_CATALOG_LIMIT", default=50, cast=int),
         skill_prompt_max_chars=_env("PIKAQIU_SKILL_PROMPT_MAX_CHARS", default=12000, cast=int),
         skill_reference_max_chars=_env("PIKAQIU_SKILL_REFERENCE_MAX_CHARS", default=20000, cast=int),
+        disable_memory_rebase=_env(
+            "PIKAQIU_DISABLE_MEMORY_REBASE",
+            "PIKAQIU_DISABLE_MEMORY_CLEANING",
+            default=False,
+            cast=bool,
+        ),
         host=_env("PIKAQIU_WEB_HOST", default="127.0.0.1"),
         port=_env("PIKAQIU_WEB_PORT", default=8765, cast=int),
         mock=_env("PIKAQIU_MOCK", default=False, cast=bool),
@@ -690,7 +701,12 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
         port=web.get("port", 8765),
         mock=False,
         model_pool=model_pool,
-        disable_memory_cleaning=ag.get("disable_memory_cleaning", False),
+        disable_memory_rebase=_env(
+            "PIKAQIU_DISABLE_MEMORY_REBASE",
+            "PIKAQIU_DISABLE_MEMORY_CLEANING",
+            default=ag.get("disable_memory_rebase", ag.get("disable_memory_cleaning", False)),
+            cast=bool,
+        ),
     )
 
     logger.info("Loaded config from %s: %d models in pool",

@@ -428,11 +428,36 @@ def build_tool_memory_prompt(
     mission: dict[str, Any],
     previous_memory: dict[str, Any],
     round_no: int,
-    tool_call_log: list[dict[str, Any]],
+    tool_call_log: list[dict[str, Any]] | None,
+    mode: str = "normal_merge",
+    stall_rounds: int = 0,
+    reason: str = "",
 ) -> str:
-    """Build memory compression prompt for tool-use architecture."""
+    """Build unified MemoryAgent prompt for normal compression and stall rebase."""
+    if mode not in {"normal_merge", "stall_rebase"}:
+        mode = "normal_merge"
+    recent_tools = _json((tool_call_log or [])[-30:])
+    mode_guidance = {
+        "normal_merge": (
+            "normal_merge：把最近工具活动合并进长期记忆。聚焦新增证据、可复用事实、"
+            "下一步可验证动作和已经证明无效的路线。"
+        ),
+        "stall_rebase": (
+            "stall_rebase：主 Agent 已连续停滞，需要在保留证据的前提下重整记忆。"
+            "删除没有原始响应、命令输出、源码执行路径或可复现实验支撑的猜测；"
+            "不要删除已经被原始响应、命令输出、源码执行路径或可复现实验证明的漏洞事实。"
+            "把误导性的路线移入 dead_ends，并在 leads 中优先给出能判真假的最小验证。"
+        ),
+    }[mode]
     return f"""\
 你是 MemoryAgent。你的任务是把本轮工具活动合并进任务长期记忆。
+
+当前模式：{mode}
+触发原因：{reason or "未记录"}
+停滞轮次：{stall_rounds}
+
+模式说明：
+{mode_guidance}
 
 规则：
 - 只保留后续利用、验证和复盘有价值的信息，去重并压缩。
@@ -446,6 +471,7 @@ def build_tool_memory_prompt(
 - topology 只在重要时记录已观察到的网络、服务或依赖关系。
 - 不要把本地沙箱行为误写成目标事实。
 - 如果没有新增发现，保留已有记忆中仍有价值的内容。
+- 停滞重整时，优先给出能判真假的最小验证，不要继续延伸未经证据支撑的猜测。
 - 不要复述完整工具输出，不要展开长 HTML/日志，只抽取决定下一步的事实。
 - 返回严格 JSON，第一字符必须是 {{。
 
@@ -456,7 +482,7 @@ def build_tool_memory_prompt(
 {_json(previous_memory)}
 
 最近工具调用（已截断，只保留关键片段）：
-{_json(tool_call_log[-30:])}
+{recent_tools}
 
 返回 JSON：
 {{
@@ -466,63 +492,5 @@ def build_tool_memory_prompt(
   "dead_ends": ["自然语言描述失败路线和具体卡点，例如：LFI 链已确认可读 /etc/passwd，但尚未定位 webroot/应用源码/flag 路径；下一步应读取 /proc/self/mountinfo 或 Web 配置。"],
   "credentials": ["已确认的凭据或 token"],
   "topology": ["10.0.1.1 -> 10.0.1.2 (MySQL:3306)"]
-}}
-"""
-
-
-def build_memory_cleaning_prompt(
-    *,
-    mission: dict[str, Any],
-    current_memory: dict[str, Any],
-    stall_rounds: int,
-) -> str:
-    """Build prompt for the memory cleaning agent.
-
-    Invoked when the agent is stuck (stall_rounds >= 3).
-    The cleaning agent strips unconfirmed hypotheses from memory while
-    preserving objective facts, so the main agent can restart without bias.
-    """
-    return f"""\
-你是记忆清洗 agent。主 agent 已经连续 {stall_rounds} 轮没有新发现，说明它的思路很可能被错误假设误导了。
-
-你的任务是清洗当前记忆，**删除所有未经二次确认的漏洞假设**，只保留客观事实。
-
-## 清洗规则
-
-### 必须保留（客观事实）：
-- 目标 URL 和技术栈（如 Flask、Apache、Python 等）
-- 已发现的端点列表（URL 路径）
-- 已确认的凭据（用户名:密码）
-- 页面结构信息（表单、隐藏字段、JavaScript 行为）
-- HTTP 响应特征（状态码、响应头中的框架信息）
-- 工具可用性信息
-
-### 必须删除（主观假设）：
-- 所有"疑似 XXX 漏洞"、"可能存在 XXX 注入"的结论
-- leads 中基于某个漏洞假设延伸的测试方向或下一步动作
-- 删除所有漏洞判断，哪怕他们已经被证实
-
-### 移入 dead_ends：
-- 将被删除的假设精简后记录到 dead_ends 中，用自然语言写清楚卡点，例如：
-  "XSS 链卡在标签过滤：已确认 /page?name= 存在反射，但真实标签被拦截，payload 未执行且无回显；尚未定位可绕过上下文。"
-
-## 当前记忆
-
-{_json(current_memory)}
-
-## 任务信息
-
-{_json({"target": mission["target"], "goal": mission["goal"]})}
-
-## 输出要求
-
-返回清洗后的 JSON（第一字符必须是 {{）：
-{{
-  "summary": "清洗后的态势摘要（只描述客观事实，不包含漏洞假设）",
-  "findings": ["只保留客观事实..."],
-  "leads": ["基于事实可以尝试的新方向..."],
-  "dead_ends": ["自然语言描述被清洗假设的失败卡点，例如：登录绕过链卡在凭据验证，已确认 /login 存在但没有有效 session，后续需要先拿到可复用认证态。"],
-  "credentials": ["保留所有已确认凭据..."],
-  "topology": ["已确认的网络/服务关系..."]
 }}
 """

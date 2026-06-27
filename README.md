@@ -174,7 +174,7 @@ Flask API (pikaqiu_agent/web_app.py)
 3. 主 Agent 读取目标、记忆、知识库结果和已激活 Skill，生成下一步动作。
 4. Sandbox Executor 在 `pikaqiu-sandbox-1` 中执行 bash/python 等命令。
 5. 命令输出写入 SQLite events，并触发 Flag 自动识别。
-6. Memory Agent 默认每 8 次主模型调用后，将新增工具证据压缩成结构化记忆；轮内上下文自动压缩后会优先注入长期记忆回看提示，轮末不再额外压缩，避免双通道冲突。
+6. Memory Agent 默认每 8 次主模型调用后，将新增工具证据压缩成结构化记忆；连续停滞时同一 Memory Agent 会以 `stall_rebase` 模式重整记忆，保留可复现实验证据并把误导路线移入 `dead_ends`。
 7. Passive Observer 在每轮结束后审核运行轨迹，并输出 `OK/WATCH/L1/L2/L3/L4/ENV` 结论；`WATCH` 只提醒下一轮观察点，`L*` 或 `ENV` 才注入短纠偏。
 8. 前端每 3 秒轮询 mission、detail、experiment 数据并刷新 UI。
 9. 达到目标、捕获足够 Flag、达到最大轮数或用户停止后，任务进入终态。
@@ -344,6 +344,7 @@ curl -X POST http://127.0.0.1:8001/api/missions `
 | `command_timeout_sec` | 单条沙箱命令超时 |
 | `stdout_limit` | 命令输出截断长度 |
 | `memory_compress_interval` | 结构化记忆压缩间隔，按主模型调用次数计，默认 8 |
+| `disable_memory_rebase` | 是否禁用连续停滞时的 Memory Agent 记忆重整 |
 | `knowledge_top_k` | 注入上下文的知识库结果数 |
 | `skills_dir` | Skill 根目录 |
 | `skills_auto_use` | 是否允许主 Agent 自动搜索和激活 Skill |

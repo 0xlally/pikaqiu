@@ -71,7 +71,7 @@ agent_defaults:
   max_commands_ceiling: 400       # max commands for retries
   max_retries: 2                  # number of retry attempts for failed missions
   mission_timeout_sec: 0          # total mission timeout (0 = no limit)
-  disable_memory_cleaning: false  # keep all confirmed findings on stall
+  disable_memory_rebase: false    # skip MemoryAgent rebase on stall
 
   # Per-difficulty overrides (optional)
   difficulty_params:

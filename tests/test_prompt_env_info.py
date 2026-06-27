@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import json
 
-from pikaqiu_agent.prompts import _build_env_info_section, _compact_env_info_for_prompt
+from pikaqiu_agent.prompts import (
+    _build_env_info_section,
+    _compact_env_info_for_prompt,
+    build_tool_memory_prompt,
+)
 
 
 def test_env_info_compacts_instead_of_truncating_raw_json() -> None:
@@ -51,3 +55,28 @@ def test_env_info_compacts_instead_of_truncating_raw_json() -> None:
     assert "searchsploit" in compact
     assert "padding" not in compact
     assert compact in section
+
+
+def test_memory_prompt_stall_rebase_is_memory_agent_mode() -> None:
+    prompt = build_tool_memory_prompt(
+        mission={"target": "http://target", "goal": "capture flag"},
+        previous_memory={
+            "summary": "疑似 SQLi，但未构造真假 oracle",
+            "findings": ["GET /search.php returned 200"],
+            "leads": ["继续试登录绕过"],
+            "dead_ends": [],
+            "credentials": [],
+            "topology": [],
+        },
+        round_no=3,
+        tool_call_log=None,
+        mode="stall_rebase",
+        stall_rounds=2,
+        reason="stall_rounds=2",
+    )
+
+    assert "你是 MemoryAgent" in prompt
+    assert "当前模式：stall_rebase" in prompt
+    assert "不要删除已经被原始响应、命令输出、源码执行路径或可复现实验证明的漏洞事实" in prompt
+    assert "优先给出能判真假的最小验证" in prompt
+    assert "记忆清洗 agent" not in prompt

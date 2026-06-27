@@ -27,7 +27,6 @@ from pikaqiu_agent.prompts import (
     build_tool_system_prompt,
     build_volatile_context,
     build_tool_memory_prompt,
-    build_memory_cleaning_prompt,
 )
 from pikaqiu_agent.sandbox import SandboxExecutor
 from pikaqiu_agent.skill_loader import SkillLoader
@@ -698,16 +697,26 @@ class OrchestratorManager:
         mission: dict[str, Any],
         memory: dict[str, Any],
         round_no: int,
-        tool_call_log: list[dict[str, Any]],
+        tool_call_log: list[dict[str, Any]] | None,
         reason: str,
+        mode: str = "normal_merge",
+        stall_rounds: int = 0,
     ) -> tuple[dict[str, Any], bool]:
-        if not tool_call_log:
+        if mode not in {"normal_merge", "stall_rebase"}:
+            mode = "normal_merge"
+        tool_call_log = tool_call_log or []
+        if not tool_call_log and mode != "stall_rebase":
             return memory, False
+        tool_call_count = len(tool_call_log)
+        event_label = "Memory rebase" if mode == "stall_rebase" else "Memory compression"
         memory_prompt = build_tool_memory_prompt(
             mission=mission,
             previous_memory=memory,
             round_no=round_no,
             tool_call_log=_tool_call_memory_view(tool_call_log),
+            mode=mode,
+            stall_rounds=stall_rounds,
+            reason=reason,
         )
         timeout_sec = _memory_compression_timeout_sec(self.settings)
         started = time.monotonic()
@@ -716,14 +725,19 @@ class OrchestratorManager:
             mission_id=mission_id,
             round_no=round_no,
             event_type="memory_agent",
-            title=f"Memory compression running ({reason})",
-            content=f"tool_call_count={len(tool_call_log)} timeout_sec={timeout_sec} method={method}",
+            title=f"{event_label} running ({reason})",
+            content=(
+                f"tool_call_count={tool_call_count} timeout_sec={timeout_sec} "
+                f"method={method} mode={mode} stall_rounds={stall_rounds}"
+            ),
             metadata={
                 "reason": reason,
-                "tool_call_count": len(tool_call_log),
+                "tool_call_count": tool_call_count,
                 "timeout_sec": timeout_sec,
                 "status": "running",
                 "method": method,
+                "mode": mode,
+                "stall_rounds": stall_rounds,
             },
         )
         try:
@@ -747,8 +761,11 @@ class OrchestratorManager:
             self.store.finalize_event(
                 running_event_id,
                 event_type="memory_agent",
-                title=f"Memory compression cancelled ({reason})",
-                content=f"stop requested\n\nelapsed_ms={elapsed_ms} tool_call_count={len(tool_call_log)} method={method}",
+                title=f"{event_label} cancelled ({reason})",
+                content=(
+                    f"stop requested\n\nelapsed_ms={elapsed_ms} "
+                    f"tool_call_count={tool_call_count} method={method} mode={mode}"
+                ),
                 exit_code=-15,
             )
             return memory, False
@@ -762,10 +779,10 @@ class OrchestratorManager:
             self.store.finalize_event(
                 running_event_id,
                 event_type="memory_agent",
-                title=f"Memory compression failed ({reason})",
+                title=f"{event_label} failed ({reason})",
                 content=(
                     f"{error}\n\nelapsed_ms={elapsed_ms} "
-                    f"tool_call_count={len(tool_call_log)} method={method}"
+                    f"tool_call_count={tool_call_count} method={method} mode={mode}"
                 ),
                 exit_code=1,
             )
@@ -774,8 +791,8 @@ class OrchestratorManager:
         self.store.finalize_event(
             running_event_id,
             event_type="memory_agent",
-            title=f"Memory compression ({reason})",
-            content=f"method={method}\n{_compact_json(new_memory)}",
+            title=f"{event_label} ({reason})",
+            content=f"method={method} mode={mode}\n{_compact_json(new_memory)}",
         )
         return self.store.get_memory(mission_id), True
 
@@ -1784,7 +1801,7 @@ class OrchestratorManager:
 
             # Start fresh conversation for this round
             if _stall_rounds >= 2:
-                # P0-3: Recover forgotten context from event log before cleaning
+                # P0-3: Recover forgotten context from event log before rebase
                 try:
                     forgotten = retrieve_forgotten_context(self.store, mission_id, memory)
                     if forgotten:
@@ -1805,47 +1822,40 @@ class OrchestratorManager:
                 except Exception as recover_err:
                     logger.warning("[orchestrator] forgotten context recovery failed: %s", recover_err)
 
-                # P0-4: Memory cleaning (skip if disabled in config)
-                if not self.settings.disable_memory_cleaning:
-                    cleaning_prompt = build_memory_cleaning_prompt(
-                        mission=mission,
-                        current_memory=memory,
-                        stall_rounds=_stall_rounds,
-                    )
+                if not self.settings.disable_memory_rebase:
                     try:
-                        pool = ThreadPoolExecutor(max_workers=1)
-                        try:
-                            future = pool.submit(self.llm.invoke_memory, cleaning_prompt, memory)
-                            cleaning_result = _future_result_with_stop(
-                                future,
-                                timeout_sec=self.settings.llm_timeout_sec,
-                                stop_fn=lambda: self.store.should_stop(mission_id),
-                            )
-                        finally:
-                            pool.shutdown(wait=False, cancel_futures=True)
-                        cleaned_memory = normalize_memory_enhanced(cleaning_result.payload, memory)
-                        memory = cleaned_memory
-                        self.store.set_memory(mission_id, memory)
-                        self.store.add_event(
+                        memory, memory_rebased = self._compress_memory_from_tool_calls(
                             mission_id=mission_id,
-                            round_no=round_no,
-                            event_type="system",
-                            title=f"记忆清洗完成 (stall={_stall_rounds})",
-                            content=_compact_json(memory),
-                        )
-                        # Rebuild volatile context with cleaned memory (system prompt stays stable)
-                        volatile_context = build_volatile_context(
-                            round_no=round_no,
+                            mission=mission,
                             memory=memory,
-                            captured_flags=captured_flags,
-                            expected_flags=mission.get("expected_flags", 1),
-                            experience_hints=self._build_experience_hints(mission, memory),
+                            round_no=round_no,
+                            tool_call_log=[],
+                            reason=f"stall_rounds={_stall_rounds}",
+                            mode="stall_rebase",
+                            stall_rounds=_stall_rounds,
                         )
+                        if memory_rebased:
+                            # Rebuild volatile context with rebased memory (system prompt stays stable)
+                            volatile_context = build_volatile_context(
+                                round_no=round_no,
+                                memory=memory,
+                                captured_flags=captured_flags,
+                                expected_flags=mission.get("expected_flags", 1),
+                                experience_hints=self._build_experience_hints(mission, memory),
+                            )
                     except _StopRequested:
                         self.store.update_mission_status(mission_id, "stopped")
                         return
-                    except Exception as clean_err:
-                        logger.warning("[orchestrator] memory cleaning failed: %s", clean_err)
+                    except Exception as rebase_err:
+                        logger.warning("[orchestrator] memory rebase failed: %s", rebase_err)
+                else:
+                    self.store.add_event(
+                        mission_id=mission_id,
+                        round_no=round_no,
+                        event_type="system",
+                        title=f"MemoryAgent rebase skipped (stall={_stall_rounds})",
+                        content="disable_memory_rebase=true",
+                    )
 
             user_msg = self._build_round_user_message(round_no, _stall_rounds, mission["target"])
             route_guard = _route_guard_guidance(memory)
@@ -2306,7 +2316,7 @@ class OrchestratorManager:
                     round_no=round_no,
                     event_type="system",
                     title=f"停滞检测: 连续 {_stall_rounds} 轮无新发现",
-                    content=f"stall_rounds={_stall_rounds}, 下轮{'将触发记忆清洗' if _stall_rounds >= 2 else '继续正常'}",
+                    content=f"stall_rounds={_stall_rounds}, 下轮{'将触发 MemoryAgent rebase' if _stall_rounds >= 2 else '继续正常'}",
                 )
 
             if llm_call_count == 0:

@@ -286,6 +286,50 @@ def test_memory_compression_prefers_dedicated_compression_model(tmp_path):
     assert "method=compression_model" in memory_events[-1]["content"]
 
 
+def test_memory_rebase_uses_unified_memory_agent_compression_path(tmp_path):
+    manager = _manager(tmp_path)
+    mission_id = manager.store.create_mission(
+        name="memory-rebase",
+        target="http://target",
+        goal="capture flag",
+        scope="http://target",
+        domains=["web"],
+        max_rounds=1,
+        max_commands=1,
+        command_timeout_sec=5,
+        model="mock",
+    )
+    mission = manager.store.get_mission(mission_id)
+    before = {
+        "summary": "stalled on weak login bypass guesses",
+        "findings": ["GET /search.php returned 200"],
+        "leads": ["try another login bypass"],
+        "dead_ends": [],
+        "credentials": [],
+        "topology": [],
+    }
+
+    after, succeeded = manager._compress_memory_from_tool_calls(
+        mission_id=mission_id,
+        mission=mission,
+        memory=before,
+        round_no=3,
+        tool_call_log=[],
+        reason="stall_rounds=2",
+        mode="stall_rebase",
+        stall_rounds=2,
+    )
+
+    assert succeeded is True
+    assert manager.llm.memory_compression_calls == 1
+    assert manager.llm.memory_calls == 0
+    assert after["summary"] == "compressed by dedicated model"
+    memory_events = [event for event in manager.store.get_events(mission_id) if event["type"] == "memory_agent"]
+    assert memory_events[-1]["title"] == "Memory rebase (stall_rounds=2)"
+    assert memory_events[-1]["metadata"]["mode"] == "stall_rebase"
+    assert memory_events[-1]["metadata"]["stall_rounds"] == 2
+
+
 def test_memory_compression_accepts_loose_model_text(tmp_path):
     manager = OrchestratorManager(
         settings=_settings(tmp_path),
