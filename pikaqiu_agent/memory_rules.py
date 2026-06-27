@@ -3,12 +3,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-_MISSING_TOOL_RE = re.compile(
-    r"(?:`?([A-Za-z0-9_.+-]+)`?\s+is unavailable|"
-    r"`?([A-Za-z0-9_.+-]+)`?\s+not found|"
-    r"`?([A-Za-z0-9_.+-]+)`?:\s+command not found)",
-    re.I,
-)
 _CHAIN_DETAIL_TERMS = (
     "入口",
     "认证",
@@ -44,14 +38,6 @@ def normalize_dead_end(value: Any) -> str:
     text = re.sub(r"\s+", " ", str(value or "")).strip()
     if not text:
         return ""
-
-    missing_tool = _MISSING_TOOL_RE.search(text)
-    if missing_tool:
-        tool = next(group for group in missing_tool.groups() if group)
-        return (
-            f"工具可用性卡点：已尝试调用 `{tool}`，原始结果显示 `{tool}` is unavailable in the sandbox；"
-            "当前沙箱缺少该工具，不要重复调用。后续应改用 curl/原始响应/小脚本解析，或先确认替代工具可用。"
-        )[:900]
 
     if _has_chain_detail(text) and not _VAGUE_DEAD_END_RE.search(text):
         return text[:900]

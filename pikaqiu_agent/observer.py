@@ -35,7 +35,7 @@ VERDICT_PRIORITY = {
 
 FAILURE_RE = re.compile(
     r"(timeout|timed out|403|404|connection (?:failed|refused|reset)|"
-    r"command not found|no results?|empty response|not found|forbidden|"
+    r"no results?|empty response|not found|forbidden|"
     r"permission denied|traceback|exception|error|failed|unavailable|invalid)",
     re.I,
 )

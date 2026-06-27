@@ -15,10 +15,6 @@ from pikaqiu_agent.orchestrator import (
 from pikaqiu_agent.mission_log_export import normalize_mission_log_export_dir
 from pikaqiu_agent.observer import ObserverDecision, should_inject_decision
 from pikaqiu_agent.storage import MissionStore
-from pikaqiu_agent.success_guards import (
-    _known_missing_tool_blocks,
-    _missing_tools_from_memory,
-)
 
 
 class ObserverCorrectionRoutingHarness(OrchestratorManager):
@@ -171,45 +167,6 @@ class ControlLoopOptimizationTests(unittest.TestCase):
 
         self.assertFalse(should_inject_decision(signal, phase="tool"))
         self.assertTrue(should_inject_decision(signal, phase="round"))
-
-    def test_missing_tool_memory_patch_is_not_labeled_as_observer(self):
-        store = MissionStore(":memory:")
-        mission_id = store.create_mission(
-            name="m",
-            target="http://x",
-            goal="flag",
-            scope="http://x",
-            domains=["web"],
-            max_rounds=1,
-            max_commands=1,
-            command_timeout_sec=1,
-            model="mock",
-        )
-        harness = ObserverCorrectionRoutingHarness(store)
-
-        memory = harness._apply_observer_memory_patch(
-            mission_id=mission_id,
-            round_no=1,
-            memory=store.get_memory(mission_id),
-            source="missing_tool",
-            decision=ObserverDecision(
-                verdict="OK",
-                memory_patch={"dead_ends": ["post is unavailable in the sandbox"]},
-            ),
-        )
-        events = store.get_events(mission_id)
-
-        self.assertIn("`post`", memory["dead_ends"][0])
-        self.assertIn("is unavailable in the sandbox", memory["dead_ends"][0])
-        self.assertEqual(events[0]["type"], "memory_agent")
-        self.assertEqual(events[0]["title"], "Missing tool memory sync applied")
-        self.assertNotIn("Observer", events[0]["title"])
-        self.assertEqual(events[0]["metadata"]["memory_patch_source"], "missing_tool")
-        self.assertEqual(
-            events[0]["metadata"]["memory_patch"],
-            {"dead_ends": ["post is unavailable in the sandbox"]},
-        )
-        self.assertNotIn("observer_memory_patch", events[0]["metadata"])
 
     def test_observer_memory_patch_keeps_observer_event_label(self):
         store = MissionStore(":memory:")
@@ -374,19 +331,6 @@ class ControlLoopOptimizationTests(unittest.TestCase):
         self.assertEqual(mission["captured_flag_count"], 1)
         self.assertEqual(record["captured_flags"], ["flag{real123}"])
         self.assertEqual(record["captured_flag_count"], 1)
-
-    def test_known_missing_tool_blocks_repeat(self):
-        self.assertEqual(_known_missing_tool_blocks("whatweb -a 1 http://x", {"whatweb"}), "whatweb")
-        self.assertEqual(_known_missing_tool_blocks("curl -i http://x", {"whatweb"}), "")
-        memory = {
-            "dead_ends": [
-                (
-                    "工具链卡点：已尝试调用 `whatweb`，原始结果显示 "
-                    "`whatweb` is unavailable in the sandbox；当前沙箱缺少该工具，后续改用 curl。"
-                )
-            ]
-        }
-        self.assertEqual(_missing_tools_from_memory(memory), {"whatweb"})
 
     def test_mission_log_export_normalization_uses_flag_events(self):
         sample_zip = Path("tests/mission-logs-20260612-112404.zip")

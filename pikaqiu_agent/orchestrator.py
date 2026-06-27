@@ -98,10 +98,6 @@ _next_verification_hint = _success_guards.next_verification_hint
 _summarize_guidance_result = _success_guards.summarize_guidance_result
 _route_guard_guidance = _success_guards.route_guard_guidance
 _post_partial_flag_guidance = _success_guards.post_partial_flag_guidance
-_missing_tool_name = _success_guards.missing_tool_name
-_known_missing_tool_blocks = _success_guards.known_missing_tool_blocks
-_missing_tools_from_memory = _success_guards.missing_tools_from_memory
-_missing_tool_block_message = _success_guards.missing_tool_block_message
 _stale_observer_steer_block_message = _success_guards.stale_observer_steer_block_message
 
 
@@ -1501,8 +1497,6 @@ class OrchestratorManager:
             title = (
                 "Observer memory sync applied"
                 if is_observer_patch
-                else "Missing tool memory sync applied"
-                if patch_source == "missing_tool"
                 else "Memory sync applied"
             )
             metadata_key = "observer_memory_patch" if is_observer_patch else "memory_patch"
@@ -1642,7 +1636,6 @@ class OrchestratorManager:
         captured_flags: list[str] = []
         pending_observer_guidance: list[str] = []
         pending_observer_steer: ObserverDecision | None = None
-        missing_tools_seen: set[str] = _missing_tools_from_memory(memory)
         tool_call_log: list[dict[str, Any]] = []
         total_llm_call_count = 0
         last_memory_compressed_tool_index = 0
@@ -1683,7 +1676,6 @@ class OrchestratorManager:
 
             mission = self.store.get_mission(mission_id) or mission
             memory = self.store.get_memory(mission_id)
-            missing_tools_seen.update(_missing_tools_from_memory(memory))
 
             manual_skill_ids = [
                 str(item).strip()
@@ -1926,7 +1918,6 @@ class OrchestratorManager:
                         tool_call_log=new_tool_calls,
                         reason=f"{memory_compress_interval} main LLM calls",
                     )
-                    missing_tools_seen.update(_missing_tools_from_memory(memory))
                     if memory_compressed:
                         last_memory_compressed_tool_index = len(tool_call_log)
                 next_memory_compress_due = _next_memory_compress_due_after(
@@ -2021,11 +2012,7 @@ class OrchestratorManager:
                         or tool_args.get("flag")
                         or _compact_json(tool_args)
                     )
-                    blocked_missing_tool = _known_missing_tool_blocks(str(display_cmd), missing_tools_seen)
-                    if blocked_missing_tool:
-                        running_event_id = None
-                        tool_result = _missing_tool_block_message(blocked_missing_tool)
-                    elif tool_name in tool_map:
+                    if tool_name in tool_map:
                         try:
                             # Show "running" indicator immediately so user sees the command
                             running_event_id = self.store.add_event(
@@ -2091,30 +2078,6 @@ class OrchestratorManager:
                     )
 
                     messages.append(ToolMessage(content=truncated_result, tool_call_id=tool_id))
-
-                    missing_tool = _missing_tool_name(result_str)
-                    if missing_tool:
-                        missing_tools_seen.add(missing_tool)
-                        patch = {
-                            "dead_ends": [
-                                (
-                                    f"工具链卡点：已尝试调用 `{missing_tool}`，原始结果显示 "
-                                    f"`{missing_tool}` is unavailable in the sandbox；当前沙箱缺少该工具，"
-                                    "不要重复调用。后续应改用 curl/raw headers/body/HTML parsing 或小脚本解析。"
-                                )
-                            ]
-                        }
-                        memory = self._apply_observer_memory_patch(
-                            mission_id=mission_id,
-                            round_no=round_no,
-                            memory=memory,
-                            source="missing_tool",
-                            decision=ObserverDecision(
-                                verdict="OK",
-                                rationale="Sandbox missing-tool observation recorded in memory.",
-                                memory_patch=patch,
-                            ),
-                        )
 
                     tool_call_entry = {
                         "tool": tool_name,

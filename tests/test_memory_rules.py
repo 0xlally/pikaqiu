@@ -37,11 +37,3 @@ def test_memory_normalization_keeps_dead_ends_readable() -> None:
     assert len(memory["dead_ends"]) == 1
     assert "失败路线卡点待补全" in memory["dead_ends"][0]
     assert "hypothesis=" not in memory["dead_ends"][0]
-
-
-def test_missing_tool_dead_end_stays_compatible_with_guard_pattern() -> None:
-    item = normalize_dead_end("whatweb: command not found")
-
-    assert "`whatweb` is unavailable in the sandbox" in item
-    assert "不要重复调用" in item
-    assert "hypothesis=" not in item

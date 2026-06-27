@@ -393,7 +393,7 @@ class ObserverRuntime:
             "request construction problem; prefer self-correction. L2 insufficient information: missing reconnaissance, "
             "unverified conclusion, or no reproducible evidence. L3 strategy direction error: sustained low-yield or "
             "disproved attack surface. L4 cognitive bias: repeated same failure, ignored lead, hallucinated/misread evidence, "
-            "self-contradiction, or premature success/failure claim. ENV environment fault: missing tool, network/target "
+            "self-contradiction, or premature success/failure claim. ENV environment fault: network/target "
             "unreachable, service crash, permission/API/rate-limit/reverse-connect issue.\n\n"
             "Length limits: rationale <= 240 chars, guidance <= 360 chars, evidence <= 3 short bullets. "
             "Do not address the main agent as 'you'; use imperative task notes.\n\n"

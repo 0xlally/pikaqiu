@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from pikaqiu_agent import flag_capture
 
 
-MEMORY_MISSING_TOOL_RE = re.compile(r"`?([A-Za-z0-9_.+-]+)`?\s+is unavailable\b", re.I)
-MISSING_TOOL_RE = re.compile(r"(?:^|\n)(?:bash:\s+line\s+\d+:\s+)?([A-Za-z0-9_.+-]+):\s+command not found\b")
 GUIDANCE_RESULT_TOOLS = {"knowledge_search"}
 
 
@@ -30,37 +27,6 @@ def current_lead(memory: dict[str, Any]) -> str:
 
 def next_verification_hint(memory: dict[str, Any]) -> str:
     return last_memory_item(memory, "leads", "findings")
-
-
-def missing_tool_name(result_str: str) -> str:
-    match = MISSING_TOOL_RE.search(str(result_str or ""))
-    return match.group(1) if match else ""
-
-
-def known_missing_tool_blocks(display_cmd: str, missing_tools: set[str]) -> str:
-    cmd = str(display_cmd or "").lower()
-    for tool in sorted(missing_tools):
-        if re.search(rf"(^|[\s;|&]){re.escape(tool.lower())}($|[\s;|&-])", cmd):
-            return tool
-    return ""
-
-
-def missing_tools_from_memory(memory: dict[str, Any]) -> set[str]:
-    tools: set[str] = set()
-    for item in memory.get("dead_ends", []) or []:
-        match = MEMORY_MISSING_TOOL_RE.search(str(item or ""))
-        if match:
-            tools.add(match.group(1).lower())
-    return tools
-
-
-def missing_tool_block_message(tool: str) -> str:
-    return (
-        "[MISSING_TOOL_BLOCKED]\n"
-        f"`{tool}` was already observed as unavailable in this sandbox. "
-        "Use another available tool or a small local script instead of retrying the missing tool.\n"
-        "[EXIT_CODE: 0]"
-    )
 
 
 def stale_observer_steer_block_message(memory: dict[str, Any]) -> str:
@@ -136,10 +102,6 @@ def post_partial_flag_guidance(captured_flags: list[str], expected_flags: int) -
 
 _current_lead = current_lead
 _next_verification_hint = next_verification_hint
-_missing_tool_name = missing_tool_name
-_known_missing_tool_blocks = known_missing_tool_blocks
-_missing_tools_from_memory = missing_tools_from_memory
-_missing_tool_block_message = missing_tool_block_message
 _stale_observer_steer_block_message = stale_observer_steer_block_message
 _summarize_guidance_result = summarize_guidance_result
 _route_guard_guidance = route_guard_guidance

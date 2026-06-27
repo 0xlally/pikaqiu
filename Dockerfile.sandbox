@@ -59,6 +59,7 @@ RUN printf 'wireshark-common wireshark-common/install-setuid boolean true\n' | d
     php-mbstring \
     jq \
     ripgrep \
+    binutils \
     file \
     tesseract-ocr \
     imagemagick \
