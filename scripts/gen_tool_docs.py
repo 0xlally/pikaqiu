@@ -25,6 +25,7 @@ FALLBACK_TOOLS: dict[str, list[str]] = {
     "nuclei": ["nuclei"],
     "hydra": ["hydra"],
     "hashcat": ["hashcat"],
+    "john": ["john"],
     "netexec": ["netexec", "nxc"],
     "smbmap": ["smbmap"],
     "impacket-GetNPUsers": ["impacket-GetNPUsers"],

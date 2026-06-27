@@ -29,6 +29,15 @@ def test_agent_settings_default_command_timeout_matches_launch_fallback(tmp_path
     assert settings.command_timeout_sec == 300
 
 
+def test_agent_settings_clamps_command_timeout_to_outer_limit(tmp_path):
+    settings = _settings(tmp_path)
+
+    assert settings.update({"command_timeout_sec": 999}) == {}
+
+    assert settings.command_timeout_sec == 300
+    assert settings.get_mission_params({"command_timeout_sec": 999})["command_timeout_sec"] == 300
+
+
 def test_memory_compress_interval_is_runtime_configurable(tmp_path):
     settings = _settings(tmp_path)
     store = MissionStore(":memory:")
@@ -49,6 +58,42 @@ def test_memory_compress_interval_is_runtime_configurable(tmp_path):
     assert response.status_code == 200
     assert settings.memory_compress_interval == 12
     assert response.get_json()["config"]["memory_compress_interval"] == 12
+
+
+def test_create_mission_clamps_command_timeout_to_outer_limit(tmp_path):
+    settings = _settings(tmp_path)
+    store = MissionStore(":memory:")
+    captured = {}
+
+    class FakeOrchestrator:
+        def agent_slots(self):
+            return []
+
+        def start_mission(self, **kwargs):
+            captured.update(kwargs)
+            return "mission-1"
+
+    runtime = SimpleNamespace(
+        settings=settings,
+        store=store,
+        orchestrator=FakeOrchestrator(),
+        skills=SimpleNamespace(refresh=lambda: None, resolve=lambda skill_ids: (skill_ids, [])),
+        static_root=tmp_path,
+    )
+    app = create_app(runtime)
+
+    response = app.test_client().post(
+        "/api/missions",
+        json={
+            "name": "timeout cap",
+            "target": "http://target",
+            "goal": "recover flag",
+            "command_timeout_sec": 999,
+        },
+    )
+
+    assert response.status_code == 201
+    assert captured["command_timeout_sec"] == 300
 
 
 def test_compression_defaults_use_model_based_compression(tmp_path, monkeypatch):

@@ -90,7 +90,10 @@ def compact_tool_guidance(catalog):
     guidance = catalog.get("guidance", {})
     out = {
         "rule": guidance.get("rule", "Pick the smallest suitable tool and check help first."),
-        "long_running": guidance.get("long_running", "Use nohup/background logs for long scans."),
+        "long_running": guidance.get(
+            "long_running",
+            "Commands run under the mission command timeout; save output to files when results need later inspection.",
+        ),
         "categories": [],
     }
 

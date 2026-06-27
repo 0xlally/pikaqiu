@@ -2,118 +2,14 @@ from __future__ import annotations
 
 import json
 import re
-import shlex
 from typing import Any
 
 from pikaqiu_agent import flag_capture
 
 
-SCAN_TOOLS = {"ffuf", "arjun", "nuclei", "gobuster", "dirsearch", "feroxbuster", "wfuzz", "hydra", "sqlmap", "nikto"}
-BROAD_SCAN_TOOLS = {"ffuf", "arjun", "nuclei", "gobuster", "dirsearch", "feroxbuster", "wfuzz", "sqlmap", "nikto"}
-SHELL_WRAPPERS = {"sudo", "timeout", "time", "env", "nohup", "stdbuf", "proxychains", "proxychains4"}
-SHELL_CONTROL_TOKENS = {";", "&&", "||", "|"}
-WORDLIST_TOKEN_RE = re.compile(r"(directory-list|raft-|common\.txt|seclists|wordlist|FUZZ)", re.I)
-TARGETED_PROBE_RE = re.compile(
-    r"\b(curl|httpx|python|python3|requests|openssl|nc|ncat)\b|"
-    r"https?://[^\s'\"]+(/[^\s'\"]+|\?[^\s'\"]+)",
-    re.I,
-)
-EXPLICIT_TARGET_RE = re.compile(
-    r"https?://[^\s'\"/?]+(?::\d+)?(?:/[^\s'\"]*)?\?[^\s'\"]+|"
-    r"https?://[^\s'\"/?]+(?::\d+)?/[^\s'\"\?]+|"
-    r"(\s|^)(--data|-d|--cookie|-H|--header|-p|--param|--path)(\s|=)",
-    re.I,
-)
 MEMORY_MISSING_TOOL_RE = re.compile(r"`?([A-Za-z0-9_.+-]+)`?\s+is unavailable\b", re.I)
 MISSING_TOOL_RE = re.compile(r"(?:^|\n)(?:bash:\s+line\s+\d+:\s+)?([A-Za-z0-9_.+-]+):\s+command not found\b")
 GUIDANCE_RESULT_TOOLS = {"knowledge_search"}
-
-
-def _shell_words(display_cmd: str) -> list[str]:
-    text = str(display_cmd or "").strip()
-    if not text:
-        return []
-    try:
-        return shlex.split(text, posix=True)
-    except ValueError:
-        return re.findall(r"[^\s]+", text)
-
-
-def _base_command(token: str) -> str:
-    token = str(token or "").strip().strip("'\"")
-    token = token.replace("\\", "/")
-    return token.rsplit("/", 1)[-1].lower()
-
-
-def _executed_command_names(display_cmd: str) -> list[str]:
-    words = _shell_words(display_cmd)
-    names: list[str] = []
-    expect_command = True
-    skip_next = False
-    for word in words:
-        if skip_next:
-            skip_next = False
-            continue
-        base = _base_command(word)
-        if base in SHELL_CONTROL_TOKENS:
-            expect_command = True
-            continue
-        if not expect_command:
-            continue
-        if base in SHELL_WRAPPERS:
-            if base in {"timeout", "stdbuf"} and len(word) > 0:
-                # wrapper options are handled by the normal token walk; the next
-                # non-option token is treated as the real command.
-                pass
-            continue
-        if base in {"bash", "sh", "python", "python3", "perl", "ruby", "node"}:
-            names.append(base)
-            expect_command = False
-            continue
-        if base.startswith("-") or "=" in base:
-            continue
-        names.append(base)
-        expect_command = False
-    return names
-
-
-def _executes_any_tool(display_cmd: str, tools: set[str]) -> bool:
-    return any(name in tools for name in _executed_command_names(display_cmd))
-
-
-def is_scan_like_tool_call(tool_name: str, display_cmd: str) -> bool:
-    if tool_name not in {"bash_exec", "python_exec"}:
-        return False
-    return _executes_any_tool(display_cmd, SCAN_TOOLS)
-
-
-def is_broad_scan_tool_call(tool_name: str, display_cmd: str) -> bool:
-    if tool_name not in {"bash_exec", "python_exec"}:
-        return False
-    cmd = str(display_cmd or "")
-    return _executes_any_tool(cmd, BROAD_SCAN_TOOLS) or is_wordlist_scan_tool_call(tool_name, cmd)
-
-
-def is_wordlist_scan_tool_call(tool_name: str, display_cmd: str) -> bool:
-    if tool_name not in {"bash_exec", "python_exec"}:
-        return False
-    cmd = str(display_cmd or "")
-    if not _executes_any_tool(cmd, SCAN_TOOLS):
-        return False
-    words = _shell_words(cmd)
-    for index, word in enumerate(words):
-        if word in {"-w", "--wordlist"} or word.startswith("--wordlist="):
-            return True
-        if WORDLIST_TOKEN_RE.search(word):
-            return True
-    return False
-
-
-def is_targeted_probe_tool_call(tool_name: str, display_cmd: str) -> bool:
-    if tool_name not in {"bash_exec", "python_exec"}:
-        return False
-    cmd = str(display_cmd or "")
-    return bool(TARGETED_PROBE_RE.search(cmd)) and not is_wordlist_scan_tool_call(tool_name, cmd)
 
 
 def last_memory_item(memory: dict[str, Any], *keys: str) -> str:
@@ -134,31 +30,6 @@ def current_lead(memory: dict[str, Any]) -> str:
 
 def next_verification_hint(memory: dict[str, Any]) -> str:
     return last_memory_item(memory, "leads", "findings")
-
-
-def broad_scan_block_message(memory: dict[str, Any], *, reason: str = "round") -> str:
-    lead = next_verification_hint(memory) or "the current strongest lead"
-    return (
-        "[BROAD_SCAN_BLOCKED]\n"
-        f"Broad enumeration is blocked by the {reason} guard. "
-        "Run one targeted verification tied to memory, or explicitly explain why this lead is wrong before trying another scan.\n"
-        f"Next targeted lead: {lead}\n"
-        "[EXIT_CODE: 0]"
-    )
-
-
-def mission_scan_cooldown_blocks(tool_name: str, display_cmd: str, scan_timeout_count: int) -> bool:
-    if scan_timeout_count < 2:
-        return False
-    if tool_name not in {"bash_exec", "python_exec"}:
-        return False
-    cmd = str(display_cmd or "")
-    executed = set(_executed_command_names(cmd))
-    if not executed.intersection({"ffuf", "arjun", "nuclei", "sqlmap"}):
-        return False
-    if is_wordlist_scan_tool_call(tool_name, cmd):
-        return True
-    return not bool(EXPLICIT_TARGET_RE.search(cmd))
 
 
 def missing_tool_name(result_str: str) -> str:
@@ -187,7 +58,7 @@ def missing_tool_block_message(tool: str) -> str:
     return (
         "[MISSING_TOOL_BLOCKED]\n"
         f"`{tool}` was already observed as unavailable in this sandbox. "
-        "Use curl with raw headers/body, page HTML, and small local parsing instead of retrying the missing tool.\n"
+        "Use another available tool or a small local script instead of retrying the missing tool.\n"
         "[EXIT_CODE: 0]"
     )
 
@@ -214,7 +85,7 @@ def summarize_guidance_result(tool_name: str, result_str: str, limit: int) -> st
     return (
         text[:head]
         + f"\n\n... [guidance output truncated; omitted {len(text) - head - tail} chars. "
-          "Use this as guidance only, not target evidence.] ...\n\n"
+        "Use this as guidance only, not target evidence.] ...\n\n"
         + text[-tail:]
     )
 
@@ -239,33 +110,9 @@ def route_guard_guidance(memory: dict[str, Any]) -> str:
             "Auth state is already evidenced. Do not repeat the login flow unless a fresh session is required; "
             "use paired authenticated/unauthenticated or role/field differential checks."
         )
-    if any(
-        token in text
-        for token in (
-            "static",
-            "styles.css",
-            "scripts.js",
-            "no new content",
-            "no difference",
-            "未发现新内容",
-            "静态",
-        )
-    ):
-        rules.append(
-            "Static-path probing has low value after repeated no-difference results. Stop expanding generic static fuzzing; "
-            "test only high-value filenames tied to observed references."
-        )
-    if "apache" in text and any(token in text for token in ("cgi-bin", "%2e%2e", ".%2e", "500")):
-        rules.append(
-            "Apache/cgi evidence exists. Prefer one direct-vs-alias or PATH_INFO differential with full raw response over another broad scan."
-        )
     if "django" in text and any(token in text for token in ("register", "step3", "template", "alert", "premium")):
         rules.append(
             "Django registration evidence exists. Prioritize one end-to-end registration/premium/XSS/SSTI verification chain and preserve the decisive response."
-        )
-    if "fastapi" in text or "openapi" in text or "uvicorn" in text:
-        rules.append(
-            "FastAPI/OpenAPI evidence exists. Use the documented routes to build minimal auth/body differentials; avoid generic path fuzzing first."
         )
     lead = current_lead(memory)
     if lead:
@@ -281,20 +128,14 @@ def post_partial_flag_guidance(captured_flags: list[str], expected_flags: int) -
     return (
         "[PARTIAL_FLAG_CAPTURE]\n"
         f"Captured {len(captured_flags)}/{expected_flags} flag(s): {flags}. "
-        f"{remaining} flag(s) remain. Do not run broad scans now; continue from the exact exploit path or "
-        "validated privilege boundary that produced this flag, and look for the next flag with one focused verification.\n"
+        f"{remaining} flag(s) remain. Continue from the exact exploit path or "
+        "validated privilege boundary that produced this flag.\n"
         "[/PARTIAL_FLAG_CAPTURE]"
     )
 
 
-_is_scan_like_tool_call = is_scan_like_tool_call
-_is_broad_scan_tool_call = is_broad_scan_tool_call
-_is_wordlist_scan_tool_call = is_wordlist_scan_tool_call
-_is_targeted_probe_tool_call = is_targeted_probe_tool_call
 _current_lead = current_lead
 _next_verification_hint = next_verification_hint
-_broad_scan_block_message = broad_scan_block_message
-_mission_scan_cooldown_blocks = mission_scan_cooldown_blocks
 _missing_tool_name = missing_tool_name
 _known_missing_tool_blocks = known_missing_tool_blocks
 _missing_tools_from_memory = missing_tools_from_memory

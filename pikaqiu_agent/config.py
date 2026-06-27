@@ -38,8 +38,17 @@ DEFAULT_COMPRESSION_REASONING_EFFORT = "low"
 DEFAULT_COMPRESSION_TIMEOUT_SEC = 180
 _ALLOWED_COMPRESSION_REASONING_EFFORTS = {"minimal", "low", "medium"}
 DEFAULT_MEMORY_COMPRESS_INTERVAL = 8
+COMMAND_TIMEOUT_MAX_SEC = 300
 MAX_AGENT_SLOTS = 5
 DEFAULT_SANDBOX_CONTAINERS = tuple(f"pikaqiu-sandbox-{idx}" for idx in range(1, MAX_AGENT_SLOTS + 1))
+
+
+def _clamp_command_timeout(value: Any, default: int = COMMAND_TIMEOUT_MAX_SEC) -> int:
+    try:
+        timeout = int(value)
+    except (ValueError, TypeError):
+        timeout = int(default)
+    return max(1, min(timeout, COMMAND_TIMEOUT_MAX_SEC))
 
 
 # ── Model Pool Entry ──────────────────────────────────────────────
@@ -284,6 +293,8 @@ class AgentSettings:
                         value = str(value)
                     if key == "compression_reasoning_effort":
                         value = _normalize_compression_reasoning_effort(value)
+                    if key == "command_timeout_sec":
+                        value = _clamp_command_timeout(value)
                     setattr(self, key, value)
                 except (ValueError, TypeError) as e:
                     errors[key] = f"invalid value for '{key}': {e}"
@@ -323,7 +334,8 @@ class AgentSettings:
             for key in params:
                 if key in overrides:
                     try:
-                        params[key] = int(overrides[key])
+                        value = int(overrides[key])
+                        params[key] = _clamp_command_timeout(value) if key == "command_timeout_sec" else value
                     except (ValueError, TypeError):
                         pass
         return params
@@ -461,7 +473,7 @@ def _load_from_env(root: Path) -> AgentSettings:
         ),
         initial_rounds=_env("PIKAQIU_MAX_ROUNDS", default=4, cast=int),
         initial_commands=_env("PIKAQIU_MAX_COMMANDS_PER_ROUND", default=64, cast=int),
-        command_timeout_sec=_env("PIKAQIU_COMMAND_TIMEOUT_SEC", default=300, cast=int),
+        command_timeout_sec=_clamp_command_timeout(_env("PIKAQIU_COMMAND_TIMEOUT_SEC", default=300, cast=int)),
         stdout_limit=_env("PIKAQIU_STDOUT_LIMIT", default=16000, cast=int),
         memory_compress_interval=_env(
             "PIKAQIU_MEMORY_COMPRESS_INTERVAL",
@@ -650,7 +662,7 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
         observer_disable_response_storage=observer_disable_response_storage,
         initial_rounds=ag.get("initial_rounds", ag.get("max_rounds", 4)),
         initial_commands=ag.get("initial_commands", ag.get("max_commands_per_round", 64)),
-        command_timeout_sec=ag.get("command_timeout_sec", 300),
+        command_timeout_sec=_clamp_command_timeout(ag.get("command_timeout_sec", 300)),
         stdout_limit=ag.get("stdout_limit", 8000),
         context_compress_threshold=ag.get("context_compress_threshold", 80000),
         memory_compress_interval=_env(

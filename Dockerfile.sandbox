@@ -80,6 +80,7 @@ RUN printf 'wireshark-common wireshark-common/install-setuid boolean true\n' | d
     nuclei \
     ffuf \
     hashcat \
+    john \
     hydra \
     wireshark \
     tshark \
@@ -134,13 +135,13 @@ RUN update-alternatives --install /usr/bin/java java /opt/java/8/bin/java 80 \
 
 ENV JAVA_HOME=/opt/java/17
 
-# Node.js: additional LTS versions via n.
-RUN npm install -g n jsfuck \
+# Node.js: additional LTS versions via n, plus browser/payload helper CLIs.
+RUN npm install -g n jscrewit he jsesc cssesc terser playwright@1.61.1 \
     && N_PREFIX=/usr/local n 18 \
     && N_PREFIX=/usr/local n 20 \
     && N_PREFIX=/usr/local n 22
 
-ENV NODE_PATH=/usr/lib/node_modules
+ENV NODE_PATH=/usr/local/lib/node_modules
 
 # Python CLI packages and libraries. Kali apt provides many of these tools, but
 # pip fills in tools that are not reliably available as distro packages.
@@ -297,7 +298,7 @@ RUN test -s /usr/share/seclists/Discovery/Web-Content/DirBuster-2007_directory-l
     && test -s /usr/share/seclists/Discovery/Web-Content/common.txt \
     && test -s /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt \
     && test -d /usr/share/seclists/Passwords
-RUN playwright install --with-deps chromium
+RUN npx playwright@1.61.1 install --with-deps chromium
 RUN netexec --help >/dev/null 2>&1; crackmapexec --help >/dev/null 2>&1; exit 0
 
 # Sandbox helper scripts. docker-compose also bind-mounts this directory for

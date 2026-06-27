@@ -20,10 +20,7 @@ def _clamp_timeout(timeout: int, max_timeout: int, min_timeout: int = 1) -> int:
 def _resolve_timeout(timeout: int | None, max_timeout: int, min_timeout: int = 1) -> int:
     if timeout is None:
         return max(min_timeout, int(max_timeout))
-    timeout = _clamp_timeout(timeout, max_timeout, min_timeout)
-    if timeout > 30 and timeout < max_timeout:
-        return max(min_timeout, int(max_timeout))
-    return timeout
+    return _clamp_timeout(timeout, max_timeout, min_timeout)
 
 
 def _format_sandbox_result(prefix: str, result) -> str:
@@ -60,8 +57,7 @@ class BashInput(BaseModel):
         default=None,
         description=(
             "Optional timeout in seconds. Omit to use the mission command timeout. "
-            "Only set a shorter timeout for quick probes (30s or less); medium values are ignored. "
-            "For long tools like sqlmap/nmap, prefer background jobs that write logs."
+            "Values above the mission command timeout are capped."
         ),
     )
 
@@ -72,7 +68,7 @@ class PythonInput(BaseModel):
         default=None,
         description=(
             "Optional timeout in seconds. Omit to use the mission command timeout. "
-            "Only set a shorter timeout for quick probes (30s or less); medium values are ignored."
+            "Values above the mission command timeout are capped."
         ),
     )
 
@@ -85,7 +81,13 @@ class KnowledgeSearchInput(BaseModel):
 class WebFetchInput(BaseModel):
     url: str = Field(description="HTTP/HTTPS URL to fetch from the public internet")
     max_chars: int = Field(default=12000, description="Maximum extracted text characters to return, capped at 30000")
-    timeout: int = Field(default=20, description="Timeout in seconds, capped by command timeout")
+    timeout: int | None = Field(
+        default=None,
+        description=(
+            "Optional timeout in seconds. Omit to use the mission command timeout. "
+            "Values above the mission command timeout are capped."
+        ),
+    )
 
 
 class SubmitFlagInput(BaseModel):
@@ -125,9 +127,6 @@ def create_bash_tool(sandbox, workdir: str, stop_fn: Callable[[], bool] | None =
         Use for recon and exploitation.
         Do not hide stderr with 2>/dev/null while validating a command; tool errors
         and missing wordlists must stay visible.
-        For long-running tools (nmap/sqlmap/gobuster), run in background and check results:
-          nohup sqlmap ... > /tmp/sqlmap.log 2>&1 &
-          sleep 30 && tail -50 /tmp/sqlmap.log
         """
         timeout = _resolve_timeout(timeout, max_timeout)
         result = sandbox.run(command, timeout_sec=timeout, workdir=workdir, stop_fn=stop_fn, on_chunk=on_chunk)
@@ -162,17 +161,17 @@ def create_web_fetch_tool(
     workdir: str,
     stop_fn: Callable[[], bool] | None = None,
     on_chunk: Callable[[str], None] | None = None,
-    max_timeout: int = 120,
+    max_timeout: int = 300,
 ) -> BaseTool:
     @tool("web_fetch", args_schema=WebFetchInput)
-    def web_fetch(url: str, max_chars: int = 12000, timeout: int = 20) -> str:
+    def web_fetch(url: str, max_chars: int = 12000, timeout: int | None = None) -> str:
         """Fetch an HTTP/HTTPS page from the public internet and extract readable text.
 
         Use only when you already have a specific URL. Prefer official docs,
         security bulletins, Exploit-DB, NVD, GitHub PoCs, and vendor pages.
         """
         max_chars = max(1000, min(int(max_chars or 12000), 30000))
-        timeout = _clamp_timeout(int(timeout or 20), max_timeout, min_timeout=5)
+        timeout = _resolve_timeout(timeout, max_timeout)
         code = f"""
 import html
 import json

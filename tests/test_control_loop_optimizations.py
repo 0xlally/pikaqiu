@@ -16,9 +16,7 @@ from pikaqiu_agent.mission_log_export import normalize_mission_log_export_dir
 from pikaqiu_agent.observer import ObserverDecision, should_inject_decision
 from pikaqiu_agent.storage import MissionStore
 from pikaqiu_agent.success_guards import (
-    _broad_scan_block_message,
     _known_missing_tool_blocks,
-    _mission_scan_cooldown_blocks,
     _missing_tools_from_memory,
 )
 
@@ -68,7 +66,7 @@ class ControlLoopOptimizationTests(unittest.TestCase):
         fake_llm = FakeCompressionLLM(
             (
                 "- 保留 WordPress REST 用户枚举证据：/wp-json/wp/v2/users 返回用户列表。\n"
-                "- 保留插件扫描死路：宽扫没有形成可复现利用链，后续应转向认证、主题或 REST 权限边界。\n"
+                "- 保留插件线索死路：候选插件没有形成可复现利用链，后续应转向认证、主题或 REST 权限边界。\n"
                 "- 保留当前目标、路径和失败分支，避免下一轮重复枚举。"
             )
         )
@@ -118,7 +116,7 @@ class ControlLoopOptimizationTests(unittest.TestCase):
                 "summary": "WordPress target with REST user enumeration.",
                 "findings": ["GET /wp-json/wp/v2/users returned wordpress_admin"],
                 "leads": ["Verify authenticated route or plugin chain"],
-                "dead_ends": ["Do not repeat broad plugin scan without token"],
+                "dead_ends": ["Plugin candidate did not reproduce without token"],
                 "credentials": ["wordpress_admin candidate"],
                 "topology": ["browser -> WordPress"],
             }
@@ -130,7 +128,7 @@ class ControlLoopOptimizationTests(unittest.TestCase):
         self.assertIn("[MEMORY_AGENT_LONG_TERM_REVIEW]", block)
         self.assertIn("下一次选择工具前，必须先对照 Memory Agent 的长期记忆", block)
         self.assertIn("wordpress_admin", block)
-        self.assertIn("Do not repeat broad plugin scan", block)
+        self.assertIn("Plugin candidate did not reproduce", block)
 
     def test_observer_injection_policy_for_tool_phase(self):
         warn_steer = ObserverDecision(
@@ -376,72 +374,6 @@ class ControlLoopOptimizationTests(unittest.TestCase):
         self.assertEqual(mission["captured_flag_count"], 1)
         self.assertEqual(record["captured_flags"], ["flag{real123}"])
         self.assertEqual(record["captured_flag_count"], 1)
-
-    def test_broad_scan_block_message_uses_current_lead(self):
-        memory = {
-            "leads": ["curl -i http://x/login"],
-        }
-        message = _broad_scan_block_message(memory, reason="per-round broad scan")
-        self.assertIn("[BROAD_SCAN_BLOCKED]", message)
-        self.assertIn("curl -i http://x/login", message)
-
-    def test_mission_scan_cooldown_blocks_wordlist_scans_only(self):
-        self.assertTrue(
-            _mission_scan_cooldown_blocks(
-                "bash_exec",
-                "ffuf -w /usr/share/seclists/common.txt -u http://x/FUZZ",
-                2,
-            )
-        )
-        self.assertFalse(
-            _mission_scan_cooldown_blocks(
-                "bash_exec",
-                "curl -i http://x/admin",
-                2,
-            )
-        )
-        self.assertFalse(
-            _mission_scan_cooldown_blocks(
-                "bash_exec",
-                "echo 'sqlmap later'; curl -i http://x/admin",
-                2,
-            )
-        )
-        self.assertFalse(
-            _mission_scan_cooldown_blocks(
-                "bash_exec",
-                "command -v sqlmap || true",
-                2,
-            )
-        )
-        self.assertFalse(
-            _mission_scan_cooldown_blocks(
-                "bash_exec",
-                "sqlmap -u 'http://x/item?id=1' --batch --level=1",
-                2,
-            )
-        )
-        self.assertFalse(
-            _mission_scan_cooldown_blocks(
-                "bash_exec",
-                "sqlmap -u 'http://x/?id=1' --batch --level=1",
-                2,
-            )
-        )
-        self.assertTrue(
-            _mission_scan_cooldown_blocks(
-                "bash_exec",
-                "nuclei -l urls.txt -t cves/",
-                2,
-            )
-        )
-        self.assertFalse(
-            _mission_scan_cooldown_blocks(
-                "bash_exec",
-                "ffuf -w /usr/share/seclists/common.txt -u http://x/FUZZ",
-                1,
-            )
-        )
 
     def test_known_missing_tool_blocks_repeat(self):
         self.assertEqual(_known_missing_tool_blocks("whatweb -a 1 http://x", {"whatweb"}), "whatweb")

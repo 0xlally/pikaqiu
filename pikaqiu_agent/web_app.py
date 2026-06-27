@@ -9,7 +9,7 @@ from typing import Any, Callable
 from flask import Flask, jsonify, request, send_from_directory
 
 from pikaqiu_agent import experience
-from pikaqiu_agent.config import AgentSettings, load_settings
+from pikaqiu_agent.config import COMMAND_TIMEOUT_MAX_SEC, AgentSettings, load_settings
 from pikaqiu_agent.knowledge import KnowledgeIndexer
 from pikaqiu_agent.llm_client import LLMClient
 from pikaqiu_agent.orchestrator import OrchestratorManager
@@ -328,7 +328,12 @@ def create_app(runtime: AppRuntime | None = None) -> Flask:
         s = rt().settings
         max_rounds = _clamp_int(payload.get("max_rounds"), s.initial_rounds, minimum=1, maximum=s.max_rounds)
         max_commands = _clamp_int(payload.get("max_commands"), s.initial_commands, minimum=1, maximum=s.max_commands)
-        command_timeout = _clamp_int(payload.get("command_timeout_sec"), s.command_timeout_sec, minimum=5, maximum=600)
+        command_timeout = _clamp_int(
+            payload.get("command_timeout_sec"),
+            s.command_timeout_sec,
+            minimum=5,
+            maximum=COMMAND_TIMEOUT_MAX_SEC,
+        )
         expected_flags = _clamp_int(payload.get("expected_flags"), 1, minimum=1, maximum=50)
         skill_ids = _string_list(payload.get("skills"))
         if skill_ids:

@@ -1,4 +1,0 @@
-interface:
-  display_name: "SQL Injection"
-  short_description: "SQL/NoSQL/ORM injection validation and minimal extraction"
-  default_prompt: "Use $sql-injection-skill to verify SQL/NoSQL/ORM injection, build a stable oracle, and extract only the minimum target data with reproducible evidence."

@@ -2,7 +2,7 @@
   "version": 1,
   "guidance": {
     "rule": "Pick the smallest tool that fits the observed attack surface. Run '<tool> -h' before unfamiliar use. Use knowledge_search with the tool name for detailed syntax.",
-    "long_running": "For scans likely to exceed the command timeout, run them in background with 'nohup ... > /tmp/tool.log 2>&1 &' and inspect the log with tail/grep."
+    "long_running": "Commands run under the mission command timeout; save output to files when results need later inspection."
   },
   "categories": [
     {
@@ -35,7 +35,7 @@
           "commands": ["ffuf"],
           "purpose": "High-speed directory, file, parameter, API, and virtual-host fuzzing.",
           "first_commands": ["ffuf -u http://TARGET/FUZZ -w /usr/share/seclists/Discovery/Web-Content/common.txt -mc all", "ffuf -u http://IP/ -H 'Host: FUZZ.domain.local' -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt -mc all"],
-          "notes": "Always establish baseline filters such as -fs, -fw, -fc, or -mc after a short test. Prefer verified in-sandbox wordlist paths from env-info before long fuzzing runs."
+          "notes": "Establish baseline filters such as -fs, -fw, -fc, or -mc when response sizes/statuses need normalization. Prefer verified in-sandbox wordlist paths from env-info."
         },
         {
           "name": "arjun",
@@ -107,6 +107,13 @@
           "purpose": "Offline hash cracking with many hash modes.",
           "first_commands": ["hashcat --help | grep -i ntlm", "hashcat -m 1000 hashes.txt /usr/share/wordlists/rockyou.txt"],
           "notes": "Identify the hash mode first; use rockyou or focused wordlists before mask attacks."
+        },
+        {
+          "name": "john",
+          "commands": ["john"],
+          "purpose": "Offline password/hash cracking with auto-detection, format-specific modes, and companion conversion tools.",
+          "first_commands": ["john --list=formats | grep -i nt", "john hashes.txt --wordlist=/usr/share/wordlists/rockyou.txt"],
+          "notes": "Use *2john converters when the artifact is an archive, SSH key, Kerberos material, or document rather than a raw hash."
         },
         {
           "name": "jwt_tool",

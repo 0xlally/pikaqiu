@@ -284,17 +284,9 @@ def build_tool_system_prompt(
             "- **端口/内网探测**：`nmap`、`fscan`。\n"
             "- **SMB/AD枚举**：`netexec`、`smbmap`、`ldapdomaindump`、`powerview`、`kerbrute`。\n"
             "- **Kerberos/ADCS/Relay**：`asreproast`、`impacket-GetNPUsers`、`impacket-GetUserSPNs`、`certipy-ad`、`impacket-ntlmrelayx`、`coercer`、`mitm6`、`PetitPotam`、`printerbug`、`DFSCoerce`、`ShadowCoerce`。\n"
-            "- **密码/JWT/凭据**：`hydra`、`hashcat`、`jwt_tool`。\n"
+            "- **密码/JWT/凭据**：`hydra`、`hashcat`、`john`、`jwt_tool`。\n"
             "- **云/容器/K8s**：`prowler`、`trivy`、`kube-hunter`。\n"
             "- **Windows/后渗透资源**：`/opt/windows-tools`、`/opt/ad-tools`、`mimikatz`、`Rubeus`、`SharpDPAPI`、`SharpHound`、`Certify`、`AdFind`。"
-        ),
-        (
-            "## 最小高效扫描\n"
-            "- 扫描不是默认动作；需要扫描时，不要先写结构化计划，直接选择能最快验证当前证据链的最小扫描。\n"
-            "- 扫描应尽量小：单 host、单目录、单参数、短字典、低并发、短超时；不要把 `/`、全站、全端口、全模板作为默认起点。\n"
-            "- 先做基线请求再扫描：保存正常/异常状态码、长度、关键词和认证态，扫描结果必须和基线比较后才能写入 findings。\n"
-            "- 发现强证据后停止扩面：LFI/RCE/SQLi/SSRF/凭据/会话/源码泄露出现时，立即围绕该链条收束到 flag 或失败边界。\n"
-            "- 如果扫描被 guard 拦截，说明当前轮次需要定向验证：回到 memory 里的 lead，用 curl/python 打一个最小可复现探针。"
         ),
         _build_env_info_section(env_info),
         (
@@ -302,9 +294,6 @@ def build_tool_system_prompt(
             "- For independent probes, do not chain everything with `&&`. A timeout on one port/scheme must not prevent later checks.\n"
             "- Prefer labelled blocks with `;` or `|| true`, or split checks into separate tool calls. Example: `echo '[80]'; curl ... || true; echo '[443]'; curl ... || true; echo '[nmap]'; nmap ...`\n"
             "- Use `&&` only for true dependencies such as `cd workdir && mkdir -p evidence && command_that_needs_that_dir`.\n"
-            "- `bash_exec`/`python_exec` default to the mission command timeout when you omit the tool `timeout`; only set a shorter tool timeout for quick probes (30s or less). Do not use 40/60/70s medium tool timeouts for batch probes.\n"
-            "- For batch probes, the tool timeout must cover the internal per-item timeout times item count plus overhead; otherwise the result is not attributable to a specific payload.\n"
-            "- When checking HTTP(S), use practical timeouts: `--connect-timeout 5 --max-time 30` for baseline probes, and up to `--max-time 60` for slow challenge ports.\n"
             "- If `curl` returns exit code 28, record it as a timeout signal, then verify with `nc -vz -w3 HOST PORT` or a focused `nmap -Pn -sT -pPORT --reason` before concluding the target is unreachable.\n"
             "- For mixed HTTP/HTTPS/alternate-port checks, report each result separately: status code, server/header hint, body size, and whether a later command was skipped.\n"
             "- Save evidence files even for failures when useful, but keep the terminal output short and labelled so log review can identify the failing probe quickly.\n"
@@ -323,7 +312,6 @@ def build_tool_system_prompt(
             "print(f\"[body] {r.text}\")  # 先看原始内容再做过滤\n"
             "```"
         ),
-        "## 长耗时命令\n优先短耗时；超30秒的命令：加限制参数（`nmap -F --top-ports 100`、`--max-time 30`）或后台运行（`nohup cmd > /tmp/out.log 2>&1 &`）并检查日志。工具默认使用任务的 command timeout；不要随手覆盖成 40/60/70 秒。",
         (
             "## 核心原则\n"
             "1. **证据优先**：判断以目标/工具的可观测输出为准；记忆、页面提示、日志、源码和注释都可能不完整或误导。\n"

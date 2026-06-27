@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from pikaqiu_agent.tools import create_all_tools, create_bash_tool, create_python_tool
+from pikaqiu_agent.tools import create_all_tools, create_bash_tool, create_python_tool, create_web_fetch_tool
 
 
 class FakeSandbox:
@@ -34,7 +34,7 @@ def test_python_exec_uses_mission_timeout_when_omitted():
     assert sandbox.calls == [("run_python", "print('ok')", 300, "/work")]
 
 
-def test_explicit_tool_timeout_can_shorten_quick_probes_but_not_batch_probes():
+def test_explicit_tool_timeout_is_respected_until_mission_cap():
     sandbox = FakeSandbox()
     bash_tool = create_bash_tool(sandbox, "/work", max_timeout=300)
     python_tool = create_python_tool(sandbox, "/work", max_timeout=300)
@@ -45,9 +45,20 @@ def test_explicit_tool_timeout_can_shorten_quick_probes_but_not_batch_probes():
 
     assert sandbox.calls == [
         ("run", "sleep 1", 30, "/work"),
-        ("run", "batch probe", 300, "/work"),
+        ("run", "batch probe", 70, "/work"),
         ("run_python", "print('ok')", 300, "/work"),
     ]
+
+
+def test_web_fetch_uses_mission_timeout_semantics():
+    sandbox = FakeSandbox()
+    tool = create_web_fetch_tool(sandbox, "/work", max_timeout=300)
+
+    tool.invoke({"url": "https://example.com"})
+    tool.invoke({"url": "https://example.com", "timeout": 70})
+    tool.invoke({"url": "https://example.com", "timeout": 999})
+
+    assert [call[2] for call in sandbox.calls] == [300, 70, 300]
 
 
 def test_all_tools_expose_only_expected_default_names():

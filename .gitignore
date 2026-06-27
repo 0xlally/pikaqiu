@@ -17,3 +17,19 @@ rag/faiss_db/
 rag/models/
 frontend/node_modules/
 frontend/node_modules/.tmp/
+
+# Local agent/session artifacts
+.claude/
+.pikaqiu-server*.log
+.pikaqiu-server*.pid
+.tmp-*
+tmp_test.db
+xbow-*-detail.json
+xbow-*-evidence-snippets.txt
+
+# Generated mission exports and workspace bundles
+mission_exports/
+*.tgz
+*.tgz.sha256
+*.tar.gz
+*.zip

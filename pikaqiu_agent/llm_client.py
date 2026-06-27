@@ -573,7 +573,6 @@ class LLMClient:
                 "commands": [
                     {
                         "command": "pwd; whoami; ls -la; for t in nmap sqlmap curl dig python3; do printf '%s: ' \"$t\"; command -v \"$t\" || true; done",
-                        "timeout": 30,
                         "purpose": "确认 sandbox 工作目录和工具",
                         "expect": "看到路径、用户和工具",
                     }

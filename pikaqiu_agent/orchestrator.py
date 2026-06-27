@@ -93,15 +93,11 @@ _extract_flag_candidates = _flag_capture.extract_flag_candidates
 _trusted_tool_flag_candidates = _flag_capture.trusted_tool_flag_candidates
 _append_flag_candidate_summary = _flag_capture.append_flag_candidate_summary
 _auto_capture_trusted_flags = _flag_capture.auto_capture_trusted_flags
-_is_scan_like_tool_call = _success_guards.is_scan_like_tool_call
-_is_broad_scan_tool_call = _success_guards.is_broad_scan_tool_call
 _current_lead = _success_guards.current_lead
 _next_verification_hint = _success_guards.next_verification_hint
 _summarize_guidance_result = _success_guards.summarize_guidance_result
 _route_guard_guidance = _success_guards.route_guard_guidance
 _post_partial_flag_guidance = _success_guards.post_partial_flag_guidance
-_broad_scan_block_message = _success_guards.broad_scan_block_message
-_mission_scan_cooldown_blocks = _success_guards.mission_scan_cooldown_blocks
 _missing_tool_name = _success_guards.missing_tool_name
 _known_missing_tool_blocks = _success_guards.known_missing_tool_blocks
 _missing_tools_from_memory = _success_guards.missing_tools_from_memory
@@ -1646,7 +1642,6 @@ class OrchestratorManager:
         captured_flags: list[str] = []
         pending_observer_guidance: list[str] = []
         pending_observer_steer: ObserverDecision | None = None
-        mission_scan_timeout_count = 0
         missing_tools_seen: set[str] = _missing_tools_from_memory(memory)
         tool_call_log: list[dict[str, Any]] = []
         total_llm_call_count = 0
@@ -1906,7 +1901,6 @@ class OrchestratorManager:
             tool_exec_count = 0  # total individual tool executions this round (for logging)
             round_tool_call_log: list[dict[str, Any]] = []
             consecutive_no_tool = 0
-            round_broad_scan_count = 0
 
             self.store.add_event(
                 mission_id=mission_id,
@@ -2027,18 +2021,10 @@ class OrchestratorManager:
                         or tool_args.get("flag")
                         or _compact_json(tool_args)
                     )
-                    is_broad_scan = _is_broad_scan_tool_call(tool_name, str(display_cmd))
-
                     blocked_missing_tool = _known_missing_tool_blocks(str(display_cmd), missing_tools_seen)
                     if blocked_missing_tool:
                         running_event_id = None
                         tool_result = _missing_tool_block_message(blocked_missing_tool)
-                    elif is_broad_scan and round_broad_scan_count >= 1:
-                        running_event_id = None
-                        tool_result = _broad_scan_block_message(memory, reason="per-round broad scan")
-                    elif _mission_scan_cooldown_blocks(tool_name, str(display_cmd), mission_scan_timeout_count):
-                        running_event_id = None
-                        tool_result = _broad_scan_block_message(memory, reason="mission scan timeout cooldown")
                     elif tool_name in tool_map:
                         try:
                             # Show "running" indicator immediately so user sees the command
@@ -2129,59 +2115,6 @@ class OrchestratorManager:
                                 memory_patch=patch,
                             ),
                         )
-
-                    if is_broad_scan:
-                        if "[BROAD_SCAN_BLOCKED]" not in result_str:
-                            round_broad_scan_count += 1
-                        if round_broad_scan_count > 1:
-                            lead = _current_lead(memory)
-                            deferred_guidance.append(
-                                "[BROAD_SCAN_LIMIT]\n"
-                                "This round already used a broad enumeration/scanning command. Stop starting more broad scans. "
-                                "Next action must be a targeted verification tied to a concrete endpoint, parameter, response "
-                                f"difference, or this lead: {lead or 'the strongest current memory lead'}.\n"
-                                "[/BROAD_SCAN_LIMIT]"
-                            )
-
-                    # Defer timeout guidance — cannot insert HumanMessage between ToolMessages
-                    if "[TIMEOUT" in result_str:
-                        deferred_guidance.append(
-                            f"命令 `{str(display_cmd)[:100]}` 已超时。"
-                            "考虑：缩小扫描范围、使用更快的工具、"
-                            "或后台运行（nohup ... &）后用 tail 检查结果。"
-                        )
-
-                    if "[TIMEOUT" in result_str:
-                        recent_scan_timeouts = sum(
-                            1 for row in round_tool_call_log[-3:]
-                            if _tool_result_timed_out(row)
-                            and _is_scan_like_tool_call(
-                                str(row.get("tool") or ""),
-                                str(row.get("args_full") or ""),
-                            )
-                        )
-                        if _is_scan_like_tool_call(tool_name, str(display_cmd)):
-                            recent_scan_timeouts += 1
-                        if recent_scan_timeouts >= 2:
-                            deferred_guidance.append(
-                                "连续扫描/爆破类工具超时。停止扩大扫描，回到当前 memory 中最强的已验证线索，"
-                                "下一步只做一个小范围、可解释、能产出原始证据的验证。"
-                            )
-
-                    if "[TIMEOUT" in result_str:
-                        deferred_guidance.append(
-                            f"Command `{str(display_cmd)[:100]}` timed out. Shrink the scope, use a faster targeted probe, "
-                            "or run a background job only when it preserves a concrete result to inspect."
-                        )
-                        if _is_scan_like_tool_call(tool_name, str(display_cmd)):
-                            mission_scan_timeout_count += 1
-                            if mission_scan_timeout_count >= 2:
-                                deferred_guidance.append(
-                                    "[MISSION_SCAN_TIMEOUT_GUARD]\n"
-                                    "This mission has already had at least two scan-like timeouts. Lower priority for ffuf/arjun/nuclei/sqlmap "
-                                    f"and prefer exact verification from memory: {_current_lead(memory) or 'current lead'}.\n"
-                                    "[/MISSION_SCAN_TIMEOUT_GUARD]"
-                                )
 
                     tool_call_entry = {
                         "tool": tool_name,
