@@ -92,9 +92,18 @@ class KnowledgeIndexer:
             return []
 
         limit = max(1, min(int(limit), 50))
-        rag_results = self._search_with_rag(query, domains=domains, limit=limit)
-        if rag_results:
-            return rag_results
+        candidate_limit = max(limit * 8, 24)
+        expanded_query = self._expand_search_query(query)
+
+        candidates: list[dict[str, Any]] = []
+        candidates.extend(self._search_with_rag(query, domains=domains, limit=candidate_limit))
+        candidates.extend(self.store.search_knowledge(query, domains=domains, limit=candidate_limit))
+        if expanded_query != query:
+            candidates.extend(self.store.search_knowledge(expanded_query, domains=domains, limit=candidate_limit))
+
+        ranked = self._rank_and_trim_results(query, candidates, limit=limit)
+        if ranked:
+            return ranked
         return self.store.search_knowledge(query, domains=domains, limit=limit)
 
     def read_doc_content(self, source: str, path: str, fallback: str = "") -> str:
@@ -267,6 +276,266 @@ class KnowledgeIndexer:
                 break
 
         return items
+
+    def _rank_and_trim_results(
+        self,
+        query: str,
+        candidates: list[dict[str, Any]],
+        *,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        terms = self._query_terms(query)
+        if not terms:
+            return candidates[:limit]
+
+        best_by_path: dict[str, tuple[float, dict[str, Any]]] = {}
+        for item in candidates:
+            path = str(item.get("path") or "").replace("\\", "/")
+            if not path:
+                continue
+            full_text = self.read_doc_content(
+                str(item.get("source") or ""),
+                path,
+                fallback=str(item.get("body") or item.get("snippet") or ""),
+            )
+            score = self._result_score(query, terms, item, full_text)
+            if score <= 0:
+                continue
+
+            ranked_item = dict(item)
+            snippet = self._anchored_snippet(
+                full_text or str(item.get("body") or ""),
+                terms,
+                query=query,
+            )
+            if snippet:
+                ranked_item["snippet"] = snippet
+                ranked_item["body"] = snippet
+            ranked_item["score"] = score
+
+            current = best_by_path.get(path)
+            if current is None or score > current[0]:
+                best_by_path[path] = (score, ranked_item)
+
+        ranked = sorted(best_by_path.values(), key=lambda row: row[0], reverse=True)
+        if not ranked:
+            return []
+
+        top_score = ranked[0][0]
+        threshold = max(2.0, top_score * 0.18)
+        filtered = [item for score, item in ranked if score >= threshold]
+        return filtered[:limit]
+
+    def _result_score(
+        self,
+        query: str,
+        terms: list[str],
+        item: dict[str, Any],
+        full_text: str,
+    ) -> float:
+        title = str(item.get("title") or "")
+        path = str(item.get("path") or "")
+        source = str(item.get("source") or "")
+        snippet = str(item.get("snippet") or item.get("body") or "")
+        haystack = self._searchable_text(f"{title}\n{path}\n{full_text or snippet}")
+        title_path = self._searchable_text(f"{title}\n{path}")
+
+        score = min(float(item.get("score") or 0.0), 3.0) * 0.25
+        coverage = 0
+        strong_hits = 0
+        for term in terms:
+            if len(term) < 2:
+                continue
+            normalized = self._searchable_text(term)
+            if not normalized:
+                continue
+            if normalized in title_path:
+                score += 3.0 if self._is_strong_term(normalized) else 1.5
+                coverage += 1
+                strong_hits += 1 if self._is_strong_term(normalized) else 0
+            elif normalized in haystack:
+                score += 1.6 if self._is_strong_term(normalized) else 0.7
+                coverage += 1
+                strong_hits += 1 if self._is_strong_term(normalized) else 0
+
+        lowered_query = query.lower()
+        lowered_path = path.lower()
+        lowered_source = source.lower()
+        if "request smuggling" in lowered_query and "request-smuggling" in lowered_path:
+            score += 5.0
+        wants_payload = any(token in lowered_query for token in ("payload", "poc", "exploit"))
+        if wants_payload:
+            if lowered_source == "payloadsallthethings":
+                score += 7.0
+            if self._looks_like_payload(full_text or snippet):
+                score += 2.5
+            if any(part in lowered_path for part in ("/lab-", "/finding", "/exploiting", "request smuggling/readme")):
+                score += 3.0
+            if any(part in lowered_path for part in ("/blog/", "/research/")):
+                score -= 1.5
+        if lowered_source == "portswigger":
+            score += 0.8
+        elif lowered_source == "payloadsallthethings":
+            score += 0.8
+
+        score += min(coverage, 8) * 0.4
+        score += min(strong_hits, 5) * 0.8
+
+        core_terms = [t for t in terms if self._is_strong_term(self._searchable_text(t))]
+        if core_terms and strong_hits == 0:
+            score *= 0.35
+        if self._is_noise_for_query(query, item, haystack):
+            score *= 0.15
+        return score
+
+    @staticmethod
+    def _is_strong_term(term: str) -> bool:
+        if len(term) >= 4:
+            return True
+        return term in {"cl.te", "te.cl", "h2.cl", "h2.te", "cl.0", "0.cl"}
+
+    @staticmethod
+    def _looks_like_payload(text: str) -> bool:
+        lowered = (text or "").lower()
+        indicators = [
+            "content-length:",
+            "transfer-encoding:",
+            "http/1.1",
+            "post /",
+            "get /",
+            "\\r\\n",
+            "chunked",
+            "payload",
+        ]
+        return sum(1 for indicator in indicators if indicator in lowered) >= 2
+
+    @staticmethod
+    def _is_noise_for_query(query: str, item: dict[str, Any], haystack: str) -> bool:
+        lowered_query = query.lower()
+        source = str(item.get("source") or "").lower()
+        path = str(item.get("path") or "").lower()
+        if "request smuggling" in lowered_query:
+            if "request smuggling" not in haystack and "request-smuggling" not in path:
+                return True
+            if source == "gtfobins.github.io":
+                return True
+        return False
+
+    def _anchored_snippet(
+        self,
+        text: str,
+        terms: list[str],
+        *,
+        max_len: int = 1400,
+        query: str = "",
+    ) -> str:
+        content = re.sub(r"\r\n?", "\n", text or "").strip()
+        if not content:
+            return ""
+        searchable = self._searchable_text(content)
+        if len(content) <= max_len:
+            return content
+
+        best_idx = -1
+        best_score = -1.0
+        for term in terms:
+            normalized = self._searchable_text(term)
+            if not normalized:
+                continue
+            start = 0
+            while True:
+                idx = searchable.find(normalized, start)
+                if idx < 0:
+                    break
+                window = searchable[max(0, idx - 300): idx + 300]
+                local_score = sum(1 for t in terms if self._searchable_text(t) in window)
+                if self._is_strong_term(normalized):
+                    local_score += 3
+                if any(token in query.lower() for token in ("payload", "poc", "exploit")):
+                    local_score += sum(
+                        2
+                        for indicator in (
+                            "content-length:",
+                            "transfer-encoding:",
+                            "http/1.1",
+                            "post /",
+                            "get /",
+                        )
+                        if indicator in window
+                    )
+                if local_score > best_score:
+                    best_score = float(local_score)
+                    best_idx = idx
+                start = idx + max(len(normalized), 1)
+
+        if best_idx < 0:
+            return content[:max_len].rstrip() + "..."
+
+        start = max(0, best_idx - max_len // 3)
+        end = min(len(content), start + max_len)
+        start = max(0, content.rfind("\n\n", 0, start) + 2) if start else 0
+        end_boundary = content.find("\n\n", end)
+        if 0 <= end_boundary <= end + 240:
+            end = end_boundary
+        snippet = content[start:end].strip()
+        if start > 0:
+            snippet = "..." + snippet
+        if end < len(content):
+            snippet += "..."
+        return snippet
+
+    def _expand_search_query(self, query: str) -> str:
+        terms = self._query_terms(query)
+        return " ".join(dict.fromkeys([query, *terms]))
+
+    @classmethod
+    def _query_terms(cls, query: str) -> list[str]:
+        raw_terms = [
+            token.lower()
+            for token in re.findall(r"[A-Za-z0-9][A-Za-z0-9_./:+-]*|[\u4e00-\u9fff]{2,}", query or "")
+        ]
+        terms: list[str] = []
+        terms.extend(raw_terms)
+        terms.extend(cls._security_pair_variants(raw_terms))
+
+        lowered = " ".join(raw_terms)
+        for phrase in (
+            "request smuggling",
+            "content length",
+            "transfer encoding",
+            "server side template injection",
+            "server side request forgery",
+        ):
+            if phrase in lowered:
+                terms.append(phrase)
+                terms.append(phrase.replace(" ", "-"))
+
+        return [term for term in dict.fromkeys(terms) if len(term) >= 2]
+
+    @staticmethod
+    def _security_pair_variants(tokens: list[str]) -> list[str]:
+        variants: list[str] = []
+        short = {"cl", "te", "h2", "h1", "0"}
+        for first, second in zip(tokens, tokens[1:]):
+            if first in short and second in short:
+                variants.extend(
+                    [
+                        f"{first}.{second}",
+                        f"{first}-{second}",
+                        f"{first}_{second}",
+                        f"{first}{second}",
+                    ]
+                )
+        return variants
+
+    @staticmethod
+    def _searchable_text(value: str) -> str:
+        lowered = (value or "").lower()
+        lowered = lowered.replace("_", ".").replace("-", ".")
+        lowered = re.sub(r"\s+", " ", lowered)
+        lowered = re.sub(r"\b(content)\s+(length)\b", r"\1-\2", lowered)
+        lowered = re.sub(r"\b(transfer)\s+(encoding)\b", r"\1-\2", lowered)
+        return lowered
 
     def _normalize_rag_path(self, row: dict[str, Any]) -> str:
         doc_id = str(row.get("doc_id") or "").strip()

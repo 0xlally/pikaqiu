@@ -1290,6 +1290,18 @@ class MissionStore:
                 for width in (2, 3):
                     for idx in range(0, len(token) - width + 1):
                         tokens.append(token[idx : idx + width])
+        lowered = [token.lower() for token in tokens]
+        short_protocol_terms = {"cl", "te", "h2", "h1", "0"}
+        for first, second in zip(lowered, lowered[1:]):
+            if first in short_protocol_terms and second in short_protocol_terms:
+                tokens.extend(
+                    [
+                        f"{first}.{second}",
+                        f"{first}-{second}",
+                        f"{first}_{second}",
+                        f"{first}{second}",
+                    ]
+                )
         return tokens
 
     def _search_knowledge_like(
