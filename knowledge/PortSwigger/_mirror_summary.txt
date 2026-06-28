@@ -1,0 +1,10 @@
+Fetched: 2026-06-28T09:18:07.377516+00:00
+URLs: 3071
+OK: 2881
+Skipped: 190
+Errors: 0
+Seconds: 220.7
+Completeness pass: 2026-06-28T09:26:32.939053+00:00
+Missing before pass: 190
+Written in pass: 190
+Pass errors preserved as docs: 0

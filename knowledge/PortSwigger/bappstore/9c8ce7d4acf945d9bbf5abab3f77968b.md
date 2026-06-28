@@ -1,0 +1,92 @@
+# Header Snipper
+
+Source: https://portswigger.net/bappstore/9c8ce7d4acf945d9bbf5abab3f77968b
+Fetched: 2026-06-28T09:14:53.582834+00:00
+
+Support Center
+
+BApp Store
+
+Header Snipper
+
+Professional
+
+Community
+
+Header Snipper
+
+Download BApp
+
+This extension can be used to "snip" headers from requests using just one click!
+
+This extension provides an additional message editor view. Here, you can configure the headers to be snipped and view the snipped request. This can be used to reduce the size of your requests, and format reports in a nicer way.
+
+Author
+
+Author
+
+Eric Labrador Sainz
+
+Version
+
+Version
+
+1.0
+
+Rating
+
+Rating
+
+Popularity
+
+Popularity
+
+Last updated
+
+Last updated
+
+04 January 2024
+
+Estimated system impact
+
+Estimated system impact
+
+Overall impact:
+
+Empty
+
+Memory
+
+Empty
+
+CPU
+
+Empty
+
+General
+
+Empty
+
+Scanner
+
+Empty
+
+You can install BApps directly within Burp, via the BApp Store feature in the Burp Extender tool. You can also download them from here, for offline installation into Burp.
+
+You can view the source code for all BApp Store extensions on our
+
+GitHub page.
+
+Follow
+
+@BApp_Store on Twitter to receive notifications of all BApp releases and updates.
+
+Please note that extensions are written by third party users of Burp, and PortSwigger Web Security makes no warranty about their quality or usefulness for any particular purpose.
+
+Go back to
+
+BappStore
+
+Note:
+
+Please note that extensions are written by third party users of Burp, and PortSwigger Web Security makes no warranty about their quality or usefulness for any particular purpose.
