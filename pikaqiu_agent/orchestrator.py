@@ -38,7 +38,8 @@ from pikaqiu_agent.skill_loader import SkillLoader
 from pikaqiu_agent.storage import MissionStore
 from pikaqiu_agent import success_guards as _success_guards
 from pikaqiu_agent.tools import create_all_tools
-from pikaqiu_agent.output_truncation import approx_token_count, resolve_max_tokens
+from pikaqiu_agent.output_truncation import resolve_max_tokens
+from pikaqiu_agent.token_counting import count_messages_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -270,20 +271,9 @@ def _tool_result_for_model(tool_name: str, result_str: str, max_output_tokens: i
     return _summarize_guidance_result(tool_name, result_str, max_output_tokens)
 
 
-def _estimate_messages_size(messages: list) -> int:
-    """Estimate total token count of all messages in the conversation."""
-    total = 0
-    for msg in messages:
-        content = msg.content if hasattr(msg, "content") else str(msg)
-        if isinstance(content, str):
-            total += approx_token_count(content)
-        elif isinstance(content, list):
-            for part in content:
-                if isinstance(part, dict):
-                    total += approx_token_count(str(part.get("text", "")))
-                else:
-                    total += approx_token_count(str(part))
-    return total
+def _count_context_tokens(messages: list, *, model: str | None = None) -> int:
+    """Count total tokenizer-backed token budget for conversation messages."""
+    return count_messages_tokens(messages, model=model)
 
 
 def _is_memory_review_message(message: Any) -> bool:
@@ -366,17 +356,17 @@ def _split_round_context_for_compression(
 
 def _context_compression_worthwhile(
     *,
-    original_chars: int,
-    compressed_chars: int,
+    original_tokens: int,
+    compressed_tokens: int,
     threshold: int,
 ) -> bool:
-    if compressed_chars <= threshold:
+    if compressed_tokens <= threshold:
         return True
-    if original_chars <= 0:
+    if original_tokens <= 0:
         return False
-    if compressed_chars >= original_chars:
+    if compressed_tokens >= original_tokens:
         return False
-    saved_ratio = (original_chars - compressed_chars) / original_chars
+    saved_ratio = (original_tokens - compressed_tokens) / original_tokens
     return saved_ratio >= _CONTEXT_COMPRESSION_MIN_SAVINGS_RATIO
 
 
@@ -384,33 +374,34 @@ def _plan_round_context_compression(
     *,
     messages: list[Any],
     threshold: int,
+    model: str | None = None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     head, middle, tail = _split_round_context_for_compression(messages)
-    original_chars = _estimate_messages_size(messages)
-    middle_chars = _estimate_messages_size(middle)
-    tail_chars = _estimate_messages_size(tail)
+    original_tokens = _count_context_tokens(messages, model=model)
+    middle_tokens = _count_context_tokens(middle, model=model)
+    tail_tokens = _count_context_tokens(tail, model=model)
     if not middle:
         return None, {
             "skipped": True,
             "reason": "no_compressible_middle",
-            "original_chars": original_chars,
-            "middle_chars": middle_chars,
-            "tail_chars": tail_chars,
+            "original_tokens": original_tokens,
+            "middle_tokens": middle_tokens,
+            "tail_tokens": tail_tokens,
         }
 
-    compression_floor = _estimate_messages_size(head + tail)
+    compression_floor = _count_context_tokens(head + tail, model=model)
     if not _context_compression_worthwhile(
-        original_chars=original_chars,
-        compressed_chars=compression_floor,
+        original_tokens=original_tokens,
+        compressed_tokens=compression_floor,
         threshold=threshold,
     ):
         return None, {
             "skipped": True,
             "reason": "insufficient_possible_savings",
-            "original_chars": original_chars,
-            "minimum_possible_chars": compression_floor,
-            "middle_chars": middle_chars,
-            "tail_chars": tail_chars,
+            "original_tokens": original_tokens,
+            "minimum_possible_tokens": compression_floor,
+            "middle_tokens": middle_tokens,
+            "tail_tokens": tail_tokens,
             "messages_compressible": len(middle),
         }
 
@@ -418,9 +409,9 @@ def _plan_round_context_compression(
         "head": head,
         "middle": middle,
         "tail": tail,
-        "original_chars": original_chars,
-        "middle_chars": middle_chars,
-        "tail_chars": tail_chars,
+        "original_tokens": original_tokens,
+        "middle_tokens": middle_tokens,
+        "tail_tokens": tail_tokens,
     }, {"skipped": False}
 
 
@@ -430,11 +421,12 @@ def _build_compressed_round_messages(
     compressed_summary: str,
     memory_review: str,
     threshold: int,
+    model: str | None = None,
 ) -> tuple[list[Any] | None, dict[str, Any]]:
     head = list(plan["head"])
     middle = list(plan["middle"])
     tail = list(plan["tail"])
-    original_chars = int(plan["original_chars"])
+    original_tokens = int(plan["original_tokens"])
 
     candidate = (
         head
@@ -442,28 +434,28 @@ def _build_compressed_round_messages(
         + tail
         + [HumanMessage(content=memory_review)]
     )
-    compressed_chars = _estimate_messages_size(candidate)
+    compressed_tokens = _count_context_tokens(candidate, model=model)
     if not _context_compression_worthwhile(
-        original_chars=original_chars,
-        compressed_chars=compressed_chars,
+        original_tokens=original_tokens,
+        compressed_tokens=compressed_tokens,
         threshold=threshold,
     ):
         return None, {
             "skipped": True,
             "reason": "insufficient_savings",
-            "original_chars": original_chars,
-            "compressed_chars": compressed_chars,
-            "middle_chars": plan["middle_chars"],
-            "tail_chars": plan["tail_chars"],
+            "original_tokens": original_tokens,
+            "compressed_tokens": compressed_tokens,
+            "middle_tokens": plan["middle_tokens"],
+            "tail_tokens": plan["tail_tokens"],
         }
 
     return candidate, {
         "skipped": False,
-        "original_chars": original_chars,
-        "compressed_chars": compressed_chars,
+        "original_tokens": original_tokens,
+        "compressed_tokens": compressed_tokens,
         "messages_compressed": len(middle),
-        "middle_chars": plan["middle_chars"],
-        "tail_chars": plan["tail_chars"],
+        "middle_tokens": plan["middle_tokens"],
+        "tail_tokens": plan["tail_tokens"],
     }
 
 
@@ -482,7 +474,7 @@ def _message_text_for_compression(message: Any) -> str:
     return str(content)
 
 
-def _fallback_context_summary(middle: list[Any], msg_size: int) -> str:
+def _fallback_context_summary(middle: list[Any], original_tokens: int) -> str:
     compressed_parts = []
     for message in middle:
         text = _message_text_for_compression(message)
@@ -496,7 +488,7 @@ def _fallback_context_summary(middle: list[Any], msg_size: int) -> str:
     return (
         f"{_CONTEXT_COMPRESSION_SUMMARY_MARKER}\n"
         "method=fallback\n"
-        f"compressed_messages={len(middle)} original_chars={msg_size}\n"
+        f"compressed_messages={len(middle)} original_tokens={original_tokens}\n"
         "summary:\n" + "\n".join(f"- {part}" for part in compressed_parts[-15:])
     )
 
@@ -504,7 +496,7 @@ def _fallback_context_summary(middle: list[Any], msg_size: int) -> str:
 def _compress_context_middle(
     *,
     middle: list[Any],
-    msg_size: int,
+    original_tokens: int,
     mission: dict[str, Any],
     llm: LLMClient,
     compression_timeout_sec: int,
@@ -516,7 +508,7 @@ def _compress_context_middle(
         "method": "fallback",
         "model": "",
         "messages_compressed": len(middle),
-        "original_chars": msg_size,
+        "original_tokens": original_tokens,
         "input_chars": 0,
         "input_truncated": False,
         "summary_chars": 0,
@@ -563,7 +555,7 @@ def _compress_context_middle(
                 compressed_summary = (
                     f"{_CONTEXT_COMPRESSION_SUMMARY_MARKER}\n"
                     "method=model\n"
-                    f"compressed_messages={len(middle)} original_chars={msg_size}\n"
+                    f"compressed_messages={len(middle)} original_tokens={original_tokens}\n"
                     f"summary:\n{llm_summary}"
                 )
                 metadata.update(
@@ -575,8 +567,8 @@ def _compress_context_middle(
                     }
                 )
                 logger.info(
-                    "[orchestrator] LLM compression: %d chars -> %d chars",
-                    msg_size,
+                    "[orchestrator] LLM compression: %d tokens -> %d summary chars",
+                    original_tokens,
                     len(compressed_summary),
                 )
                 return compressed_summary, metadata
@@ -590,7 +582,7 @@ def _compress_context_middle(
     else:
         metadata["error"] = "compression model unavailable"
 
-    compressed_summary = _fallback_context_summary(middle, msg_size)
+    compressed_summary = _fallback_context_summary(middle, original_tokens)
     metadata["summary_chars"] = len(compressed_summary)
     return compressed_summary, metadata
 
@@ -2537,11 +2529,12 @@ class OrchestratorManager:
                     return
 
                 context_compress_threshold = self.settings.context_compress_threshold
-                msg_size = _estimate_messages_size(messages)
-                if msg_size > context_compress_threshold and len(messages) > 6:
+                context_tokens = _count_context_tokens(messages, model=web_search_model)
+                if context_tokens > context_compress_threshold and len(messages) > 6:
                     compression_plan, skip_meta = _plan_round_context_compression(
                         messages=messages,
                         threshold=context_compress_threshold,
+                        model=web_search_model,
                     )
                     if compression_plan is None:
                         logger.info(
@@ -2551,7 +2544,7 @@ class OrchestratorManager:
                     else:
                         compressed_summary, compression_meta = _compress_context_middle(
                             middle=compression_plan["middle"],
-                            msg_size=msg_size,
+                            original_tokens=context_tokens,
                             mission=mission,
                             llm=self.llm,
                             compression_timeout_sec=self.settings.get_compression_timeout_sec(),
@@ -2568,6 +2561,7 @@ class OrchestratorManager:
                             compressed_summary=compressed_summary,
                             memory_review=memory_review,
                             threshold=context_compress_threshold,
+                            model=web_search_model,
                         )
                         if compressed_messages is None:
                             compression_meta.update(apply_meta)
@@ -2582,8 +2576,8 @@ class OrchestratorManager:
                             logger.info(
                                 "[orchestrator] mid-round context compression: method=%s %d tokens -> %d tokens",
                                 compression_meta["method"],
-                                msg_size,
-                                compression_meta["compressed_chars"],
+                                context_tokens,
+                                compression_meta["compressed_tokens"],
                             )
                             self.store.add_event(
                                 mission_id=mission_id,
@@ -2591,7 +2585,7 @@ class OrchestratorManager:
                                 event_type="system",
                                 title="Mid-round context compression",
                                 content=(
-                                    f"message_tokens={msg_size} threshold={context_compress_threshold}; "
+                                    f"message_tokens={context_tokens} threshold={context_compress_threshold}; "
                                     f"compressed_messages={compression_meta['messages_compressed']}; "
                                     f"method={compression_meta['method']}"
                                 ),

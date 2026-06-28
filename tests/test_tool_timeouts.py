@@ -240,9 +240,32 @@ def test_web_search_uses_hosted_responses_credentials_for_search():
     assert "https://proxy.example/v1" in code
     assert "hosted-search-key" in code
     assert "gpt-test" in code
-    assert '"tools": [{"type": "web_search"}]' in code
+    assert '"tools": [tool_def]' in code
+    assert '"include": ["web_search_call.action.sources"]' in code
+    assert "Do not return only a list of search results" in code
     assert "api.github.com" not in code
     assert "services.nvd.nist.gov" not in code
+
+
+def test_web_search_long_response_uses_larger_hosted_answer_options():
+    sandbox = FakeSandbox()
+    tool = create_web_search_tool(
+        sandbox,
+        "/work",
+        web_search_base_url="https://proxy.example/v1",
+        web_search_api_key="hosted-search-key",
+        web_search_model="gpt-test",
+    )
+
+    tool.invoke({
+        "search_query": [{"q": "HAProxy CVE-2021-40346"}],
+        "response_length": "long",
+    })
+
+    code = sandbox.calls[0][1]
+    compile(code, "<web_search_generated>", "exec")
+    assert '"search_context_size": search_context_size' in code
+    assert 'tool_def["return_token_budget"] = "unlimited"' in code
 
 
 def test_web_search_embeds_commands_as_valid_python_json():

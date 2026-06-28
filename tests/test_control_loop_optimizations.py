@@ -11,7 +11,7 @@ from pikaqiu_agent.orchestrator import (
     _CONTEXT_COMPRESSION_SUMMARY_MARKER,
     _build_compressed_round_messages,
     _compress_context_middle,
-    _estimate_messages_size,
+    _count_context_tokens,
     _memory_agent_long_term_review_block,
     _next_observer_review_due_after,
     _tool_call_memory_view,
@@ -88,7 +88,7 @@ class ControlLoopOptimizationTests(unittest.TestCase):
 
         summary, metadata = _compress_context_middle(
             middle=middle,
-            msg_size=_estimate_messages_size(middle),
+            original_tokens=_count_context_tokens(middle, model="gpt-5.5"),
             mission={"target": "http://target", "goal": "capture flag"},
             llm=fake_llm,  # type: ignore[arg-type]
             compression_timeout_sec=5,
@@ -113,7 +113,7 @@ class ControlLoopOptimizationTests(unittest.TestCase):
 
         summary, metadata = _compress_context_middle(
             middle=middle,
-            msg_size=_estimate_messages_size(middle),
+            original_tokens=_count_context_tokens(middle, model="gpt-5.5"),
             mission={"target": "http://target", "goal": "capture flag"},
             llm=fake_llm,  # type: ignore[arg-type]
             compression_timeout_sec=5,
@@ -262,11 +262,11 @@ class ControlLoopOptimizationTests(unittest.TestCase):
             ToolMessage(content=large_tool_output, tool_call_id="py1"),
         ]
 
-        plan, metadata = _plan_round_context_compression(messages=messages, threshold=20000)
+        plan, metadata = _plan_round_context_compression(messages=messages, threshold=7000)
 
         self.assertIsNone(plan)
         self.assertEqual(metadata["reason"], "insufficient_possible_savings")
-        self.assertGreater(metadata["minimum_possible_chars"], 20000)
+        self.assertGreater(metadata["minimum_possible_tokens"], 7000)
 
     def test_mid_round_context_compression_injects_long_term_memory_review(self):
         block, metadata = _memory_agent_long_term_review_block(

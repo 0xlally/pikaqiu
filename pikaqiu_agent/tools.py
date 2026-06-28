@@ -181,6 +181,10 @@ class WebSearchInput(BaseModel):
         default="medium",
         description="How much result text to return.",
     )
+    search_context_size: Literal["low", "medium", "high"] | None = Field(
+        default=None,
+        description="Hosted web_search context size for search_query. Defaults from response_length.",
+    )
     timeout: int | None = Field(
         default=None,
         description="Ignored for web_search; the mission command timeout is always used.",
@@ -297,10 +301,11 @@ def create_web_search_tool(
         click: list[dict[str, Any]] | None = None,
         find: list[dict[str, Any]] | None = None,
         response_length: str | None = "medium",
+        search_context_size: str | None = None,
         timeout: int | None = None,
         max_output_tokens: int | None = None,
     ) -> str:
-        """联网搜索工具。"""
+        """Web search. Search queries return hosted answers with citations; open/click/find fetch page text directly."""
         timeout = _resolve_timeout(None, max_timeout)
         commands = {
             "search_query": _jsonable_tool_arg(search_query),
@@ -309,6 +314,7 @@ def create_web_search_tool(
             "click": _jsonable_tool_arg(click),
             "find": _jsonable_tool_arg(find),
             "response_length": response_length or "medium",
+            "search_context_size": search_context_size,
         }
         code = f"""
 import html
@@ -332,6 +338,10 @@ max_chars_by_length = {{"short": 5000, "medium": 12000, "long": 24000}}
 max_chars = max_chars_by_length.get(length, 12000)
 search_limit_by_length = {{"short": 5, "medium": 8, "long": 12}}
 search_limit = search_limit_by_length.get(length, 8)
+context_by_length = {{"short": "low", "medium": "medium", "long": "high"}}
+search_context_size = str(commands.get("search_context_size") or context_by_length.get(length, "medium")).lower()
+if search_context_size not in {{"low", "medium", "high"}}:
+    search_context_size = context_by_length.get(length, "medium")
 
 
 def load_cache():
@@ -422,58 +432,71 @@ def fetch_url(url):
     }}
 
 
-def extract_response_text(data):
+def collect_response_text_and_annotations(data):
     text_parts = []
+    annotations = []
     if isinstance(data.get("output_text"), str):
         text_parts.append(data["output_text"])
     for item in data.get("output") or []:
         if not isinstance(item, dict):
             continue
         for content in item.get("content") or []:
-            if isinstance(content, dict) and isinstance(content.get("text"), str):
+            if not isinstance(content, dict):
+                continue
+            if isinstance(content.get("text"), str):
                 text_parts.append(content["text"])
-    answer_text = "\\n".join(part for part in text_parts if part).strip()
-    if not answer_text:
-        raise RuntimeError("hosted web_search returned no text output")
-    json_text = answer_text
-    fenced = re.search(r"(?s)```(?:json)?\\s*(.*?)\\s*```", json_text)
-    if fenced:
-        json_text = fenced.group(1)
-    start = json_text.find("{{")
-    end = json_text.rfind("}}")
-    if start >= 0 and end >= start:
-        json_text = json_text[start:end + 1]
-    return json_text
+            for annotation in content.get("annotations") or []:
+                if isinstance(annotation, dict):
+                    annotations.append(annotation)
+    return "\\n".join(part for part in text_parts if part).strip(), annotations
 
 
-def search_web(query):
-    q = str(query.get("q") or "").strip()
-    domains = [str(d).strip() for d in (query.get("domains") or []) if str(d).strip()]
-    recency = query.get("recency")
-    if not q:
-        return []
-    search_q = q
-    if domains:
-        search_q = q + " " + " ".join("site:" + d for d in domains)
-    if recency:
-        search_q += " recent within " + str(recency) + " days"
+def answer_web(queries):
     if not web_search_base_url or not web_search_api_key or not web_search_model:
         raise RuntimeError("hosted web_search requires web_search_base_url, web_search_api_key, and web_search_model")
+    query_lines = []
+    domains = []
+    for item in queries:
+        q = str(item.get("q") or "").strip()
+        if not q:
+            continue
+        item_domains = [str(d).strip() for d in (item.get("domains") or []) if str(d).strip()]
+        domains.extend(item_domains)
+        if item_domains:
+            q += " " + " ".join("site:" + d for d in item_domains)
+        if item.get("recency"):
+            q += " recent within " + str(item.get("recency")) + " days"
+        query_lines.append("- " + q)
+    if not query_lines:
+        raise ValueError("search_query or image_query is required")
+
     base = web_search_base_url.rstrip("/")
     endpoint = base + "/responses" if base.endswith("/v1") else base + "/v1/responses"
     prompt = (
-        "Use web search for this query and return strict JSON only. "
-        "Do not include markdown. Schema: "
-        "{{\\"results\\":[{{\\"title\\":\\"...\\",\\"url\\":\\"https://...\\",\\"snippet\\":\\"...\\"}}]}}. "
-        "Return up to " + str(search_limit) + " results. Query: " + search_q
+        "Use web search to answer the following query or queries. "
+        "Return a concise technical answer with the most relevant facts, versions, caveats, and source URLs. "
+        "Do not return only a list of search results. If sources conflict, say so.\\n"
+        + "\\n".join(query_lines)
     )
+    max_tokens = 1200 if length == "short" else 2400 if length == "medium" else 5000
+    tool_def = {{"type": "web_search", "search_context_size": search_context_size}}
+    clean_domains = []
+    for domain in domains:
+        domain = re.sub(r"^https?://", "", str(domain).strip().lower()).strip("/")
+        if domain and domain not in clean_domains:
+            clean_domains.append(domain)
+    if clean_domains:
+        tool_def["filters"] = {{"allowed_domains": clean_domains[:100]}}
+    if length == "long":
+        tool_def["return_token_budget"] = "unlimited"
     payload = {{
         "model": web_search_model,
         "input": prompt,
-        "tools": [{{"type": "web_search"}}],
+        "tools": [tool_def],
         "tool_choice": {{"type": "web_search"}},
+        "include": ["web_search_call.action.sources"],
         "store": False,
-        "max_output_tokens": 1200 if length == "short" else 2000 if length == "medium" else 3500,
+        "max_output_tokens": max_tokens,
     }}
     req = urllib.request.Request(
         endpoint,
@@ -483,33 +506,53 @@ def search_web(query):
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read(2000000)
+            raw = resp.read(3000000)
             response_text = raw.decode("utf-8", "replace")
     except urllib.error.HTTPError as exc:
         body = exc.read(4000).decode("utf-8", "replace")
         raise RuntimeError("hosted web_search HTTP " + str(exc.code) + ": " + body[:1200])
+
     data = json.loads(response_text)
-    json_text = extract_response_text(data)
-    parsed = json.loads(json_text)
-    results = []
+    answer_text, annotations = collect_response_text_and_annotations(data)
+    sources = []
+    for item in data.get("output") or []:
+        if isinstance(item, dict) and item.get("type") == "web_search_call":
+            action = item.get("action") or {{}}
+            for source in action.get("sources") or []:
+                if isinstance(source, dict):
+                    sources.append(source)
+    if not sources:
+        for annotation in annotations:
+            if annotation.get("type") == "url_citation":
+                citation = annotation.get("url_citation") or annotation
+                sources.append({{
+                    "url": citation.get("url"),
+                    "title": citation.get("title"),
+                    "start_index": citation.get("start_index"),
+                    "end_index": citation.get("end_index"),
+                }})
     seen = set()
-    for item in parsed.get("results") or []:
-        if not isinstance(item, dict):
+    clean_sources = []
+    for source in sources:
+        url = clean_url(source.get("url"))
+        if not re.match(r"^https?://", url, re.I) or url in seen:
             continue
-        result_url = clean_url(item.get("url"))
-        if not re.match(r"^https?://", result_url, re.I) or result_url in seen:
-            continue
-        host = urllib.parse.urlparse(result_url).netloc.lower()
-        if domains and not any(host == d.lower() or host.endswith("." + d.lower()) for d in domains):
-            continue
-        title = str(item.get("title") or result_url)
-        title = re.sub(r"\\s+", " ", title).strip()
-        snippet = re.sub(r"\\s+", " ", str(item.get("snippet") or "")).strip()
-        seen.add(result_url)
-        results.append({{"title": title or result_url, "url": result_url, "snippet": snippet}})
-        if len(results) >= search_limit:
+        seen.add(url)
+        clean_sources.append({{
+            "title": str(source.get("title") or url),
+            "url": url,
+            **({{"snippet": source.get("snippet")}} if source.get("snippet") else {{}}),
+        }})
+        if len(clean_sources) >= search_limit:
             break
-    return results
+    if not answer_text:
+        raise RuntimeError("hosted web_search returned no answer text")
+    return {{
+        "queries": [line[2:] for line in query_lines],
+        "search_context_size": search_context_size,
+        "answer": answer_text,
+        "sources": clean_sources,
+    }}
 
 
 def resolve_ref(cache, ref_id):
@@ -521,20 +564,15 @@ def resolve_ref(cache, ref_id):
 cache = load_cache()
 cache["turn"] = int(cache.get("turn") or 0) + 1
 turn = cache["turn"]
-out = {{"search_results": [], "opened_pages": [], "findings": [], "errors": []}}
+out = {{"opened_pages": [], "findings": [], "errors": []}}
 
 try:
-    for query in (commands.get("search_query") or [])[:4] + (commands.get("image_query") or [])[:4]:
+    queries = (commands.get("search_query") or [])[:4] + (commands.get("image_query") or [])[:4]
+    if queries:
         try:
-            results = search_web(query)
-            formatted = []
-            for idx, item in enumerate(results):
-                ref = f"turn{{turn}}search{{len(out['search_results']) + idx}}"
-                cache["refs"][ref] = {{"url": item["url"], "title": item["title"], "kind": "search_result"}}
-                formatted.append({{"ref_id": ref, **item}})
-            out["search_results"].append({{"query": query.get("q", ""), "results": formatted}})
+            out["answer"] = answer_web(queries)
         except Exception as exc:
-            out["errors"].append({{"operation": "search_query", "query": query.get("q", ""), "error": str(exc)}})
+            out["errors"].append({{"operation": "search_query", "query": "; ".join(str(q.get("q", "")) for q in queries), "error": str(exc)}})
 
     for op in commands.get("open") or []:
         ref_id = str(op.get("ref_id") or "")

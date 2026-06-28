@@ -5,6 +5,7 @@ langchain-anthropic>=0.3.0
 langchain-deepseek>=1.0.0
 langchain-openai>=1.1.0
 langgraph>=1.1.0
+tiktoken>=0.13.0
 
 # HTTP / web
 flask>=3.0.0
