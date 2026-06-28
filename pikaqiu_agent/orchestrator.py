@@ -644,6 +644,12 @@ def _memory_agent_long_term_review_block(memory: dict[str, Any]) -> tuple[str, d
         "轮内上下文刚被自动压缩。下一次选择工具前，必须先对照 Memory Agent 的长期记忆："
         "优先延续已验证线索、凭据和拓扑关系，避免重复已排除路径；"
         "若长期记忆与压缩摘要冲突，先用新的原始目标证据验证，再改变路线。\n\n"
+        "[POST_COMPRESSION_TOOL_GUARD]\n"
+        "Context was just compressed. The next action should usually be bash_exec/python_exec against the target, "
+        "continuing the highest-value lead from memory. Do not use skill_search, knowledge_search, or web_search as "
+        "the immediate default after compression. Use at most one search only when direct target validation is blocked "
+        "or a precise public version/mechanism fact is required; after any search result, return to target validation.\n"
+        "[/POST_COMPRESSION_TOOL_GUARD]\n\n"
         f"{body}\n"
         "[/MEMORY_AGENT_LONG_TERM_REVIEW]"
     )

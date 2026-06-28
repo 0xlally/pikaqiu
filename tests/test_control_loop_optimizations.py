@@ -362,6 +362,8 @@ class ControlLoopOptimizationTests(unittest.TestCase):
         self.assertEqual(metadata["findings"], 1)
         self.assertEqual(metadata["leads"], 1)
         self.assertIn("[MEMORY_AGENT_LONG_TERM_REVIEW]", block)
+        self.assertIn("[POST_COMPRESSION_TOOL_GUARD]", block)
+        self.assertIn("Do not use skill_search, knowledge_search, or web_search", block)
         self.assertIn("下一次选择工具前，必须先对照 Memory Agent 的长期记忆", block)
         self.assertIn("wordpress_admin", block)
         self.assertIn("Plugin candidate did not reproduce", block)

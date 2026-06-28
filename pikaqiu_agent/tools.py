@@ -131,8 +131,13 @@ class PythonInput(BaseModel):
 
 
 class KnowledgeSearchInput(BaseModel):
-    query: str = Field(description="Search query (keywords, CVE IDs, technique names)")
-    limit: int = Field(default=6, description="Maximum number of results")
+    query: str = Field(
+        description=(
+            "Focused offline knowledge query. Use only after target-side checks are stuck "
+            "or when a public technique/version detail is needed."
+        )
+    )
+    limit: int = Field(default=3, description="Maximum number of short results; keep small")
 
 
 class WebSearchQueryInput(BaseModel):
@@ -202,11 +207,11 @@ class SubmitFlagInput(BaseModel):
 class SkillSearchInput(BaseModel):
     query: str = Field(
         description=(
-            "Specific basis for matching skills, such as product/version, endpoint or parameter behavior, "
-            "framework error, file type, likely vulnerability class, failing tool output, or mission phase"
+            "Specific observed target evidence for matching skills. Do not call right after context "
+            "compression or from a generic vulnerability label; first try a direct bash_exec/python_exec validation."
         )
     )
-    limit: int = Field(default=5, description="Maximum number of matching skills")
+    limit: int = Field(default=3, description="Maximum number of matching skills; keep small")
 
 
 class ActivateSkillInput(BaseModel):
@@ -683,23 +688,32 @@ print(json.dumps(out, ensure_ascii=False, indent=2))
 def create_knowledge_tool(knowledge, top_k: int = 3) -> BaseTool:
     @tool("knowledge_search", args_schema=KnowledgeSearchInput)
     def knowledge_search(query: str, limit: int = top_k) -> str:
-        """Search the offline cybersecurity knowledge base.
-        Contains payload references, technique notes, and pentest cheatsheets.
-        Use for payloads, vulnerability background, and exploitation techniques.
-        Returns full document content for each match.
+        """Search the offline cybersecurity knowledge base for concise background.
+
+        Prefer direct target validation first. Use this only when stuck or when a
+        public technique/version detail is needed. Returns short summaries, not
+        full payload documents, so the main prompt stays small and low-noise.
         """
         try:
+            limit = max(1, min(int(limit or top_k or 3), 3))
             results = knowledge.search(query, limit=limit)
             if not results:
                 return f"[knowledge_search] No results for: {query}"
             formatted = []
-            for item in results:
-                entry = f"### {item.get('title', 'untitled')} [{item.get('source', '')}]\n"
+            for index, item in enumerate(results, start=1):
+                title = str(item.get("title", "untitled"))
+                source = str(item.get("source", ""))
                 body = item.get("body") or item.get("snippet") or ""
+                body = _truncate_end(str(body).strip(), 900) if body else ""
+                entry = f"### {index}. {title} [{source}]\n"
                 if body:
                     entry += body
                 formatted.append(entry)
-            return "\n---\n".join(formatted)
+            return (
+                "[knowledge_search]\n"
+                "Use these as background only; the next step should normally be a direct target validation.\n\n"
+                + "\n---\n".join(formatted)
+            )
         except Exception as e:
             return f"[knowledge_search error] {e}"
     return knowledge_search
@@ -716,7 +730,7 @@ def create_skill_search_tool(skills) -> BaseTool:
         is likely to improve the next few actions.
         """
         try:
-            limit = max(1, min(int(limit or 5), 20))
+            limit = max(1, min(int(limit or 3), 3))
             stats = skills.refresh()
             results = skills.search(query, limit=limit)
             return json.dumps({
@@ -724,8 +738,8 @@ def create_skill_search_tool(skills) -> BaseTool:
                 "stats": stats,
                 "results": results,
                 "next_step": (
-                    "Call activate_skill(skill_id, reason) when one result is a good fit for the current phase. "
-                    "The reason should cite the basis for that fit; otherwise continue with normal tools."
+                    "If a result is clearly supported by observed target behavior, activate exactly one skill. "
+                    "Otherwise continue with bash_exec/python_exec target validation; do not chain more searches."
                 ),
             }, ensure_ascii=False, indent=2)
         except Exception as exc:

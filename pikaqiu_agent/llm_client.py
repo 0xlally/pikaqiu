@@ -77,7 +77,7 @@ def format_llm_error(
 
 
 def is_non_retryable_llm_error(e: Exception) -> bool:
-    """Return True for credential/config errors that retries cannot fix."""
+    """Return True for errors that replaying the same request cannot fix."""
     status = getattr(e, "status_code", None)
     if status in (401, 403):
         return True
@@ -99,6 +99,12 @@ def is_non_retryable_llm_error(e: Exception) -> bool:
             "account is not active",
             "unauthorized",
             "forbidden",
+            "flagged for possible cybersecurity risk",
+            "cybersecurity risk",
+            "trusted access for cyber",
+            "content was flagged",
+            "safety filter",
+            "policy violation",
         )
     )
 

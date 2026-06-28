@@ -7,7 +7,7 @@ from pikaqiu_agent.config import (
     DEFAULT_COMPRESSION_TIMEOUT_SEC,
     DEFAULT_MEMORY_COMPRESS_INTERVAL,
 )
-from pikaqiu_agent.llm_client import LLMResult
+from pikaqiu_agent.llm_client import LLMResult, is_non_retryable_llm_error
 from pikaqiu_agent.llm_client import LLMClient
 from pikaqiu_agent.orchestrator import (
     OrchestratorManager,
@@ -505,6 +505,19 @@ def test_llm_invoke_retries_api_connection_error(monkeypatch):
 
     assert model.calls == 2
     assert result.payload["summary"] == "retry succeeded"
+
+
+def test_llm_cyber_safety_filter_is_not_retried_as_transient_502():
+    err = RuntimeError("Error code: 502")
+    err.status_code = 502  # type: ignore[attr-defined]
+    err.body = {  # type: ignore[attr-defined]
+        "error": {
+            "message": "This content was flagged for possible cybersecurity risk.",
+            "type": "upstream_error",
+        }
+    }
+
+    assert is_non_retryable_llm_error(err)
 
 
 def test_compression_defaults_are_fast_enough_for_memory_rewrite():

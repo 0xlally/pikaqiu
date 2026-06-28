@@ -6,7 +6,13 @@ from types import SimpleNamespace
 from pikaqiu_agent.orchestrator import _infer_tool_exit_code
 from pikaqiu_agent.output_truncation import UNIFIED_EXEC_OUTPUT_MAX_BYTES
 from pikaqiu_agent.sandbox import SandboxExecutor
-from pikaqiu_agent.tools import create_all_tools, create_bash_tool, create_python_tool, create_web_search_tool
+from pikaqiu_agent.tools import (
+    create_all_tools,
+    create_bash_tool,
+    create_knowledge_tool,
+    create_python_tool,
+    create_web_search_tool,
+)
 
 
 class FakeSandbox:
@@ -20,6 +26,50 @@ class FakeSandbox:
     def run_python(self, code, timeout_sec=None, workdir=None, stop_fn=None, on_chunk=None):
         self.calls.append(("run_python", code, timeout_sec, workdir))
         return SimpleNamespace(stdout="ok", stderr="", exit_code=0, command=code)
+
+
+class FakeKnowledge:
+    def __init__(self):
+        self.calls = []
+
+    def search(self, query, limit=3):
+        self.calls.append((query, limit))
+        return [
+            {
+                "title": "Request Smuggling Notes",
+                "source": "fixture",
+                "body": "PAYLOAD " + ("A" * 5000),
+            },
+            {
+                "title": "Second",
+                "source": "fixture",
+                "body": "B" * 5000,
+            },
+            {
+                "title": "Third",
+                "source": "fixture",
+                "body": "C" * 5000,
+            },
+            {
+                "title": "Fourth",
+                "source": "fixture",
+                "body": "D" * 5000,
+            },
+        ][:limit]
+
+
+def test_knowledge_search_returns_short_background_not_full_documents():
+    knowledge = FakeKnowledge()
+    tool = create_knowledge_tool(knowledge, top_k=6)
+
+    result = tool.invoke({"query": "HAProxy request smuggling", "limit": 9})
+
+    assert knowledge.calls == [("HAProxy request smuggling", 3)]
+    assert "Use these as background only" in result
+    assert "Request Smuggling Notes" in result
+    assert "Fourth" not in result
+    assert len(result) < 3500
+    assert "A" * 2000 not in result
 
 
 def test_bash_exec_uses_mission_timeout_when_omitted():
