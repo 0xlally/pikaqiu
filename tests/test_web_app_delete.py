@@ -33,7 +33,7 @@ def test_agent_settings_default_context_compress_threshold_matches_tool_budget(t
     settings = _settings(tmp_path)
 
     assert settings.context_compress_threshold == DEFAULT_CONTEXT_COMPRESS_THRESHOLD
-    assert settings.context_compress_threshold == 320000
+    assert settings.context_compress_threshold == 258400
 
 
 def test_agent_settings_defaults_use_shorter_initial_budget(tmp_path):

@@ -92,6 +92,37 @@ def test_exit_code_inference_accepts_codex_and_legacy_shapes():
     assert _infer_tool_exit_code("[EXIT_CODE: 3]") == 3
 
 
+def test_exit_code_inference_treats_rg_head_partial_output_as_success():
+    command = (
+        'rg -i "CVE-2021-40346|request smuggling" '
+        "/usr/share/exploitdb /usr/share/metasploit-framework/modules "
+        "/usr/share/nuclei-templates 2>/dev/null | head -120"
+    )
+    result = (
+        "Chunk ID: abc123\n"
+        "Wall time: 0.1000 seconds\n"
+        "Process exited with code 2\n"
+        "Original token count: 10\n"
+        "Output:\n"
+        "/usr/share/exploitdb/exploits/foo.txt:CVE-2021-40346\n"
+    )
+
+    assert _infer_tool_exit_code(result, command) == 0
+
+
+def test_exit_code_inference_keeps_rg_head_exit_2_without_output_as_failure():
+    command = 'rg "needle" /missing 2>/dev/null | head -120'
+    result = (
+        "Chunk ID: abc123\n"
+        "Wall time: 0.1000 seconds\n"
+        "Process exited with code 2\n"
+        "Original token count: 0\n"
+        "Output:\n"
+    )
+
+    assert _infer_tool_exit_code(result, command) == 2
+
+
 def test_max_output_tokens_truncates_sandbox_tool_output_body():
     class LargeOutputSandbox(FakeSandbox):
         def run(self, command, timeout_sec=None, workdir=None, stop_fn=None, on_chunk=None):
@@ -187,10 +218,10 @@ def test_web_search_uses_mission_timeout_semantics():
     tool = create_web_search_tool(sandbox, "/work", max_timeout=300)
 
     tool.invoke({"open": [{"ref_id": "https://example.com"}]})
-    tool.invoke({"open": [{"ref_id": "https://example.com"}], "timeout": 70})
+    tool.invoke({"open": [{"ref_id": "https://example.com"}], "timeout": 20})
     tool.invoke({"open": [{"ref_id": "https://example.com"}], "timeout": 999})
 
-    assert [call[2] for call in sandbox.calls] == [300, 70, 300]
+    assert [call[2] for call in sandbox.calls] == [300, 300, 300]
 
 
 def test_web_search_uses_hosted_responses_credentials_for_search():

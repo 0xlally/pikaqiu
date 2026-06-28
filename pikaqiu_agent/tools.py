@@ -183,10 +183,7 @@ class WebSearchInput(BaseModel):
     )
     timeout: int | None = Field(
         default=None,
-        description=(
-            "Optional timeout in seconds. Omit to use the mission command timeout. "
-            "Values above the mission command timeout are capped."
-        ),
+        description="Ignored for web_search; the mission command timeout is always used.",
     )
     max_output_tokens: int | None = Field(
         default=None,
@@ -304,7 +301,7 @@ def create_web_search_tool(
         max_output_tokens: int | None = None,
     ) -> str:
         """联网搜索工具。"""
-        timeout = _resolve_timeout(timeout, max_timeout)
+        timeout = _resolve_timeout(None, max_timeout)
         commands = {
             "search_query": _jsonable_tool_arg(search_query),
             "image_query": _jsonable_tool_arg(image_query),
@@ -425,6 +422,30 @@ def fetch_url(url):
     }}
 
 
+def extract_response_text(data):
+    text_parts = []
+    if isinstance(data.get("output_text"), str):
+        text_parts.append(data["output_text"])
+    for item in data.get("output") or []:
+        if not isinstance(item, dict):
+            continue
+        for content in item.get("content") or []:
+            if isinstance(content, dict) and isinstance(content.get("text"), str):
+                text_parts.append(content["text"])
+    answer_text = "\\n".join(part for part in text_parts if part).strip()
+    if not answer_text:
+        raise RuntimeError("hosted web_search returned no text output")
+    json_text = answer_text
+    fenced = re.search(r"(?s)```(?:json)?\\s*(.*?)\\s*```", json_text)
+    if fenced:
+        json_text = fenced.group(1)
+    start = json_text.find("{{")
+    end = json_text.rfind("}}")
+    if start >= 0 and end >= start:
+        json_text = json_text[start:end + 1]
+    return json_text
+
+
 def search_web(query):
     q = str(query.get("q") or "").strip()
     domains = [str(d).strip() for d in (query.get("domains") or []) if str(d).strip()]
@@ -468,26 +489,7 @@ def search_web(query):
         body = exc.read(4000).decode("utf-8", "replace")
         raise RuntimeError("hosted web_search HTTP " + str(exc.code) + ": " + body[:1200])
     data = json.loads(response_text)
-    text_parts = []
-    if isinstance(data.get("output_text"), str):
-        text_parts.append(data["output_text"])
-    for item in data.get("output") or []:
-        if not isinstance(item, dict):
-            continue
-        for content in item.get("content") or []:
-            if isinstance(content, dict) and isinstance(content.get("text"), str):
-                text_parts.append(content["text"])
-    answer_text = "\\n".join(part for part in text_parts if part).strip()
-    if not answer_text:
-        raise RuntimeError("hosted web_search returned no text output")
-    json_text = answer_text
-    fenced = re.search(r"(?s)```(?:json)?\\s*(.*?)\\s*```", json_text)
-    if fenced:
-        json_text = fenced.group(1)
-    start = json_text.find("{{")
-    end = json_text.rfind("}}")
-    if start >= 0 and end >= start:
-        json_text = json_text[start:end + 1]
+    json_text = extract_response_text(data)
     parsed = json.loads(json_text)
     results = []
     seen = set()

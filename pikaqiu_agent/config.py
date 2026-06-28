@@ -43,7 +43,7 @@ DEFAULT_MEMORY_COMPRESS_INTERVAL = 8
 DEFAULT_INITIAL_ROUNDS = 2
 DEFAULT_INITIAL_COMMANDS = 32
 DEFAULT_OBSERVER_REVIEW_INTERVAL = 32
-DEFAULT_CONTEXT_COMPRESS_THRESHOLD = 320000
+DEFAULT_CONTEXT_COMPRESS_THRESHOLD = 258400
 COMMAND_TIMEOUT_MAX_SEC = 300
 MAX_AGENT_SLOTS = 5
 DEFAULT_SANDBOX_CONTAINERS = tuple(f"pikaqiu-sandbox-{idx}" for idx in range(1, MAX_AGENT_SLOTS + 1))
@@ -209,7 +209,7 @@ class AgentSettings:
     initial_commands: int = DEFAULT_INITIAL_COMMANDS
     command_timeout_sec: int = 300     # default sandbox command timeout
     max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS
-    context_compress_threshold: int = DEFAULT_CONTEXT_COMPRESS_THRESHOLD  # chars; mid-round context compression trigger
+    context_compress_threshold: int = DEFAULT_CONTEXT_COMPRESS_THRESHOLD  # approx tokens; mid-round context compression trigger
     memory_compress_interval: int = DEFAULT_MEMORY_COMPRESS_INTERVAL  # main LLM calls between structured memory compression runs
     observer_review_interval: int = DEFAULT_OBSERVER_REVIEW_INTERVAL  # main LLM calls between passive Observer reviews
     knowledge_top_k: int = 6

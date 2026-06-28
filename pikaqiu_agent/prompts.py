@@ -284,7 +284,7 @@ def build_tool_system_prompt(
             "**每次python_exec是独立进程**——变量/session/cookies不保留。"
         ),
         (
-            "## MCP工具\n"
+            "## 可用工具\n"
             "- **bash_exec**: Kali bash（200+渗透工具）。首次用某工具先查help\n"
             "- **python_exec**: Python代码（独立进程，不保存状态）\n"
             "- **web_search**: 联网搜索工具\n"

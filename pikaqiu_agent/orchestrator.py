@@ -38,7 +38,7 @@ from pikaqiu_agent.skill_loader import SkillLoader
 from pikaqiu_agent.storage import MissionStore
 from pikaqiu_agent import success_guards as _success_guards
 from pikaqiu_agent.tools import create_all_tools
-from pikaqiu_agent.output_truncation import resolve_max_tokens
+from pikaqiu_agent.output_truncation import approx_token_count, resolve_max_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -189,6 +189,33 @@ def _is_benign_sigpipe(display_cmd: str, result_str: str, exit_code: int) -> boo
     return "[stderr]" not in result_str.lower()
 
 
+def _codex_output_body(result_str: str) -> str:
+    marker = "\nOutput:\n"
+    if marker in result_str:
+        return result_str.rsplit(marker, 1)[1].strip()
+    return ""
+
+
+def _is_benign_rg_head_partial(display_cmd: str, result_str: str, exit_code: int) -> bool:
+    """Treat partial `rg | head` output as success when stderr was hidden.
+
+    `rg` returns 2 for filesystem/read errors. With `set -o pipefail`, a search
+    like `rg pattern path1 missing_path 2>/dev/null | head -120` becomes a
+    failed command even if usable matches were returned. In that shape, the
+    agent got the requested preview and stderr was intentionally suppressed.
+    """
+    if exit_code != 2:
+        return False
+    cmd = display_cmd.lower()
+    if not re.search(r"(^|[;&|]\s*)rg(\s|$)", cmd):
+        return False
+    if "|" not in cmd or "head" not in cmd:
+        return False
+    if "2>/dev/null" not in cmd.replace(" ", ""):
+        return False
+    return bool(_codex_output_body(result_str))
+
+
 def _infer_tool_exit_code(result_str: str, display_cmd: str = "") -> int:
     """Infer event success for both sandbox commands and in-process tools.
 
@@ -204,6 +231,8 @@ def _infer_tool_exit_code(result_str: str, display_cmd: str = "") -> int:
         except ValueError:
             return -1
         if _is_benign_sigpipe(display_cmd, result_str, exit_code):
+            return 0
+        if _is_benign_rg_head_partial(display_cmd, result_str, exit_code):
             return 0
         return exit_code
 
@@ -242,18 +271,18 @@ def _tool_result_for_model(tool_name: str, result_str: str, max_output_tokens: i
 
 
 def _estimate_messages_size(messages: list) -> int:
-    """Estimate total character count of all messages in the conversation."""
+    """Estimate total token count of all messages in the conversation."""
     total = 0
     for msg in messages:
         content = msg.content if hasattr(msg, "content") else str(msg)
         if isinstance(content, str):
-            total += len(content)
+            total += approx_token_count(content)
         elif isinstance(content, list):
             for part in content:
                 if isinstance(part, dict):
-                    total += len(str(part.get("text", "")))
+                    total += approx_token_count(str(part.get("text", "")))
                 else:
-                    total += len(str(part))
+                    total += approx_token_count(str(part))
     return total
 
 
@@ -2551,7 +2580,7 @@ class OrchestratorManager:
                             compression_meta.update(apply_meta)
                             compression_meta["memory_review"] = memory_review_meta
                             logger.info(
-                                "[orchestrator] mid-round context compression: method=%s %d chars -> %d chars",
+                                "[orchestrator] mid-round context compression: method=%s %d tokens -> %d tokens",
                                 compression_meta["method"],
                                 msg_size,
                                 compression_meta["compressed_chars"],
@@ -2562,7 +2591,7 @@ class OrchestratorManager:
                                 event_type="system",
                                 title="Mid-round context compression",
                                 content=(
-                                    f"message_chars={msg_size} threshold={context_compress_threshold}; "
+                                    f"message_tokens={msg_size} threshold={context_compress_threshold}; "
                                     f"compressed_messages={compression_meta['messages_compressed']}; "
                                     f"method={compression_meta['method']}"
                                 ),

@@ -58,7 +58,7 @@ agent_defaults:
   llm_timeout_sec: 240            # LLM single response timeout (seconds)
   llm_max_retries: 10             # LLM timeout/error auto-retry count
   max_output_tokens: 10000        # approximate output token budget returned to the model
-  context_compress_threshold: 320000  # mid-round compression trigger (chars)
+  context_compress_threshold: 258400  # mid-round compression trigger (approx tokens)
   memory_compress_interval: 8     # structured memory compression interval (main LLM calls)
   observer_review_interval: 32    # passive Observer review interval (main LLM calls)
   knowledge_top_k: 5              # number of knowledge docs to retrieve

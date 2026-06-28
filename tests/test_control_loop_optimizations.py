@@ -176,7 +176,7 @@ class ControlLoopOptimizationTests(unittest.TestCase):
             ToolMessage(content="recent-large-2" + ("B" * 60000), tool_call_id="b"),
         ]
 
-        plan, metadata = _plan_round_context_compression(messages=messages, threshold=80000)
+        plan, metadata = _plan_round_context_compression(messages=messages, threshold=20000)
 
         self.assertIsNone(plan)
         self.assertEqual(metadata["reason"], "insufficient_possible_savings")
@@ -262,11 +262,11 @@ class ControlLoopOptimizationTests(unittest.TestCase):
             ToolMessage(content=large_tool_output, tool_call_id="py1"),
         ]
 
-        plan, metadata = _plan_round_context_compression(messages=messages, threshold=80000)
+        plan, metadata = _plan_round_context_compression(messages=messages, threshold=20000)
 
         self.assertIsNone(plan)
         self.assertEqual(metadata["reason"], "insufficient_possible_savings")
-        self.assertGreater(metadata["minimum_possible_chars"], 80000)
+        self.assertGreater(metadata["minimum_possible_chars"], 20000)
 
     def test_mid_round_context_compression_injects_long_term_memory_review(self):
         block, metadata = _memory_agent_long_term_review_block(
