@@ -36,6 +36,15 @@ def test_agent_settings_default_context_compress_threshold_matches_tool_budget(t
     assert settings.context_compress_threshold == 320000
 
 
+def test_agent_settings_defaults_use_shorter_initial_budget(tmp_path):
+    settings = _settings(tmp_path)
+
+    assert settings.initial_rounds == 2
+    assert settings.initial_commands == 32
+    assert settings.get_mission_params()["max_rounds"] == 2
+    assert settings.get_mission_params()["max_commands"] == 32
+
+
 def test_agent_settings_clamps_command_timeout_to_outer_limit(tmp_path):
     settings = _settings(tmp_path)
 
@@ -69,25 +78,8 @@ def test_agent_settings_rejects_invalid_runtime_context_compress_threshold(tmp_p
     assert settings.context_compress_threshold == 123456
 
 
-def test_load_settings_accepts_legacy_stdout_limit(tmp_path, monkeypatch):
-    monkeypatch.delenv("PIKAQIU_MAX_OUTPUT_TOKENS", raising=False)
-    monkeypatch.delenv("PIKAQIU_STDOUT_LIMIT", raising=False)
-    (tmp_path / "config.yml").write_text(
-        """
-agent_defaults:
-  stdout_limit: 1234
-""",
-        encoding="utf-8",
-    )
-
-    settings = load_settings(tmp_path)
-
-    assert settings.max_output_tokens == 1234
-
-
-def test_load_settings_prefers_new_max_output_tokens_env_over_legacy(tmp_path, monkeypatch):
+def test_load_settings_prefers_max_output_tokens_env(tmp_path, monkeypatch):
     monkeypatch.setenv("PIKAQIU_MAX_OUTPUT_TOKENS", "2222")
-    monkeypatch.setenv("PIKAQIU_STDOUT_LIMIT", "1111")
     (tmp_path / "config.yml").write_text(
         """
 agent_defaults:
@@ -103,7 +95,6 @@ agent_defaults:
 
 def test_load_settings_clamps_negative_max_output_tokens(tmp_path, monkeypatch):
     monkeypatch.delenv("PIKAQIU_MAX_OUTPUT_TOKENS", raising=False)
-    monkeypatch.delenv("PIKAQIU_STDOUT_LIMIT", raising=False)
     (tmp_path / "config.yml").write_text(
         """
 agent_defaults:
@@ -152,6 +143,76 @@ def test_memory_compress_interval_is_runtime_configurable(tmp_path):
     assert response.status_code == 200
     assert settings.memory_compress_interval == 12
     assert response.get_json()["config"]["memory_compress_interval"] == 12
+
+
+def test_observer_review_interval_is_runtime_configurable(tmp_path):
+    settings = _settings(tmp_path)
+    store = MissionStore(":memory:")
+    runtime = SimpleNamespace(
+        settings=settings,
+        store=store,
+        orchestrator=SimpleNamespace(thread_alive=lambda _mission_id: False),
+        static_root=tmp_path,
+    )
+    app = create_app(runtime)
+    client = app.test_client()
+
+    assert settings.observer_review_interval == 32
+    assert client.get("/api/config").get_json()["config"]["observer_review_interval"] == 32
+
+    response = client.post("/api/config", json={"config": {"observer_review_interval": 64}})
+
+    assert response.status_code == 200
+    assert settings.observer_review_interval == 64
+    assert response.get_json()["config"]["observer_review_interval"] == 64
+
+
+def test_load_settings_env_defaults_use_shorter_initial_budget(tmp_path, monkeypatch):
+    monkeypatch.delenv("PIKAQIU_INITIAL_ROUNDS", raising=False)
+    monkeypatch.delenv("PIKAQIU_INITIAL_COMMANDS", raising=False)
+    monkeypatch.delenv("PIKAQIU_OBSERVER_REVIEW_INTERVAL", raising=False)
+
+    settings = load_settings(tmp_path)
+
+    assert settings.initial_rounds == 2
+    assert settings.initial_commands == 32
+    assert settings.observer_review_interval == 32
+
+
+def test_load_settings_accepts_initial_budget_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("PIKAQIU_INITIAL_ROUNDS", "5")
+    monkeypatch.setenv("PIKAQIU_INITIAL_COMMANDS", "77")
+
+    settings = load_settings(tmp_path)
+
+    assert settings.initial_rounds == 5
+    assert settings.initial_commands == 77
+
+
+def test_bootstrap_exposes_mission_defaults(tmp_path):
+    settings = _settings(tmp_path)
+    store = MissionStore(":memory:")
+    runtime = SimpleNamespace(
+        settings=settings,
+        store=store,
+        orchestrator=SimpleNamespace(
+            agent_slots=lambda: [],
+            thread_alive=lambda _mission_id: False,
+        ),
+        knowledge=SimpleNamespace(get_stats=lambda: {}),
+        skills=SimpleNamespace(stats=lambda: {}),
+        static_root=tmp_path,
+    )
+    app = create_app(runtime)
+
+    payload = app.test_client().get("/api/bootstrap").get_json()
+
+    assert payload["mission_defaults"] == {
+        "initial_rounds": 2,
+        "initial_commands": 32,
+        "command_timeout_sec": 300,
+    }
+    assert "defaults" not in payload
 
 
 def test_create_mission_clamps_command_timeout_to_outer_limit(tmp_path):

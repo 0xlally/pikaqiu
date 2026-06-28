@@ -13,11 +13,17 @@ from pikaqiu_agent.orchestrator import (
     _compress_context_middle,
     _estimate_messages_size,
     _memory_agent_long_term_review_block,
+    _next_observer_review_due_after,
+    _tool_call_memory_view,
     _plan_round_context_compression,
     _tool_result_for_model,
 )
 from pikaqiu_agent.mission_log_export import normalize_mission_log_export_dir
 from pikaqiu_agent.observer import ObserverDecision, should_inject_decision
+from pikaqiu_agent.observer import ObserverAgent
+from pikaqiu_agent.observer_runtime import ObserverRuntime
+from pikaqiu_agent.config import AgentSettings
+from pikaqiu_agent.llm_client import LLMResult
 from pikaqiu_agent.storage import MissionStore
 
 
@@ -55,6 +61,15 @@ class FakeCompressionLLM:
     def invoke_compression(self, messages_text, mission_context):  # type: ignore[no-untyped-def]
         self.calls.append((messages_text, mission_context))
         return self.summary
+
+
+class FakeObserverLLM:
+    def invoke_observer_runtime(self, prompt, system):  # type: ignore[no-untyped-def]
+        return LLMResult(
+            raw_text='{"verdict":"OK","rationale":"interval review complete"}',
+            payload={"verdict": "OK", "rationale": "interval review complete"},
+            used_mock=False,
+        )
 
 
 class ControlLoopOptimizationTests(unittest.TestCase):
@@ -127,6 +142,28 @@ class ControlLoopOptimizationTests(unittest.TestCase):
         self.assertIn("Warning: truncated output", summarized)
         self.assertIn("prefix-", summarized)
         self.assertIn("-suffix", summarized)
+
+    def test_memory_tool_view_uses_compact_result_snippets(self):
+        large_result = "HEAD-" + ("A" * 5000) + "-TAIL"
+
+        view = _tool_call_memory_view(
+            [
+                {
+                    "tool": "bash_exec",
+                    "args_summary": "curl http://target/large",
+                    "result_summary": "small summary should not hide full output size",
+                    "result_full": large_result,
+                    "result_len": len(large_result),
+                    "exit_code": 0,
+                }
+            ]
+        )
+
+        summary = view[0]["result_summary"]
+        self.assertLessEqual(len(summary), 780)
+        self.assertIn("HEAD-", summary)
+        self.assertIn("-TAIL", summary)
+        self.assertIn("memory view truncated", summary)
 
     def test_context_compression_skips_when_recent_tail_dominates_context(self):
         messages = [
@@ -276,14 +313,14 @@ class ControlLoopOptimizationTests(unittest.TestCase):
         )
         self.assertFalse(should_inject_decision(memory_only, phase="tool"))
 
-    def test_observer_injection_policy_preserves_round_follow_up(self):
+    def test_observer_injection_policy_preserves_interval_follow_up(self):
         follow_up = ObserverDecision(
             verdict="L2",
             guidance="next round must verify",
         )
-        self.assertTrue(should_inject_decision(follow_up, phase="round"))
+        self.assertTrue(should_inject_decision(follow_up, phase="interval"))
 
-    def test_observer_injection_policy_allows_round_strong_evidence_signal(self):
+    def test_observer_injection_policy_allows_interval_strong_evidence_signal(self):
         signal = ObserverDecision(
             verdict="WATCH",
             guidance="close the proven LFI chain",
@@ -291,7 +328,87 @@ class ControlLoopOptimizationTests(unittest.TestCase):
         )
 
         self.assertFalse(should_inject_decision(signal, phase="tool"))
-        self.assertTrue(should_inject_decision(signal, phase="round"))
+        self.assertTrue(should_inject_decision(signal, phase="interval"))
+        self.assertFalse(should_inject_decision(signal, phase="round"))
+
+    def test_observer_review_due_uses_repeating_configured_interval(self):
+        interval = 32
+        self.assertEqual(_next_observer_review_due_after(0, interval), interval)
+        self.assertEqual(_next_observer_review_due_after(interval - 1, interval), interval)
+        self.assertEqual(_next_observer_review_due_after(interval, interval), interval * 2)
+        self.assertEqual(_next_observer_review_due_after(interval * 2 - 1, interval), interval * 2)
+        self.assertEqual(_next_observer_review_due_after(interval * 2, interval), interval * 3)
+
+    def test_observer_review_schedule_repeats_after_each_due_point(self):
+        interval = 32
+        next_due = interval
+        fired_at = []
+
+        for total_calls in range(1, 97):
+            if total_calls >= next_due:
+                fired_at.append(total_calls)
+                next_due = _next_observer_review_due_after(total_calls, interval)
+
+        self.assertEqual(fired_at, [32, 64, 96])
+        self.assertEqual(next_due, 128)
+
+    def test_observer_runtime_records_reviewed_tool_calls_for_interval_review(self):
+        store = MissionStore(":memory:")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            settings = AgentSettings(
+                workspace_root=root,
+                db_path=root / "state.sqlite3",
+                sandbox_container="sandbox",
+                sandbox_workdir="/tmp/pikaqiu-agent-workspace",
+            )
+            runtime = ObserverRuntime(
+                settings,
+                store,
+                FakeObserverLLM(),  # type: ignore[arg-type]
+                ObserverAgent(),
+            )
+            mission_id = store.create_mission(
+                name="m",
+                target="http://x",
+                goal="flag",
+                scope="http://x",
+                domains=["web"],
+                max_rounds=1,
+                max_commands=1,
+                command_timeout_sec=1,
+                model="mock",
+            )
+
+            runtime.review_progress(
+                phase="interval",
+                mission_id=mission_id,
+                round_no=1,
+                mission={"target": "http://x", "goal": "flag", "status": "running"},
+                memory_before={},
+                memory_after={},
+                tool_call_log=[
+                    {"tool": "bash_exec", "args_summary": "old", "result_full": "old"},
+                    {"tool": "bash_exec", "args_summary": "new", "result_full": "new"},
+                ],
+                reviewed_tool_call_log=[
+                    {"tool": "bash_exec", "args_summary": "new", "result_full": "new"},
+                ],
+                llm_call_count=32,
+                stall_rounds=0,
+                captured_flags=[],
+            )
+
+            observations = [
+                json.loads(message["content"])
+                for message in store.get_observer_messages(mission_id)
+                if message["type"] == "observation"
+            ]
+            self.assertEqual(len(observations), 1)
+            self.assertIn("reviewed_tool_calls", observations[0])
+            self.assertNotIn("round_tool_calls", observations[0])
+            self.assertEqual(observations[0]["reviewed_tool_calls"][0]["args_summary"], "new")
+            self.assertEqual(store.get_observer_agent(mission_id)["status"], "waiting_next_review")
 
     def test_observer_memory_patch_keeps_observer_event_label(self):
         store = MissionStore(":memory:")

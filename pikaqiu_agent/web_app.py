@@ -209,9 +209,9 @@ def create_app(runtime: AppRuntime | None = None) -> Flask:
             "agent_slots": rt().orchestrator.agent_slots(),
             "knowledge": rt().knowledge.get_stats(),
             "skills": rt().skills.stats(),
-            "defaults": {
-                "max_rounds": s.initial_rounds,
-                "max_commands": s.initial_commands,
+            "mission_defaults": {
+                "initial_rounds": s.initial_rounds,
+                "initial_commands": s.initial_commands,
                 "command_timeout_sec": s.command_timeout_sec,
             },
         })

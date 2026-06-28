@@ -10,9 +10,9 @@ export type Bootstrap = {
   agent_slots: AgentSlot[];
   knowledge: KnowledgeStats;
   skills: SkillStats;
-  defaults: {
-    max_rounds: number;
-    max_commands: number;
+  mission_defaults: {
+    initial_rounds: number;
+    initial_commands: number;
     command_timeout_sec: number;
   };
 };

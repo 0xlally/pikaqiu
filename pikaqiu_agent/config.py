@@ -40,6 +40,9 @@ DEFAULT_COMPRESSION_REASONING_EFFORT = "low"
 DEFAULT_COMPRESSION_TIMEOUT_SEC = 180
 _ALLOWED_COMPRESSION_REASONING_EFFORTS = {"minimal", "low", "medium"}
 DEFAULT_MEMORY_COMPRESS_INTERVAL = 8
+DEFAULT_INITIAL_ROUNDS = 2
+DEFAULT_INITIAL_COMMANDS = 32
+DEFAULT_OBSERVER_REVIEW_INTERVAL = 32
 DEFAULT_CONTEXT_COMPRESS_THRESHOLD = 320000
 COMMAND_TIMEOUT_MAX_SEC = 300
 MAX_AGENT_SLOTS = 5
@@ -126,8 +129,8 @@ class ModelPoolEntry:
 @dataclass
 class DifficultyParams:
     """Per-difficulty initial and ceiling params."""
-    initial_rounds: int = 4
-    initial_commands: int = 64
+    initial_rounds: int = DEFAULT_INITIAL_ROUNDS
+    initial_commands: int = DEFAULT_INITIAL_COMMANDS
     max_rounds: int = 16
     max_commands: int = 400
 
@@ -155,7 +158,7 @@ _RUNTIME_MUTABLE_FIELDS = {
     "initial_rounds", "initial_commands", "max_rounds", "max_commands",
     "command_timeout_sec", "max_output_tokens", "knowledge_top_k", "skills_dir",
     "skills_auto_use", "skill_catalog_limit", "skill_prompt_max_chars", "skill_reference_max_chars",
-    "context_compress_threshold", "memory_compress_interval",
+    "context_compress_threshold", "memory_compress_interval", "observer_review_interval",
     "disable_memory_rebase",
     "extra_rounds_per_flag", "extra_commands_per_flag",
     # Mock
@@ -202,12 +205,13 @@ class AgentSettings:
     observer_use_responses_api: bool = True
     observer_disable_response_storage: bool = True
     # Agent params — "initial" for first attempt, "max" as ceiling for retries
-    initial_rounds: int = 4
-    initial_commands: int = 64
+    initial_rounds: int = DEFAULT_INITIAL_ROUNDS
+    initial_commands: int = DEFAULT_INITIAL_COMMANDS
     command_timeout_sec: int = 300     # default sandbox command timeout
     max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS
     context_compress_threshold: int = DEFAULT_CONTEXT_COMPRESS_THRESHOLD  # chars; mid-round context compression trigger
     memory_compress_interval: int = DEFAULT_MEMORY_COMPRESS_INTERVAL  # main LLM calls between structured memory compression runs
+    observer_review_interval: int = DEFAULT_OBSERVER_REVIEW_INTERVAL  # main LLM calls between passive Observer reviews
     knowledge_top_k: int = 6
     knowledge_dir: str = "./knowledge"  # directory for knowledge zips/folders
     skills_dir: str = "./skills"  # directory containing */SKILL.md skill folders
@@ -312,10 +316,6 @@ class AgentSettings:
         applied: dict[str, Any] = {}
         with self._lock:
             for key, value in changes.items():
-                if key == "disable_memory_cleaning":
-                    if "disable_memory_rebase" in changes:
-                        continue
-                    key = "disable_memory_rebase"
                 if key not in _RUNTIME_MUTABLE_FIELDS:
                     errors[key] = f"field '{key}' is not runtime-mutable"
                     continue
@@ -516,13 +516,12 @@ def _load_from_env(root: Path) -> AgentSettings:
             default=DEFAULT_COMPRESSION_TIMEOUT_SEC,
             cast=int,
         ),
-        initial_rounds=_env("PIKAQIU_MAX_ROUNDS", default=4, cast=int),
-        initial_commands=_env("PIKAQIU_MAX_COMMANDS_PER_ROUND", default=64, cast=int),
+        initial_rounds=_env("PIKAQIU_INITIAL_ROUNDS", default=DEFAULT_INITIAL_ROUNDS, cast=int),
+        initial_commands=_env("PIKAQIU_INITIAL_COMMANDS", default=DEFAULT_INITIAL_COMMANDS, cast=int),
         command_timeout_sec=_clamp_command_timeout(_env("PIKAQIU_COMMAND_TIMEOUT_SEC", default=300, cast=int)),
         max_output_tokens=_normalize_max_output_tokens(
             _env(
                 "PIKAQIU_MAX_OUTPUT_TOKENS",
-                "PIKAQIU_STDOUT_LIMIT",
                 default=DEFAULT_MAX_OUTPUT_TOKENS,
                 cast=int,
             )
@@ -532,6 +531,11 @@ def _load_from_env(root: Path) -> AgentSettings:
             default=DEFAULT_MEMORY_COMPRESS_INTERVAL,
             cast=int,
         ),
+        observer_review_interval=_env(
+            "PIKAQIU_OBSERVER_REVIEW_INTERVAL",
+            default=DEFAULT_OBSERVER_REVIEW_INTERVAL,
+            cast=int,
+        ),
         knowledge_top_k=_env("PIKAQIU_KNOWLEDGE_TOP_K", default=6, cast=int),
         knowledge_dir=_env("PIKAQIU_KNOWLEDGE_DIR", default="./knowledge"),
         skills_dir=_env("PIKAQIU_SKILLS_DIR", default="./skills"),
@@ -539,12 +543,7 @@ def _load_from_env(root: Path) -> AgentSettings:
         skill_catalog_limit=_env("PIKAQIU_SKILL_CATALOG_LIMIT", default=50, cast=int),
         skill_prompt_max_chars=_env("PIKAQIU_SKILL_PROMPT_MAX_CHARS", default=12000, cast=int),
         skill_reference_max_chars=_env("PIKAQIU_SKILL_REFERENCE_MAX_CHARS", default=20000, cast=int),
-        disable_memory_rebase=_env(
-            "PIKAQIU_DISABLE_MEMORY_REBASE",
-            "PIKAQIU_DISABLE_MEMORY_CLEANING",
-            default=False,
-            cast=bool,
-        ),
+        disable_memory_rebase=_env("PIKAQIU_DISABLE_MEMORY_REBASE", default=False, cast=bool),
         host=_env("PIKAQIU_WEB_HOST", default="127.0.0.1"),
         port=_env("PIKAQIU_WEB_PORT", default=8765, cast=int),
         mock=_env("PIKAQIU_MOCK", default=False, cast=bool),
@@ -677,8 +676,8 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
         for diff_name, vals in raw_difficulty_params.items():
             if isinstance(vals, dict):
                 difficulty_params[diff_name.lower()] = DifficultyParams(
-                    initial_rounds=vals.get("initial_rounds", 4),
-                    initial_commands=vals.get("initial_commands", 64),
+                    initial_rounds=vals.get("initial_rounds", DEFAULT_INITIAL_ROUNDS),
+                    initial_commands=vals.get("initial_commands", DEFAULT_INITIAL_COMMANDS),
                     max_rounds=vals.get("max_rounds", 16),
                     max_commands=vals.get("max_commands", 400),
                 )
@@ -718,14 +717,21 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
         observer_reasoning_effort=observer_reasoning_effort,
         observer_use_responses_api=observer_use_responses_api,
         observer_disable_response_storage=observer_disable_response_storage,
-        initial_rounds=ag.get("initial_rounds", ag.get("max_rounds", 4)),
-        initial_commands=ag.get("initial_commands", ag.get("max_commands_per_round", 64)),
+        initial_rounds=_env(
+            "PIKAQIU_INITIAL_ROUNDS",
+            default=ag.get("initial_rounds", DEFAULT_INITIAL_ROUNDS),
+            cast=int,
+        ),
+        initial_commands=_env(
+            "PIKAQIU_INITIAL_COMMANDS",
+            default=ag.get("initial_commands", DEFAULT_INITIAL_COMMANDS),
+            cast=int,
+        ),
         command_timeout_sec=_clamp_command_timeout(ag.get("command_timeout_sec", 300)),
         max_output_tokens=_normalize_max_output_tokens(
             _env(
                 "PIKAQIU_MAX_OUTPUT_TOKENS",
-                "PIKAQIU_STDOUT_LIMIT",
-                default=ag.get("max_output_tokens", ag.get("stdout_limit", DEFAULT_MAX_OUTPUT_TOKENS)),
+                default=ag.get("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS),
                 cast=int,
             )
         ),
@@ -737,6 +743,11 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
             default=ag.get("memory_compress_interval", DEFAULT_MEMORY_COMPRESS_INTERVAL),
             cast=int,
         ),
+        observer_review_interval=_env(
+            "PIKAQIU_OBSERVER_REVIEW_INTERVAL",
+            default=ag.get("observer_review_interval", DEFAULT_OBSERVER_REVIEW_INTERVAL),
+            cast=int,
+        ),
         knowledge_top_k=ag.get("knowledge_top_k", 6),
         knowledge_dir=ag.get("knowledge_dir", "./knowledge"),
         skills_dir=ag.get("skills_dir", "./skills"),
@@ -744,8 +755,8 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
         skill_catalog_limit=ag.get("skill_catalog_limit", 50),
         skill_prompt_max_chars=ag.get("skill_prompt_max_chars", 12000),
         skill_reference_max_chars=ag.get("skill_reference_max_chars", 20000),
-        max_rounds=ag.get("max_rounds_ceiling", ag.get("retry_max_rounds", 16)),
-        max_commands=ag.get("max_commands_ceiling", ag.get("retry_max_commands_per_round", 128)),
+        max_rounds=ag.get("max_rounds", 16),
+        max_commands=ag.get("max_commands", 400),
         max_retries=ag.get("max_retries", 2),
         mission_timeout_sec=ag.get("mission_timeout_sec", 0),
         difficulty_params=difficulty_params,
@@ -759,8 +770,7 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
         model_pool=model_pool,
         disable_memory_rebase=_env(
             "PIKAQIU_DISABLE_MEMORY_REBASE",
-            "PIKAQIU_DISABLE_MEMORY_CLEANING",
-            default=ag.get("disable_memory_rebase", ag.get("disable_memory_cleaning", False)),
+            default=ag.get("disable_memory_rebase", False),
             cast=bool,
         ),
     )

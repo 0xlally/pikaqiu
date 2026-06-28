@@ -52,14 +52,15 @@ compression:
 
 # 鈹€鈹€鈹€ Agent Defaults 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 agent_defaults:
-  initial_rounds: 4
-  initial_commands: 64
+  initial_rounds: 2
+  initial_commands: 32
   command_timeout_sec: 300        # per-command sandbox timeout (seconds)
   llm_timeout_sec: 240            # LLM single response timeout (seconds)
   llm_max_retries: 10             # LLM timeout/error auto-retry count
   max_output_tokens: 10000        # approximate output token budget returned to the model
   context_compress_threshold: 320000  # mid-round compression trigger (chars)
   memory_compress_interval: 8     # structured memory compression interval (main LLM calls)
+  observer_review_interval: 32    # passive Observer review interval (main LLM calls)
   knowledge_top_k: 5              # number of knowledge docs to retrieve
   knowledge_dir: "./knowledge"    # directory for knowledge zips/folders (drop .zip or dirs here)
   skills_dir: "./skills"          # directory containing */SKILL.md skill folders
@@ -67,8 +68,8 @@ agent_defaults:
   skill_catalog_limit: 50         # max skill metadata entries injected into the system prompt
   skill_prompt_max_chars: 12000   # max SKILL.md body chars returned by activate_skill
   skill_reference_max_chars: 20000 # max chars returned by skill_read_reference
-  max_rounds_ceiling: 16          # max rounds for retries
-  max_commands_ceiling: 400       # max commands for retries
+  max_rounds: 16                  # hard ceiling for mission rounds
+  max_commands: 400               # hard ceiling for commands per round
   max_retries: 2                  # number of retry attempts for failed missions
   mission_timeout_sec: 0          # total mission timeout (0 = no limit)
   disable_memory_rebase: false    # skip MemoryAgent rebase on stall
@@ -76,18 +77,18 @@ agent_defaults:
   # Per-difficulty overrides (optional)
   difficulty_params:
     easy:
-      initial_rounds: 3
-      initial_commands: 48
+      initial_rounds: 2
+      initial_commands: 32
       max_rounds: 6
       max_commands: 128
     medium:
-      initial_rounds: 4
-      initial_commands: 64
+      initial_rounds: 2
+      initial_commands: 32
       max_rounds: 8
       max_commands: 256
     hard:
-      initial_rounds: 6
-      initial_commands: 96
+      initial_rounds: 2
+      initial_commands: 32
       max_rounds: 16
       max_commands: 400
 

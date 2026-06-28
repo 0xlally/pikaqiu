@@ -5,7 +5,7 @@ import json
 import logging
 import random
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 from langchain_core.tools import tool, BaseTool
 from pydantic import BaseModel, Field
@@ -88,6 +88,16 @@ def _truncate_end(text: str, limit: int) -> str:
     return text[:limit] + f"\n... [truncated {len(text) - limit} chars]"
 
 
+def _jsonable_tool_arg(value: Any) -> Any:
+    if isinstance(value, BaseModel):
+        return value.model_dump(exclude_none=True)
+    if isinstance(value, dict):
+        return {str(k): _jsonable_tool_arg(v) for k, v in value.items() if v is not None}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable_tool_arg(item) for item in value if item is not None]
+    return value
+
+
 # ── Input schemas ──────────────────────────────────────────────────────
 
 class BashInput(BaseModel):
@@ -125,9 +135,52 @@ class KnowledgeSearchInput(BaseModel):
     limit: int = Field(default=6, description="Maximum number of results")
 
 
-class WebFetchInput(BaseModel):
-    url: str = Field(description="HTTP/HTTPS URL to fetch from the public internet")
-    max_chars: int = Field(default=12000, description="Maximum extracted text characters to return, capped at 30000")
+class WebSearchQueryInput(BaseModel):
+    q: str = Field(description="Search query")
+    recency: int | None = Field(default=None, description="Optional recency filter in days")
+    domains: list[str] | None = Field(default=None, description="Optional domains to restrict results")
+
+
+class WebSearchOpenInput(BaseModel):
+    ref_id: str = Field(description="Reference id returned by web_search, or a direct HTTP/HTTPS URL")
+    lineno: int | None = Field(default=None, description="Optional 1-based line number to start from")
+
+
+class WebSearchClickInput(BaseModel):
+    ref_id: str = Field(description="Reference id for a previously opened page")
+    id: int = Field(description="Numbered link id from that page")
+
+
+class WebSearchFindInput(BaseModel):
+    ref_id: str = Field(description="Reference id returned by web_search, or a direct HTTP/HTTPS URL")
+    pattern: str = Field(description="Text pattern to find in the page")
+
+
+class WebSearchInput(BaseModel):
+    search_query: list[WebSearchQueryInput] | None = Field(
+        default=None,
+        description="Search the internet for one or more queries. At most four queries per call.",
+    )
+    image_query: list[WebSearchQueryInput] | None = Field(
+        default=None,
+        description="Accepted for Codex-compatible shape; currently handled as text search.",
+    )
+    open: list[WebSearchOpenInput] | None = Field(
+        default=None,
+        description="Open pages by reference id or direct URL and extract readable text.",
+    )
+    click: list[WebSearchClickInput] | None = Field(
+        default=None,
+        description="Open a numbered link from a previously opened page.",
+    )
+    find: list[WebSearchFindInput] | None = Field(
+        default=None,
+        description="Find text patterns in opened pages or direct URLs.",
+    )
+    response_length: Literal["short", "medium", "long"] | None = Field(
+        default="medium",
+        description="How much result text to return.",
+    )
     timeout: int | None = Field(
         default=None,
         description=(
@@ -228,53 +281,115 @@ def create_python_tool(
     return python_exec
 
 
-def create_web_fetch_tool(
+def create_web_search_tool(
     sandbox,
     workdir: str,
     stop_fn: Callable[[], bool] | None = None,
     on_chunk: Callable[[str], None] | None = None,
     max_timeout: int = 300,
     max_output_tokens_cap: int | None = DEFAULT_MAX_OUTPUT_TOKENS,
+    web_search_base_url: str = "",
+    web_search_api_key: str = "",
+    web_search_model: str = "",
 ) -> BaseTool:
-    @tool("web_fetch", args_schema=WebFetchInput)
-    def web_fetch(
-        url: str,
-        max_chars: int = 12000,
+    @tool("web_search", args_schema=WebSearchInput)
+    def web_search(
+        search_query: list[dict[str, Any]] | None = None,
+        image_query: list[dict[str, Any]] | None = None,
+        open: list[dict[str, Any]] | None = None,
+        click: list[dict[str, Any]] | None = None,
+        find: list[dict[str, Any]] | None = None,
+        response_length: str | None = "medium",
         timeout: int | None = None,
         max_output_tokens: int | None = None,
     ) -> str:
-        """Fetch an HTTP/HTTPS page from the public internet and extract readable text.
+        """Codex-style internet search and page-reading tool.
 
-        Use only when you already have a specific URL. Prefer official docs,
-        security bulletins, Exploit-DB, NVD, GitHub PoCs, and vendor pages.
+        Use search_query/image_query to discover public results, open to read a
+        result ref_id or direct HTTP(S) URL, click to follow links from opened
+        pages, and find to search within an opened page.
         """
-        max_chars = max(1000, min(int(max_chars or 12000), 30000))
         timeout = _resolve_timeout(timeout, max_timeout)
+        commands = {
+            "search_query": _jsonable_tool_arg(search_query),
+            "image_query": _jsonable_tool_arg(image_query),
+            "open": _jsonable_tool_arg(open),
+            "click": _jsonable_tool_arg(click),
+            "find": _jsonable_tool_arg(find),
+            "response_length": response_length or "medium",
+        }
         code = f"""
 import html
 import json
+import os
 import re
 import sys
+import urllib.error
+import urllib.parse
 import urllib.request
 
-url = {json.dumps(url)}
-max_chars = {max_chars}
+commands = json.loads({json.dumps(json.dumps(commands, ensure_ascii=False), ensure_ascii=False)})
 timeout = {timeout}
+web_search_base_url = {json.dumps(str(web_search_base_url or ""))}
+web_search_api_key = {json.dumps(str(web_search_api_key or ""))}
+web_search_model = {json.dumps(str(web_search_model or ""))}
 ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 PikaQiu-Agent/1.0"
+cache_path = os.path.join(os.getcwd(), ".pikaqiu_web_search_cache.json")
+length = str(commands.get("response_length") or "medium").lower()
+max_chars_by_length = {{"short": 5000, "medium": 12000, "long": 24000}}
+max_chars = max_chars_by_length.get(length, 12000)
+search_limit_by_length = {{"short": 5, "medium": 8, "long": 12}}
+search_limit = search_limit_by_length.get(length, 8)
 
-if not re.match(r"^https?://", url, re.I):
-    print(json.dumps({{"url": url, "error": "only http/https URLs are supported"}}, ensure_ascii=False, indent=2))
-    sys.exit(2)
 
-try:
-    req = urllib.request.Request(url, headers={{"User-Agent": ua, "Accept-Language": "en-US,en;q=0.8"}})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        status = getattr(resp, "status", 0)
-        final_url = resp.geturl()
-        content_type = resp.headers.get("content-type", "")
-        charset = resp.headers.get_content_charset() or "utf-8"
-        raw = resp.read(min(max_chars * 8, 1500000))
-    text = raw.decode(charset, "replace")
+def load_cache():
+    try:
+        with open(cache_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            data.setdefault("turn", 0)
+            data.setdefault("refs", {{}})
+            return data
+    except Exception:
+        pass
+    return {{"turn": 0, "refs": {{}}}}
+
+
+def save_cache(cache):
+    try:
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump(cache, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def headers_for_url(url):
+    return {{"User-Agent": ua, "Accept-Language": "en-US,en;q=0.8"}}
+
+
+def clean_url(url):
+    return html.unescape(str(url or "")).strip()
+
+
+def extract_links(page_url, text):
+    links = []
+    seen = set()
+    for href, label in re.findall(r'(?is)<a\\b[^>]*href=["\\']([^"\\']+)["\\'][^>]*>(.*?)</a>', text):
+        url = clean_url(urllib.parse.urljoin(page_url, href))
+        if not re.match(r"^https?://", url, re.I) or url in seen:
+            continue
+        label = html.unescape(re.sub(r"(?s)<[^>]+>", " ", label))
+        label = re.sub(r"\\s+", " ", label).strip()
+        if not label:
+            label = url
+        seen.add(url)
+        links.append({{"id": len(links), "text": label[:160], "url": url}})
+        if len(links) >= 80:
+            break
+    return links
+
+
+def readable_text(content_type, text):
     title = ""
     if "html" in content_type.lower() or "<html" in text[:500].lower():
         m = re.search(r"(?is)<title[^>]*>(.*?)</title>", text)
@@ -286,19 +401,238 @@ try:
         text = html.unescape(text)
     text = re.sub(r"[ \\t\\r\\f\\v]+", " ", text)
     text = re.sub(r"\\n\\s*\\n\\s*\\n+", "\\n\\n", text).strip()
-    if len(text) > max_chars:
-        text = text[:max_chars] + "\\n... [truncated]"
-    print(json.dumps({{
+    return title, text
+
+
+def fetch_url(url):
+    if not re.match(r"^https?://", str(url or ""), re.I):
+        raise ValueError("only http/https URLs are supported")
+    req = urllib.request.Request(url, headers=headers_for_url(url))
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        status = getattr(resp, "status", 0)
+        final_url = resp.geturl()
+        content_type = resp.headers.get("content-type", "")
+        charset = resp.headers.get_content_charset() or "utf-8"
+        raw = resp.read(min(max_chars * 12, 2000000))
+    text = raw.decode(charset, "replace")
+    links = extract_links(final_url, text)
+    title, clean = readable_text(content_type, text)
+    if len(clean) > max_chars:
+        clean = clean[:max_chars] + "\\n... [truncated]"
+    return {{
         "url": url,
         "final_url": final_url,
         "status": status,
         "content_type": content_type,
         "title": title,
-        "text": text,
-    }}, ensure_ascii=False, indent=2))
-except Exception as exc:
-    print(json.dumps({{"url": url, "error": str(exc)}}, ensure_ascii=False, indent=2))
-    sys.exit(1)
+        "text": clean,
+        "links": links,
+    }}
+
+
+def search_web(query):
+    q = str(query.get("q") or "").strip()
+    domains = [str(d).strip() for d in (query.get("domains") or []) if str(d).strip()]
+    recency = query.get("recency")
+    if not q:
+        return []
+    search_q = q
+    if domains:
+        search_q = q + " " + " ".join("site:" + d for d in domains)
+    if recency:
+        search_q += " recent within " + str(recency) + " days"
+    if not web_search_base_url or not web_search_api_key or not web_search_model:
+        raise RuntimeError("hosted web_search requires web_search_base_url, web_search_api_key, and web_search_model")
+    base = web_search_base_url.rstrip("/")
+    endpoint = base + "/responses" if base.endswith("/v1") else base + "/v1/responses"
+    prompt = (
+        "Use web search for this query and return strict JSON only. "
+        "Do not include markdown. Schema: "
+        "{{\\"results\\":[{{\\"title\\":\\"...\\",\\"url\\":\\"https://...\\",\\"snippet\\":\\"...\\"}}]}}. "
+        "Return up to " + str(search_limit) + " results. Query: " + search_q
+    )
+    payload = {{
+        "model": web_search_model,
+        "input": prompt,
+        "tools": [{{"type": "web_search"}}],
+        "tool_choice": {{"type": "web_search"}},
+        "store": False,
+        "max_output_tokens": 1200 if length == "short" else 2000 if length == "medium" else 3500,
+    }}
+    req = urllib.request.Request(
+        endpoint,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={{"Authorization": "Bearer " + web_search_api_key, "Content-Type": "application/json"}},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read(2000000)
+            response_text = raw.decode("utf-8", "replace")
+    except urllib.error.HTTPError as exc:
+        body = exc.read(4000).decode("utf-8", "replace")
+        raise RuntimeError("hosted web_search HTTP " + str(exc.code) + ": " + body[:1200])
+    data = json.loads(response_text)
+    text_parts = []
+    if isinstance(data.get("output_text"), str):
+        text_parts.append(data["output_text"])
+    for item in data.get("output") or []:
+        if not isinstance(item, dict):
+            continue
+        for content in item.get("content") or []:
+            if isinstance(content, dict) and isinstance(content.get("text"), str):
+                text_parts.append(content["text"])
+    answer_text = "\\n".join(part for part in text_parts if part).strip()
+    if not answer_text:
+        raise RuntimeError("hosted web_search returned no text output")
+    json_text = answer_text
+    fenced = re.search(r"(?s)```(?:json)?\\s*(.*?)\\s*```", json_text)
+    if fenced:
+        json_text = fenced.group(1)
+    start = json_text.find("{{")
+    end = json_text.rfind("}}")
+    if start >= 0 and end >= start:
+        json_text = json_text[start:end + 1]
+    parsed = json.loads(json_text)
+    results = []
+    seen = set()
+    for item in parsed.get("results") or []:
+        if not isinstance(item, dict):
+            continue
+        result_url = clean_url(item.get("url"))
+        if not re.match(r"^https?://", result_url, re.I) or result_url in seen:
+            continue
+        host = urllib.parse.urlparse(result_url).netloc.lower()
+        if domains and not any(host == d.lower() or host.endswith("." + d.lower()) for d in domains):
+            continue
+        title = str(item.get("title") or result_url)
+        title = re.sub(r"\\s+", " ", title).strip()
+        snippet = re.sub(r"\\s+", " ", str(item.get("snippet") or "")).strip()
+        seen.add(result_url)
+        results.append({{"title": title or result_url, "url": result_url, "snippet": snippet}})
+        if len(results) >= search_limit:
+            break
+    return results
+
+
+def resolve_ref(cache, ref_id):
+    if re.match(r"^https?://", str(ref_id or ""), re.I):
+        return {{"url": ref_id}}
+    return cache.get("refs", {{}}).get(str(ref_id or ""))
+
+
+cache = load_cache()
+cache["turn"] = int(cache.get("turn") or 0) + 1
+turn = cache["turn"]
+out = {{"search_results": [], "opened_pages": [], "findings": [], "errors": []}}
+
+try:
+    for query in (commands.get("search_query") or [])[:4] + (commands.get("image_query") or [])[:4]:
+        try:
+            results = search_web(query)
+            formatted = []
+            for idx, item in enumerate(results):
+                ref = f"turn{{turn}}search{{len(out['search_results']) + idx}}"
+                cache["refs"][ref] = {{"url": item["url"], "title": item["title"], "kind": "search_result"}}
+                formatted.append({{"ref_id": ref, **item}})
+            out["search_results"].append({{"query": query.get("q", ""), "results": formatted}})
+        except Exception as exc:
+            out["errors"].append({{"operation": "search_query", "query": query.get("q", ""), "error": str(exc)}})
+
+    for op in commands.get("open") or []:
+        ref_id = str(op.get("ref_id") or "")
+        try:
+            target = resolve_ref(cache, ref_id)
+            if not target:
+                raise ValueError("unknown ref_id")
+            page = fetch_url(target["url"])
+            fetch_ref = f"turn{{turn}}fetch{{len(out['opened_pages'])}}"
+            cache["refs"][fetch_ref] = {{
+                "url": page["final_url"],
+                "title": page["title"],
+                "kind": "opened_page",
+                "text": page["text"],
+                "links": page["links"],
+            }}
+            lineno = op.get("lineno")
+            text = page["text"]
+            if lineno:
+                lines = text.splitlines()
+                start = max(0, int(lineno) - 1)
+                text = "\\n".join(lines[start:start + 120])
+            out["opened_pages"].append({{
+                "ref_id": fetch_ref,
+                "source_ref_id": ref_id,
+                "url": page["final_url"],
+                "status": page["status"],
+                "content_type": page["content_type"],
+                "title": page["title"],
+                "text": text,
+                "links": page["links"][:30],
+            }})
+        except Exception as exc:
+            out["errors"].append({{"operation": "open", "ref_id": ref_id, "error": str(exc)}})
+
+    for op in commands.get("click") or []:
+        ref_id = str(op.get("ref_id") or "")
+        try:
+            target = resolve_ref(cache, ref_id)
+            if not target:
+                raise ValueError("unknown ref_id")
+            links = target.get("links") or []
+            link_id = int(op.get("id"))
+            link = next((item for item in links if int(item.get("id", -1)) == link_id), None)
+            if not link:
+                raise ValueError("unknown link id")
+            page = fetch_url(link["url"])
+            fetch_ref = f"turn{{turn}}fetch{{len(out['opened_pages'])}}"
+            cache["refs"][fetch_ref] = {{
+                "url": page["final_url"],
+                "title": page["title"],
+                "kind": "opened_page",
+                "text": page["text"],
+                "links": page["links"],
+            }}
+            out["opened_pages"].append({{
+                "ref_id": fetch_ref,
+                "source_ref_id": ref_id,
+                "clicked_link_id": link_id,
+                "url": page["final_url"],
+                "status": page["status"],
+                "content_type": page["content_type"],
+                "title": page["title"],
+                "text": page["text"],
+                "links": page["links"][:30],
+            }})
+        except Exception as exc:
+            out["errors"].append({{"operation": "click", "ref_id": ref_id, "id": op.get("id"), "error": str(exc)}})
+
+    for op in commands.get("find") or []:
+        ref_id = str(op.get("ref_id") or "")
+        pattern = str(op.get("pattern") or "")
+        try:
+            target = resolve_ref(cache, ref_id)
+            if not target:
+                raise ValueError("unknown ref_id")
+            text = target.get("text")
+            url = target.get("url")
+            if text is None:
+                page = fetch_url(url)
+                text = page["text"]
+            matches = []
+            for m in re.finditer(re.escape(pattern), text, re.I):
+                start = max(0, m.start() - 180)
+                end = min(len(text), m.end() + 180)
+                matches.append(text[start:end].replace("\\n", " "))
+                if len(matches) >= 10:
+                    break
+            out["findings"].append({{"ref_id": ref_id, "url": url, "pattern": pattern, "matches": matches}})
+        except Exception as exc:
+            out["errors"].append({{"operation": "find", "ref_id": ref_id, "pattern": pattern, "error": str(exc)}})
+finally:
+    save_cache(cache)
+
+print(json.dumps(out, ensure_ascii=False, indent=2))
 """
         started = time.monotonic()
         result = sandbox.run_python(code, timeout_sec=timeout, workdir=workdir, stop_fn=stop_fn, on_chunk=on_chunk)
@@ -308,7 +642,7 @@ except Exception as exc:
             max_output_tokens=max_output_tokens,
             max_output_tokens_cap=max_output_tokens_cap,
         )
-    return web_fetch
+    return web_search
 
 
 def create_knowledge_tool(knowledge, top_k: int = 3) -> BaseTool:
@@ -511,6 +845,9 @@ def create_all_tools(
     max_output_tokens_cap: int | None = DEFAULT_MAX_OUTPUT_TOKENS,
     skill_prompt_max_chars: int = 12000,
     skill_reference_max_chars: int = 20000,
+    web_search_base_url: str = "",
+    web_search_api_key: str = "",
+    web_search_model: str = "",
 ) -> list[BaseTool]:
     """Create all tools for a mission round."""
     tools: list[BaseTool] = [
@@ -530,13 +867,16 @@ def create_all_tools(
             max_timeout=command_timeout_sec,
             max_output_tokens_cap=max_output_tokens_cap,
         ),
-        create_web_fetch_tool(
+        create_web_search_tool(
             sandbox,
             workdir,
             stop_fn=stop_fn,
             on_chunk=on_chunk,
             max_timeout=command_timeout_sec,
             max_output_tokens_cap=max_output_tokens_cap,
+            web_search_base_url=web_search_base_url,
+            web_search_api_key=web_search_api_key,
+            web_search_model=web_search_model,
         ),
     ]
     if knowledge:

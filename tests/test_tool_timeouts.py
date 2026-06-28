@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from pikaqiu_agent.orchestrator import _infer_tool_exit_code
 from pikaqiu_agent.output_truncation import UNIFIED_EXEC_OUTPUT_MAX_BYTES
 from pikaqiu_agent.sandbox import SandboxExecutor
-from pikaqiu_agent.tools import create_all_tools, create_bash_tool, create_python_tool, create_web_fetch_tool
+from pikaqiu_agent.tools import create_all_tools, create_bash_tool, create_python_tool, create_web_search_tool
 
 
 class FakeSandbox:
@@ -182,15 +182,53 @@ def test_sandbox_result_falls_back_to_stdout_and_stderr_for_legacy_results():
     assert "Process exited with code 2" in result
 
 
-def test_web_fetch_uses_mission_timeout_semantics():
+def test_web_search_uses_mission_timeout_semantics():
     sandbox = FakeSandbox()
-    tool = create_web_fetch_tool(sandbox, "/work", max_timeout=300)
+    tool = create_web_search_tool(sandbox, "/work", max_timeout=300)
 
-    tool.invoke({"url": "https://example.com"})
-    tool.invoke({"url": "https://example.com", "timeout": 70})
-    tool.invoke({"url": "https://example.com", "timeout": 999})
+    tool.invoke({"open": [{"ref_id": "https://example.com"}]})
+    tool.invoke({"open": [{"ref_id": "https://example.com"}], "timeout": 70})
+    tool.invoke({"open": [{"ref_id": "https://example.com"}], "timeout": 999})
 
     assert [call[2] for call in sandbox.calls] == [300, 70, 300]
+
+
+def test_web_search_uses_hosted_responses_credentials_for_search():
+    sandbox = FakeSandbox()
+    tool = create_web_search_tool(
+        sandbox,
+        "/work",
+        web_search_base_url="https://proxy.example/v1",
+        web_search_api_key="hosted-search-key",
+        web_search_model="gpt-test",
+    )
+
+    tool.invoke({"search_query": [{"q": "OpenAI"}]})
+
+    code = sandbox.calls[0][1]
+    assert "https://proxy.example/v1" in code
+    assert "hosted-search-key" in code
+    assert "gpt-test" in code
+    assert '"tools": [{"type": "web_search"}]' in code
+    assert "api.github.com" not in code
+    assert "services.nvd.nist.gov" not in code
+
+
+def test_web_search_embeds_commands_as_valid_python_json():
+    sandbox = FakeSandbox()
+    tool = create_web_search_tool(
+        sandbox,
+        "/work",
+        web_search_base_url="https://proxy.example/v1",
+        web_search_api_key="hosted-search-key",
+        web_search_model="gpt-test",
+    )
+
+    tool.invoke({"search_query": [{"q": "OpenAI", "recency": None, "domains": None}]})
+
+    code = sandbox.calls[0][1]
+    compile(code, "<web_search_generated>", "exec")
+    assert "commands = json.loads(" in code
 
 
 def test_all_tools_expose_only_expected_default_names():
@@ -198,7 +236,7 @@ def test_all_tools_expose_only_expected_default_names():
     tools = create_all_tools(sandbox, "/work", command_timeout_sec=300)
     names = {tool.name for tool in tools}
 
-    assert names == {"bash_exec", "python_exec", "web_fetch"}
+    assert names == {"bash_exec", "python_exec", "web_search"}
 
 
 def test_run_popen_times_out_even_while_output_is_continuous():

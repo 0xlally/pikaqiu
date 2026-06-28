@@ -272,11 +272,14 @@ const configFields = [
   { key: "compression_timeout_sec", label: "压缩超时秒数", type: "number", section: "压缩模型" },
   { key: "compression_use_responses_api", label: "压缩 Responses API", type: "checkbox", section: "压缩模型" },
   { key: "compression_disable_response_storage", label: "压缩禁用响应存储", type: "checkbox", section: "压缩模型" },
+  { key: "github_token", label: "GitHub Token", type: "password", section: "公共数据 API" },
+  { key: "nvd_api_key", label: "NVD API Key", type: "password", section: "公共数据 API" },
   { key: "initial_rounds", label: "默认轮数", type: "number", section: "Agent 参数" },
   { key: "initial_commands", label: "每轮命令数", type: "number", section: "Agent 参数" },
   { key: "command_timeout_sec", label: "命令超时秒数", type: "number", section: "Agent 参数" },
   { key: "max_output_tokens", label: "输出 token 上限", type: "number", section: "Agent 参数" },
   { key: "memory_compress_interval", label: "记忆压缩轮次（主模型调用）", type: "number", section: "Agent 参数" },
+  { key: "observer_review_interval", label: "Observer 介入间隔（主模型调用）", type: "number", section: "Agent 参数" },
   { key: "disable_memory_rebase", label: "禁用停滞记忆重整", type: "checkbox", section: "Agent 参数" },
   { key: "knowledge_top_k", label: "知识库检索数", type: "number", section: "Agent 参数" },
   { key: "skills_dir", label: "Skills 目录", type: "text", section: "Agent 参数" },
@@ -397,7 +400,7 @@ function MissionControl() {
 
           <aside className="mission-home-side">
             <MissionLaunch
-              defaults={bootstrap?.defaults}
+              missionDefaults={bootstrap?.mission_defaults}
               skills={skills}
               hasMissions={missions.length > 0}
               onCreated={handleCreated}
@@ -669,13 +672,13 @@ function DashboardStrip({
 }
 
 function MissionLaunch({
-  defaults,
+  missionDefaults,
   skills,
   hasMissions,
   onCreated,
   onError
 }: {
-  defaults?: Bootstrap["defaults"];
+  missionDefaults?: Bootstrap["mission_defaults"];
   skills: Skill[];
   hasMissions: boolean;
   onCreated: (id: string) => Promise<void>;
@@ -704,9 +707,9 @@ function MissionLaunch({
       name: String(form.get("name") || "Pentest"),
       target: String(form.get("target") || "").trim(),
       goal: String(form.get("goal") || "").trim(),
-      max_rounds: Number(form.get("max_rounds") || defaults?.max_rounds || 4),
-      max_commands: Number(form.get("max_commands") || defaults?.max_commands || 64),
-      command_timeout_sec: Number(form.get("command_timeout_sec") || defaults?.command_timeout_sec || 300),
+      max_rounds: Number(form.get("max_rounds") || missionDefaults?.initial_rounds || 2),
+      max_commands: Number(form.get("max_commands") || missionDefaults?.initial_commands || 32),
+      command_timeout_sec: Number(form.get("command_timeout_sec") || missionDefaults?.command_timeout_sec || 300),
       expected_flags: Number(form.get("expected_flags") || 1),
       skills: selectedSkills
     };
@@ -758,11 +761,11 @@ function MissionLaunch({
         <div className="form-grid">
           <label>
             最大轮数
-            <input name="max_rounds" type="number" min={1} max={200} defaultValue={defaults?.max_rounds || 4} />
+            <input name="max_rounds" type="number" min={1} max={200} defaultValue={missionDefaults?.initial_rounds || 2} />
           </label>
           <label>
             每轮命令
-            <input name="max_commands" type="number" min={1} max={500} defaultValue={defaults?.max_commands || 64} />
+            <input name="max_commands" type="number" min={1} max={500} defaultValue={missionDefaults?.initial_commands || 32} />
           </label>
           <label>
             超时秒数
@@ -771,7 +774,7 @@ function MissionLaunch({
               type="number"
               min={5}
               max={600}
-              defaultValue={defaults?.command_timeout_sec || 300}
+              defaultValue={missionDefaults?.command_timeout_sec || 300}
             />
           </label>
           <label>
@@ -1351,7 +1354,7 @@ function ObserverTab({ detail }: { detail: MissionDetail }) {
           <Circuitry />
           <div>
             <h2>被动 Observer</h2>
-            <p>Observer 不再是可调用工具，而是在每轮结束后被动审核主模型轨迹。</p>
+            <p>Observer 不再是可调用工具，默认每 32 次主模型调用介入审核主模型轨迹。</p>
           </div>
         </div>
         <div className="observer-stats">
@@ -1387,7 +1390,7 @@ function ObserverTab({ detail }: { detail: MissionDetail }) {
             ))}
           </div>
         ) : (
-          <EmptyState title="Observer 尚未介入" body="任务完成首轮后，这里会出现被动审核结果。" />
+          <EmptyState title="Observer 尚未介入" body="累计主模型调用达到配置中的介入间隔后，这里会出现审核结果。" />
         )}
       </section>
     </div>
@@ -2066,14 +2069,14 @@ function ObserverObservationPanel({ observation, raw }: { observation: ObserverO
   const memoryBefore = observation.memory_before;
   const memoryAfter = observation.memory_after;
   const recentCalls = observerToolCallItems(observation.recent_tool_calls);
-  const roundCalls = observerToolCallItems(observation.round_tool_calls);
-  const calls = roundCalls.length ? roundCalls : recentCalls;
+  const reviewedCalls = observerToolCallItems(observation.reviewed_tool_calls);
+  const calls = reviewedCalls.length ? reviewedCalls : recentCalls;
   const target = toText(mission.target || "");
   const goal = toText(mission.goal || "");
   return (
     <div className="observer-observation">
       <div className="observer-focus-strip">
-        <ObserverMiniStat label="阶段" value={toText(observation.phase || "round_review")} />
+        <ObserverMiniStat label="阶段" value={toText(observation.phase || "interval_review")} />
         <ObserverMiniStat label="LLM 调用" value={toText(observation.llm_call_count ?? "0")} />
         <ObserverMiniStat label="停滞轮次" value={toText(observation.stall_rounds ?? "0")} />
         <ObserverMiniStat label="规则判定" value={observerVerdictLabel(ruleDecision.verdict)} tone={observerVerdictClass(ruleDecision.verdict)} />
@@ -2161,7 +2164,7 @@ function ObserverToolPanel({ message }: { message: ObserverMessage }) {
 function ObserverToolCallList({ calls }: { calls: Record<string, unknown>[] }) {
   return (
     <div className="observer-call-list">
-      <span>本轮工具轨迹</span>
+      <span>审核区间工具轨迹</span>
       {calls.slice(0, 8).map((call, index) => {
         const tool = toText(call.tool || "tool");
         const args = toText(call.args_summary || call.args_full || "");

@@ -46,7 +46,7 @@ SKILL_ERROR_RE = re.compile(
     re.I,
 )
 SCOPE_SAFE_TOOLS = {
-    "web_fetch",
+    "web_search",
     "knowledge_search",
     "skill_search",
     "activate_skill",
@@ -355,7 +355,7 @@ def should_inject_decision(decision: ObserverDecision, *, phase: str) -> bool:
     """Only interrupt the main agent for the explicit L/ENV verdict family."""
     decision = decision.normalised()
     if (
-        phase == "round"
+        phase == "interval"
         and decision.observer_enforcement_state == "strong_evidence"
         and (decision.next_verification or decision.guidance)
     ):
@@ -608,7 +608,7 @@ class ObserverAgent:
             evidence=[f"命令中出现疑似越界主机：{risky[0]}"],
             guidance=(
                 f"停止用执行工具访问 `{risky[0]}`。回到范围内目标 `{target}`。"
-                "公开资料抓取只能在已有明确 URL 时使用 web_fetch；漏洞资料优先用 knowledge_search/searchsploit。"
+                "需要公开资料或实时信息时用 web_search 做联网搜索、打开结果或页内查找；漏洞技巧也可用 knowledge_search/searchsploit。"
             ),
             required_evidence="下一次执行必须指向声明的任务范围",
         )
@@ -738,7 +738,7 @@ class ObserverAgent:
         if EVIDENCE_MARKER_RE.search(result):
             return True
         tool = str(row.get("tool", ""))
-        if tool in {"bash_exec", "python_exec", "web_fetch"} and len(result.strip()) >= 180:
+        if tool in {"bash_exec", "python_exec", "web_search"} and len(result.strip()) >= 180:
             return True
         return False
 

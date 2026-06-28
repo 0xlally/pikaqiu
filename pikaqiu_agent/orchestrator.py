@@ -10,7 +10,12 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from pikaqiu_agent.config import AgentSettings, DEFAULT_MEMORY_COMPRESS_INTERVAL, MAX_AGENT_SLOTS
+from pikaqiu_agent.config import (
+    AgentSettings,
+    DEFAULT_MEMORY_COMPRESS_INTERVAL,
+    DEFAULT_OBSERVER_REVIEW_INTERVAL,
+    MAX_AGENT_SLOTS,
+)
 from pikaqiu_agent import flag_capture as _flag_capture
 from pikaqiu_agent import experience as _experience
 from pikaqiu_agent.knowledge import KnowledgeIndexer
@@ -40,6 +45,7 @@ logger = logging.getLogger(__name__)
 _EXIT_CODE_RE = re.compile(r"(?:\[EXIT_CODE:\s*(-?\d+)\]|Process exited with code\s+(-?\d+))")
 _CONTEXT_COMPRESSION_MIN_SAVINGS_RATIO = 0.20
 _CONTEXT_COMPRESSION_SUMMARY_MARKER = "[ROUND_CONTEXT_COMPRESSION_SUMMARY]"
+_MEMORY_TOOL_RESULT_CHARS = 360
 
 
 class _StopRequested(Exception):
@@ -110,6 +116,21 @@ def _observer_result_view(text: str, limit: int = 20000) -> str:
     return text[:head_size] + marker + text[-tail_size:]
 
 
+def _memory_result_view(text: str, limit: int = _MEMORY_TOOL_RESULT_CHARS) -> str:
+    """Return a compact head+tail snippet for MemoryAgent prompts."""
+    text = str(text or "")
+    limit = max(80, int(limit or _MEMORY_TOOL_RESULT_CHARS))
+    if len(text) <= limit:
+        return text
+    marker = f"\n... [memory view truncated {len(text) - limit} chars] ...\n"
+    budget = max(0, limit - len(marker))
+    if budget <= 0:
+        return text[:limit]
+    head_size = max(1, budget // 2)
+    tail_size = max(1, budget - head_size)
+    return text[:head_size] + marker + text[-tail_size:]
+
+
 def _asset_access_capabilities(
     *,
     mission: dict[str, Any],
@@ -142,8 +163,10 @@ def _tool_call_memory_view(tool_call_log: list[dict[str, Any]], *, limit: int = 
     return [
         {
             "tool": row.get("tool"),
-            "args_summary": str(row.get("args_summary") or "")[:220],
-            "result_summary": _observer_result_view(str(row.get("result_summary") or ""), limit=280),
+            "args_summary": str(row.get("args_summary") or "")[:160],
+            "result_summary": _memory_result_view(
+                str(row.get("result_full") or row.get("result_summary") or ""),
+            ),
             "result_len": row.get("result_len"),
             "exit_code": row.get("exit_code"),
         }
@@ -213,7 +236,7 @@ def _infer_tool_exit_code(result_str: str, display_cmd: str = "") -> int:
 
 
 def _tool_result_for_model(tool_name: str, result_str: str, max_output_tokens: int) -> str:
-    if tool_name in {"bash_exec", "python_exec", "web_fetch"}:
+    if tool_name in {"bash_exec", "python_exec", "web_search"}:
         return str(result_str or "")
     return _summarize_guidance_result(tool_name, result_str, max_output_tokens)
 
@@ -602,6 +625,25 @@ def _next_memory_compress_due_after(total_llm_call_count: int, interval: int) ->
     return ((total // interval) + 1) * interval
 
 
+def _next_memory_compress_due_after_attempt(
+    *,
+    current_due: int,
+    total_llm_call_count: int,
+    interval: int,
+    attempted: bool,
+    succeeded: bool,
+) -> int:
+    if attempted and not succeeded:
+        return max(1, int(current_due or interval or DEFAULT_MEMORY_COMPRESS_INTERVAL))
+    return _next_memory_compress_due_after(total_llm_call_count, interval)
+
+
+def _next_observer_review_due_after(total_llm_call_count: int, interval: int) -> int:
+    interval = max(1, int(interval or DEFAULT_OBSERVER_REVIEW_INTERVAL))
+    total = max(0, int(total_llm_call_count or 0))
+    return ((total // interval) + 1) * interval
+
+
 def _memory_compression_timeout_sec(settings: AgentSettings) -> int:
     llm_timeout = max(1, int(settings.llm_timeout_sec or 1))
     compression_timeout = max(1, int(settings.get_compression_timeout_sec() or 1))
@@ -632,6 +674,7 @@ class OrchestratorManager:
         self.skills = skills
         self._threads: dict[str, threading.Thread] = {}
         self._lock = threading.Lock()
+        self._memory_compression_lock = threading.Lock()
         self._mission_meta: dict[str, dict] = {}  # mission_id -> extra params (e.g. mission_timeout_sec)
         self._sandbox_alloc: dict[str, SandboxExecutor] = {}
         containers = list(dict.fromkeys(settings.sandbox_containers or [settings.sandbox_container]))
@@ -899,6 +942,7 @@ class OrchestratorManager:
             stall_rounds=stall_rounds,
             reason=reason,
         )
+        prompt_chars = len(memory_prompt)
         timeout_sec = _memory_compression_timeout_sec(self.settings)
         started = time.monotonic()
         method = "compression_model"
@@ -909,12 +953,14 @@ class OrchestratorManager:
             title=f"{event_label} running ({reason})",
             content=(
                 f"tool_call_count={tool_call_count} timeout_sec={timeout_sec} "
-                f"method={method} mode={mode} stall_rounds={stall_rounds}"
+                f"prompt_chars={prompt_chars} method={method} mode={mode} "
+                f"stall_rounds={stall_rounds}"
             ),
             metadata={
                 "reason": reason,
                 "tool_call_count": tool_call_count,
                 "timeout_sec": timeout_sec,
+                "prompt_chars": prompt_chars,
                 "status": "running",
                 "method": method,
                 "mode": mode,
@@ -926,7 +972,11 @@ class OrchestratorManager:
                 raise RuntimeError("compression model is not configured")
             pool = ThreadPoolExecutor(max_workers=1)
             try:
-                future = pool.submit(self.llm.invoke_memory_compression, memory_prompt, memory)
+                def _invoke_locked_memory_compression():
+                    with self._memory_compression_lock:
+                        return self.llm.invoke_memory_compression(memory_prompt, memory)
+
+                future = pool.submit(_invoke_locked_memory_compression)
                 memory_result = _future_result_with_stop(
                     future,
                     timeout_sec=timeout_sec,
@@ -945,7 +995,8 @@ class OrchestratorManager:
                 title=f"{event_label} cancelled ({reason})",
                 content=(
                     f"stop requested\n\nelapsed_ms={elapsed_ms} "
-                    f"tool_call_count={tool_call_count} method={method} mode={mode}"
+                    f"tool_call_count={tool_call_count} prompt_chars={prompt_chars} "
+                    f"method={method} mode={mode}"
                 ),
                 exit_code=-15,
             )
@@ -963,7 +1014,8 @@ class OrchestratorManager:
                 title=f"{event_label} failed ({reason})",
                 content=(
                     f"{error}\n\nelapsed_ms={elapsed_ms} "
-                    f"tool_call_count={tool_call_count} method={method} mode={mode}"
+                    f"tool_call_count={tool_call_count} prompt_chars={prompt_chars} "
+                    f"method={method} mode={mode}"
                 ),
                 exit_code=1,
             )
@@ -973,7 +1025,7 @@ class OrchestratorManager:
             running_event_id,
             event_type="memory_agent",
             title=f"{event_label} ({reason})",
-            content=f"method={method} mode={mode}\n{_compact_json(new_memory)}",
+            content=f"method={method} mode={mode} prompt_chars={prompt_chars}\n{_compact_json(new_memory)}",
         )
         return self.store.get_memory(mission_id), True
 
@@ -1802,6 +1854,9 @@ class OrchestratorManager:
         # create a dedicated tool model instead of the global one
         mission_model = mission.get("model", "")
         tool_model = self.llm.get_tool_model()
+        web_search_base_url = self.settings.llm_base_url
+        web_search_api_key = self.settings.llm_api_key
+        web_search_model = self.settings.get_chat_model()
         if mission_model and mission_model != "mock":
             entry = self.settings.get_model_by_model_name(mission_model)
             if entry:
@@ -1812,6 +1867,9 @@ class OrchestratorManager:
                         use_responses_api=entry.use_responses_api,
                         disable_response_storage=entry.disable_response_storage,
                     )
+                    web_search_base_url = entry.base_url
+                    web_search_api_key = entry.api_key
+                    web_search_model = entry.model
                     logger.info("[orchestrator] mission %s using per-mission model: %s",
                                 mission_id[:8], entry.model)
                 except Exception:
@@ -1832,13 +1890,20 @@ class OrchestratorManager:
         expected_flags = mission.get("expected_flags", 1)
         flag_captured = threading.Event()
         captured_flags: list[str] = []
-        pending_observer_guidance: list[str] = []
         pending_observer_steer: ObserverDecision | None = None
         tool_call_log: list[dict[str, Any]] = []
         total_llm_call_count = 0
         last_memory_compressed_tool_index = 0
         memory_compress_interval = max(1, int(self.settings.memory_compress_interval or DEFAULT_MEMORY_COMPRESS_INTERVAL))
         next_memory_compress_due = memory_compress_interval
+        observer_review_interval = max(
+            1,
+            int(self.settings.observer_review_interval or DEFAULT_OBSERVER_REVIEW_INTERVAL),
+        )
+        next_observer_review_due = observer_review_interval
+        last_observer_review_llm_count = 0
+        last_observer_review_tool_index = 0
+        last_observer_review_memory = self.store.get_memory(mission_id)
 
         start_round = max(1, self.store.get_max_round_no(mission_id) + 1)
         if start_round > max_rounds:
@@ -1874,6 +1939,7 @@ class OrchestratorManager:
 
             mission = self.store.get_mission(mission_id) or mission
             memory = self.store.get_memory(mission_id)
+            round_start_memory = memory
 
             manual_skill_ids = [
                 str(item).strip()
@@ -2054,9 +2120,6 @@ class OrchestratorManager:
             else:
                 sys_msg = SystemMessage(content=system_prompt)
             initial_human_content = f"{volatile_context}\n\n---\n\n{user_msg}"
-            if pending_observer_guidance:
-                initial_human_content += "\n\n---\n\n" + "\n\n".join(pending_observer_guidance)
-                pending_observer_guidance.clear()
             messages: list[Any] = [
                 sys_msg,
                 HumanMessage(content=initial_human_content),
@@ -2077,6 +2140,9 @@ class OrchestratorManager:
                 max_output_tokens_cap=default_max_output_tokens,
                 skill_prompt_max_chars=self.settings.skill_prompt_max_chars,
                 skill_reference_max_chars=self.settings.skill_reference_max_chars,
+                web_search_base_url=web_search_base_url,
+                web_search_api_key=web_search_api_key,
+                web_search_model=web_search_model,
             )
             tool_map = {t.name: t for t in tools}
             model_with_tools = tool_model.bind_tools(tools)
@@ -2101,7 +2167,10 @@ class OrchestratorManager:
                 if total_llm_call_count < next_memory_compress_due:
                     return
                 new_tool_calls = tool_call_log[last_memory_compressed_tool_index:]
+                compression_attempted = False
+                memory_compressed = False
                 if new_tool_calls:
+                    compression_attempted = True
                     memory, memory_compressed = self._compress_memory_from_tool_calls(
                         mission_id=mission_id,
                         mission=mission,
@@ -2112,9 +2181,74 @@ class OrchestratorManager:
                     )
                     if memory_compressed:
                         last_memory_compressed_tool_index = len(tool_call_log)
-                next_memory_compress_due = _next_memory_compress_due_after(
+                next_memory_compress_due = _next_memory_compress_due_after_attempt(
+                    current_due=next_memory_compress_due,
+                    total_llm_call_count=total_llm_call_count,
+                    interval=memory_compress_interval,
+                    attempted=compression_attempted,
+                    succeeded=memory_compressed,
+                )
+
+            def maybe_review_observer_due() -> None:
+                nonlocal memory, pending_observer_steer, next_observer_review_due
+                nonlocal last_observer_review_llm_count, last_observer_review_tool_index
+                nonlocal last_observer_review_memory
+                if self.store.should_stop(mission_id) or flag_captured.is_set():
+                    return
+                if total_llm_call_count < next_observer_review_due:
+                    return
+
+                memory_before_observer = last_observer_review_memory
+                memory_after_observer = memory
+                reviewed_tool_calls = tool_call_log[last_observer_review_tool_index:]
+                reviewed_llm_calls = max(0, total_llm_call_count - last_observer_review_llm_count)
+                observer_decision = self.observer_runtime.review_progress(
+                    phase="interval",
+                    mission_id=mission_id,
+                    round_no=round_no,
+                    mission=mission,
+                    memory_before=memory_before_observer,
+                    memory_after=memory_after_observer,
+                    tool_call_log=tool_call_log,
+                    reviewed_tool_call_log=reviewed_tool_calls,
+                    llm_call_count=reviewed_llm_calls,
+                    stall_rounds=_stall_rounds,
+                    captured_flags=captured_flags,
+                    stop_fn=lambda: self.store.should_stop(mission_id),
+                )
+                if self.store.should_stop(mission_id):
+                    return
+                self._record_observer_decision(
+                    mission_id=mission_id,
+                    round_no=round_no,
+                    decision=observer_decision,
+                    phase="interval",
+                )
+                memory = self._apply_observer_memory_patch(
+                    mission_id=mission_id,
+                    round_no=round_no,
+                    memory=memory_after_observer,
+                    decision=observer_decision,
+                )
+                if (
+                    observer_decision.interrupts
+                    or observer_decision.observer_enforcement_state == "strong_evidence"
+                ):
+                    _injected, pending_observer_steer = self._route_observer_correction(
+                        mission_id=mission_id,
+                        round_no=round_no,
+                        decision=observer_decision,
+                        phase="interval",
+                        messages=messages,
+                        pending_guidance=None,
+                        pending_steer=pending_observer_steer,
+                    )
+                last_observer_review_llm_count = total_llm_call_count
+                last_observer_review_tool_index = len(tool_call_log)
+                last_observer_review_memory = memory
+                next_observer_review_due = _next_observer_review_due_after(
                     total_llm_call_count,
-                    memory_compress_interval,
+                    observer_review_interval,
                 )
 
             while llm_call_count < max_tool_calls_per_round:
@@ -2164,6 +2298,7 @@ class OrchestratorManager:
 
                 if not response.tool_calls:
                     maybe_compress_memory_due()
+                    maybe_review_observer_due()
                     if self.store.should_stop(mission_id):
                         self.store.update_mission_status(mission_id, "stopped")
                         return
@@ -2204,7 +2339,7 @@ class OrchestratorManager:
                         or tool_args.get("flag")
                         or _compact_json(tool_args)
                     )
-                    sandbox_backed_tool = tool_name in {"bash_exec", "python_exec", "web_fetch"}
+                    sandbox_backed_tool = tool_name in {"bash_exec", "python_exec", "web_search"}
                     if sandbox_backed_tool:
                         requested_max_output_tokens = resolve_max_tokens(tool_args.get("max_output_tokens"))
                         capped_max_output_tokens = min(
@@ -2369,6 +2504,7 @@ class OrchestratorManager:
                             pending_observer_steer = None
 
                 maybe_compress_memory_due()
+                maybe_review_observer_due()
                 if self.store.should_stop(mission_id):
                     self.store.update_mission_status(mission_id, "stopped")
                     return
@@ -2456,52 +2592,12 @@ class OrchestratorManager:
                 )
                 return
 
-            memory_before_observer = memory
             if self.store.should_stop(mission_id):
                 self.store.update_mission_status(mission_id, "stopped")
                 return
-            round_observer_decision = self.observer_runtime.review_round(
-                mission_id=mission_id,
-                round_no=round_no,
-                mission=mission,
-                memory_before=memory_before_observer,
-                memory_after=memory_before_observer,
-                tool_call_log=tool_call_log,
-                round_tool_call_log=round_tool_call_log,
-                llm_call_count=llm_call_count,
-                stall_rounds=_stall_rounds,
-                captured_flags=captured_flags,
-                stop_fn=lambda: self.store.should_stop(mission_id),
-            )
-            if self.store.should_stop(mission_id):
-                self.store.update_mission_status(mission_id, "stopped")
-                return
-            self._record_observer_decision(
-                mission_id=mission_id,
-                round_no=round_no,
-                decision=round_observer_decision,
-                phase="round",
-            )
-            new_memory = self._apply_observer_memory_patch(
-                mission_id=mission_id,
-                round_no=round_no,
-                memory=memory_before_observer,
-                decision=round_observer_decision,
-            )
-            memory = new_memory
-            if round_observer_decision.interrupts or round_observer_decision.observer_enforcement_state == "strong_evidence":
-                _injected, pending_observer_steer = self._route_observer_correction(
-                    mission_id=mission_id,
-                    round_no=round_no,
-                    decision=round_observer_decision,
-                    phase="round",
-                    messages=None,
-                    pending_guidance=pending_observer_guidance,
-                    pending_steer=pending_observer_steer,
-                )
 
             # Stall detection: semantic comparison instead of fragile hash
-            if detect_stall(new_memory, memory_before_observer):
+            if detect_stall(memory, round_start_memory):
                 _stall_rounds += 1
             else:
                 _stall_rounds = 0

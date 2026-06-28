@@ -26,7 +26,7 @@ OBSERVER_STATUSES = {
     "observing",
     "thinking",
     "advising",
-    "waiting_next_round",
+    "waiting_next_review",
     "crashed",
 }
 OBSERVER_RUNTIME_TOOLS = {
@@ -133,32 +133,34 @@ class ObserverRuntime:
     def summary(self, mission_id: str) -> dict[str, Any]:
         return self.store.get_observer_summary(mission_id)
 
-    def review_round(
+    def review_progress(
         self,
         *,
+        phase: str,
         mission_id: str,
         round_no: int,
         mission: dict[str, Any],
         memory_before: dict[str, Any],
         memory_after: dict[str, Any],
         tool_call_log: list[dict[str, Any]],
-        round_tool_call_log: list[dict[str, Any]],
+        reviewed_tool_call_log: list[dict[str, Any]],
         llm_call_count: int,
         stall_rounds: int,
         captured_flags: list[str],
         stop_fn: Callable[[], bool] | None = None,
     ) -> ObserverDecision:
+        phase = str(phase or "interval").strip() or "interval"
         rule_decision = self.observer.review_round(
             mission=mission,
             memory_before=memory_before,
             memory_after=memory_after,
-            tool_call_log=round_tool_call_log,
+            tool_call_log=reviewed_tool_call_log,
             llm_call_count=llm_call_count,
             stall_rounds=stall_rounds,
             captured_flags=captured_flags,
         ).normalised()
         observation = {
-            "phase": "round_review",
+            "phase": f"{phase}_review",
             "mission": self._mission_view(mission),
             "memory_before": self._memory_view(memory_before),
             "memory_after": self._memory_view(memory_after),
@@ -166,13 +168,13 @@ class ObserverRuntime:
             "llm_call_count": llm_call_count,
             "stall_rounds": stall_rounds,
             "recent_tool_calls": self._tool_call_views((tool_call_log or [])[-16:]),
-            "round_tool_calls": self._tool_call_views((round_tool_call_log or [])[-16:], include_observer_result=True),
+            "reviewed_tool_calls": self._tool_call_views((reviewed_tool_call_log or [])[-16:], include_observer_result=True),
             "rule_observation": rule_decision.to_dict(),
         }
         return self._run_observer_loop(
             mission_id=mission_id,
             round_no=round_no,
-            phase="round",
+            phase=phase,
             observation=observation,
             rule_decision=rule_decision,
             memory_after=memory_after,
@@ -206,7 +208,7 @@ class ObserverRuntime:
             )
             self._set_status(
                 mission_id,
-                "waiting_next_round",
+                "waiting_next_review",
                 phase=phase,
                 last_decision=rule_decision.to_dict(),
             )
@@ -228,7 +230,7 @@ class ObserverRuntime:
         try:
             for step in range(1, MAX_OBSERVER_STEPS + 1):
                 if stop_fn and stop_fn():
-                    self._set_status(mission_id, "waiting_next_round", phase=phase, stop_requested=True)
+                    self._set_status(mission_id, "waiting_next_review", phase=phase, stop_requested=True)
                     return ObserverDecision.none()
                 self._set_status(mission_id, "thinking", phase=phase, step=step)
                 pool = ThreadPoolExecutor(max_workers=1)
@@ -250,7 +252,7 @@ class ObserverRuntime:
                         stop_fn=stop_fn,
                     )
                 except _StopRequested:
-                    self._set_status(mission_id, "waiting_next_round", phase=phase, stop_requested=True)
+                    self._set_status(mission_id, "waiting_next_review", phase=phase, stop_requested=True)
                     return ObserverDecision.none()
                 finally:
                     pool.shutdown(wait=False, cancel_futures=True)
@@ -274,7 +276,7 @@ class ObserverRuntime:
                     )
                     self._set_status(
                         mission_id,
-                        "waiting_next_round",
+                        "waiting_next_review",
                         phase=phase,
                         last_decision=decision.to_dict(),
                         experience_refs=used_experience,
@@ -325,7 +327,7 @@ class ObserverRuntime:
                 used_experience=used_experience,
                 used_skills=used_skills,
             )
-            self._set_status(mission_id, "waiting_next_round", phase=phase, last_decision=decision.to_dict())
+            self._set_status(mission_id, "waiting_next_review", phase=phase, last_decision=decision.to_dict())
             return decision
         except Exception as exc:
             logger.warning("[observer-runtime] failed: %s", exc)

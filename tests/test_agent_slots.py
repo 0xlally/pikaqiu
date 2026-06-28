@@ -13,7 +13,9 @@ from pikaqiu_agent.orchestrator import (
     OrchestratorManager,
     _memory_compression_timeout_sec,
     _next_memory_compress_due_after,
+    _next_memory_compress_due_after_attempt,
 )
+from pikaqiu_agent.prompts import build_tool_memory_prompt
 from pikaqiu_agent.storage import MissionStore
 
 
@@ -434,6 +436,32 @@ def test_memory_compression_due_uses_repeating_configured_interval():
     assert _next_memory_compress_due_after(10, 5) == 15
 
 
+def test_memory_compression_due_retries_failed_attempt_at_same_boundary():
+    interval = DEFAULT_MEMORY_COMPRESS_INTERVAL
+
+    assert _next_memory_compress_due_after_attempt(
+        current_due=interval * 2,
+        total_llm_call_count=interval * 2,
+        interval=interval,
+        attempted=True,
+        succeeded=False,
+    ) == interval * 2
+    assert _next_memory_compress_due_after_attempt(
+        current_due=interval * 2,
+        total_llm_call_count=interval * 2 + 1,
+        interval=interval,
+        attempted=True,
+        succeeded=True,
+    ) == interval * 3
+    assert _next_memory_compress_due_after_attempt(
+        current_due=interval * 2,
+        total_llm_call_count=interval * 2,
+        interval=interval,
+        attempted=False,
+        succeeded=False,
+    ) == interval * 3
+
+
 def test_memory_compression_timeout_respects_compression_timeout(tmp_path):
     settings = _settings(tmp_path)
     settings.llm_timeout_sec = 240
@@ -448,3 +476,33 @@ def test_memory_compression_timeout_respects_compression_timeout(tmp_path):
 def test_compression_defaults_are_fast_enough_for_memory_rewrite():
     assert DEFAULT_COMPRESSION_REASONING_EFFORT == "low"
     assert DEFAULT_COMPRESSION_TIMEOUT_SEC == 180
+
+
+def test_memory_prompt_compacts_previous_memory_before_model_call():
+    previous_memory = {
+        "summary": "S" * 12000,
+        "findings": [f"finding-{idx}-" + ("F" * 1000) for idx in range(30)],
+        "leads": [f"lead-{idx}-" + ("L" * 1000) for idx in range(20)],
+        "dead_ends": [f"dead-{idx}-" + ("D" * 1000) for idx in range(20)],
+        "credentials": [f"token-{idx}-" + ("C" * 500) for idx in range(15)],
+        "topology": [f"topo-{idx}-" + ("T" * 500) for idx in range(15)],
+    }
+
+    prompt = build_tool_memory_prompt(
+        mission={"target": "http://target", "goal": "capture flag"},
+        previous_memory=previous_memory,
+        round_no=1,
+        tool_call_log=[
+            {
+                "tool": "bash_exec",
+                "args_summary": "curl http://target/",
+                "result_summary": "HTTP 200",
+                "result_len": 8,
+                "exit_code": 0,
+            }
+        ],
+        reason="8 main LLM calls",
+    )
+
+    assert len(prompt) < 24000
+    assert "截断" in prompt
