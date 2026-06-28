@@ -359,7 +359,10 @@ def _context_compression_worthwhile(
     original_tokens: int,
     compressed_tokens: int,
     threshold: int,
+    force: bool = False,
 ) -> bool:
+    if force:
+        return original_tokens > 0 and compressed_tokens < original_tokens
     if compressed_tokens <= threshold:
         return True
     if original_tokens <= 0:
@@ -375,8 +378,13 @@ def _plan_round_context_compression(
     messages: list[Any],
     threshold: int,
     model: str | None = None,
+    force: bool = False,
+    keep_recent_tool_batches: int = 4,
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
-    head, middle, tail = _split_round_context_for_compression(messages)
+    head, middle, tail = _split_round_context_for_compression(
+        messages,
+        keep_recent_tool_batches=keep_recent_tool_batches,
+    )
     original_tokens = _count_context_tokens(messages, model=model)
     middle_tokens = _count_context_tokens(middle, model=model)
     tail_tokens = _count_context_tokens(tail, model=model)
@@ -394,6 +402,7 @@ def _plan_round_context_compression(
         original_tokens=original_tokens,
         compressed_tokens=compression_floor,
         threshold=threshold,
+        force=force,
     ):
         return None, {
             "skipped": True,
@@ -403,6 +412,7 @@ def _plan_round_context_compression(
             "middle_tokens": middle_tokens,
             "tail_tokens": tail_tokens,
             "messages_compressible": len(middle),
+            "force": force,
         }
 
     return {
@@ -412,6 +422,8 @@ def _plan_round_context_compression(
         "original_tokens": original_tokens,
         "middle_tokens": middle_tokens,
         "tail_tokens": tail_tokens,
+        "force": force,
+        "keep_recent_tool_batches": keep_recent_tool_batches,
     }, {"skipped": False}
 
 
@@ -422,6 +434,7 @@ def _build_compressed_round_messages(
     memory_review: str,
     threshold: int,
     model: str | None = None,
+    force: bool = False,
 ) -> tuple[list[Any] | None, dict[str, Any]]:
     head = list(plan["head"])
     middle = list(plan["middle"])
@@ -439,6 +452,7 @@ def _build_compressed_round_messages(
         original_tokens=original_tokens,
         compressed_tokens=compressed_tokens,
         threshold=threshold,
+        force=force,
     ):
         return None, {
             "skipped": True,
@@ -447,6 +461,7 @@ def _build_compressed_round_messages(
             "compressed_tokens": compressed_tokens,
             "middle_tokens": plan["middle_tokens"],
             "tail_tokens": plan["tail_tokens"],
+            "force": force,
         }
 
     return candidate, {
@@ -456,6 +471,8 @@ def _build_compressed_round_messages(
         "messages_compressed": len(middle),
         "middle_tokens": plan["middle_tokens"],
         "tail_tokens": plan["tail_tokens"],
+        "force": force,
+        "keep_recent_tool_batches": plan.get("keep_recent_tool_batches"),
     }
 
 
@@ -502,6 +519,7 @@ def _compress_context_middle(
     compression_timeout_sec: int,
     compression_model: str,
     stop_fn=None,
+    force_fallback: bool = False,
 ) -> tuple[str, dict[str, Any]]:
     timeout_sec = max(1, int(compression_timeout_sec or 45))
     metadata = {
@@ -517,7 +535,9 @@ def _compress_context_middle(
         "error": "",
     }
 
-    if llm.has_compression_model:
+    if force_fallback:
+        metadata["error"] = "forced fallback after memory compression attempt"
+    elif llm.has_compression_model:
         started = time.monotonic()
         try:
             middle_text = "\n---\n".join(
@@ -579,7 +599,7 @@ def _compress_context_middle(
             metadata["duration_ms"] = int((time.monotonic() - started) * 1000)
             metadata["error"] = str(comp_err)[:500]
             logger.warning("[orchestrator] LLM compression failed, using fallback: %s", comp_err)
-    else:
+    elif not metadata["error"]:
         metadata["error"] = "compression model unavailable"
 
     compressed_summary = _fallback_context_summary(middle, original_tokens)
@@ -654,8 +674,6 @@ def _next_memory_compress_due_after_attempt(
     attempted: bool,
     succeeded: bool,
 ) -> int:
-    if attempted and not succeeded:
-        return max(1, int(current_due or interval or DEFAULT_MEMORY_COMPRESS_INTERVAL))
     return _next_memory_compress_due_after(total_llm_call_count, interval)
 
 
@@ -2179,6 +2197,93 @@ class OrchestratorManager:
                 content=f"max_llm_calls_per_round={max_tool_calls_per_round}",
             )
 
+            def maybe_compress_round_context(
+                reason: str,
+                *,
+                force: bool = False,
+                force_fallback: bool = False,
+            ) -> bool:
+                nonlocal messages
+                if self.store.should_stop(mission_id):
+                    return False
+
+                context_compress_threshold = self.settings.context_compress_threshold
+                context_tokens = _count_context_tokens(messages, model=web_search_model)
+                if not force and context_tokens <= context_compress_threshold:
+                    return False
+                if len(messages) <= 6:
+                    return False
+
+                compression_plan, skip_meta = _plan_round_context_compression(
+                    messages=messages,
+                    threshold=context_compress_threshold,
+                    model=web_search_model,
+                    force=force,
+                    keep_recent_tool_batches=1 if force else 4,
+                )
+                if compression_plan is None:
+                    logger.info(
+                        "[orchestrator] skipped mid-round context compression: %s",
+                        skip_meta.get("reason"),
+                    )
+                    return False
+
+                compressed_summary, compression_meta = _compress_context_middle(
+                    middle=compression_plan["middle"],
+                    original_tokens=context_tokens,
+                    mission=mission,
+                    llm=self.llm,
+                    compression_timeout_sec=self.settings.get_compression_timeout_sec(),
+                    compression_model=self.settings.get_compression_model(),
+                    stop_fn=lambda: self.store.should_stop(mission_id),
+                    force_fallback=force_fallback,
+                )
+                if self.store.should_stop(mission_id):
+                    return False
+
+                memory_review, memory_review_meta = _memory_agent_long_term_review_block(memory)
+                compressed_messages, apply_meta = _build_compressed_round_messages(
+                    plan=compression_plan,
+                    compressed_summary=compressed_summary,
+                    memory_review=memory_review,
+                    threshold=context_compress_threshold,
+                    model=web_search_model,
+                    force=force,
+                )
+                if compressed_messages is None:
+                    compression_meta.update(apply_meta)
+                    logger.info(
+                        "[orchestrator] discarded mid-round context compression: %s",
+                        apply_meta.get("reason"),
+                    )
+                    return False
+
+                messages = compressed_messages
+                compression_meta.update(apply_meta)
+                compression_meta["reason"] = reason
+                compression_meta["threshold"] = context_compress_threshold
+                compression_meta["memory_review"] = memory_review_meta
+                logger.info(
+                    "[orchestrator] mid-round context compression: method=%s %d tokens -> %d tokens",
+                    compression_meta["method"],
+                    context_tokens,
+                    compression_meta["compressed_tokens"],
+                )
+                self.store.add_event(
+                    mission_id=mission_id,
+                    round_no=round_no,
+                    event_type="system",
+                    title="Mid-round context compression",
+                    content=(
+                        f"reason={reason}; message_tokens={context_tokens} "
+                        f"threshold={context_compress_threshold}; "
+                        f"compressed_messages={compression_meta['messages_compressed']}; "
+                        f"method={compression_meta['method']}"
+                    ),
+                    metadata={"context_compression": compression_meta},
+                )
+                return True
+
             def maybe_compress_memory_due() -> None:
                 nonlocal memory, last_memory_compressed_tool_index, next_memory_compress_due
                 if self.store.should_stop(mission_id):
@@ -2200,6 +2305,13 @@ class OrchestratorManager:
                     )
                     if memory_compressed:
                         last_memory_compressed_tool_index = len(tool_call_log)
+                    maybe_compress_round_context(
+                        "after_memory_agent_compression"
+                        if memory_compressed
+                        else "after_memory_agent_attempt",
+                        force=True,
+                        force_fallback=not memory_compressed,
+                    )
                 next_memory_compress_due = _next_memory_compress_due_after_attempt(
                     current_due=next_memory_compress_due,
                     total_llm_call_count=total_llm_call_count,
@@ -2528,69 +2640,7 @@ class OrchestratorManager:
                     self.store.update_mission_status(mission_id, "stopped")
                     return
 
-                context_compress_threshold = self.settings.context_compress_threshold
-                context_tokens = _count_context_tokens(messages, model=web_search_model)
-                if context_tokens > context_compress_threshold and len(messages) > 6:
-                    compression_plan, skip_meta = _plan_round_context_compression(
-                        messages=messages,
-                        threshold=context_compress_threshold,
-                        model=web_search_model,
-                    )
-                    if compression_plan is None:
-                        logger.info(
-                            "[orchestrator] skipped mid-round context compression: %s",
-                            skip_meta.get("reason"),
-                        )
-                    else:
-                        compressed_summary, compression_meta = _compress_context_middle(
-                            middle=compression_plan["middle"],
-                            original_tokens=context_tokens,
-                            mission=mission,
-                            llm=self.llm,
-                            compression_timeout_sec=self.settings.get_compression_timeout_sec(),
-                            compression_model=self.settings.get_compression_model(),
-                            stop_fn=lambda: self.store.should_stop(mission_id),
-                        )
-                        if self.store.should_stop(mission_id):
-                            self.store.update_mission_status(mission_id, "stopped")
-                            return
-
-                        memory_review, memory_review_meta = _memory_agent_long_term_review_block(memory)
-                        compressed_messages, apply_meta = _build_compressed_round_messages(
-                            plan=compression_plan,
-                            compressed_summary=compressed_summary,
-                            memory_review=memory_review,
-                            threshold=context_compress_threshold,
-                            model=web_search_model,
-                        )
-                        if compressed_messages is None:
-                            compression_meta.update(apply_meta)
-                            logger.info(
-                                "[orchestrator] discarded mid-round context compression: %s",
-                                apply_meta.get("reason"),
-                            )
-                        else:
-                            messages = compressed_messages
-                            compression_meta.update(apply_meta)
-                            compression_meta["memory_review"] = memory_review_meta
-                            logger.info(
-                                "[orchestrator] mid-round context compression: method=%s %d tokens -> %d tokens",
-                                compression_meta["method"],
-                                context_tokens,
-                                compression_meta["compressed_tokens"],
-                            )
-                            self.store.add_event(
-                                mission_id=mission_id,
-                                round_no=round_no,
-                                event_type="system",
-                                title="Mid-round context compression",
-                                content=(
-                                    f"message_tokens={context_tokens} threshold={context_compress_threshold}; "
-                                    f"compressed_messages={compression_meta['messages_compressed']}; "
-                                    f"method={compression_meta['method']}"
-                                ),
-                                metadata={"context_compression": compression_meta},
-                            )
+                maybe_compress_round_context("threshold_fallback", force=False)
 
             # === End of tool-calling loop ===
 

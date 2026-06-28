@@ -127,6 +127,29 @@ class ControlLoopOptimizationTests(unittest.TestCase):
         self.assertIn(_CONTEXT_COMPRESSION_SUMMARY_MARKER, summary)
         self.assertIn("method=fallback", summary)
 
+    def test_mid_round_context_compression_can_force_fallback_after_memory_timeout(self):
+        middle = [
+            HumanMessage(content=f"old tool trace {idx}: " + "C" * 300)
+            for idx in range(2)
+        ]
+        fake_llm = FakeCompressionLLM("model summary", available=True)
+
+        summary, metadata = _compress_context_middle(
+            middle=middle,
+            original_tokens=_count_context_tokens(middle, model="gpt-5.5"),
+            mission={"target": "http://target", "goal": "capture flag"},
+            llm=fake_llm,  # type: ignore[arg-type]
+            compression_timeout_sec=5,
+            compression_model="gpt-5.5",
+            force_fallback=True,
+        )
+
+        self.assertEqual(metadata["method"], "fallback")
+        self.assertIn("forced fallback", metadata["error"])
+        self.assertEqual(len(fake_llm.calls), 0)
+        self.assertIn(_CONTEXT_COMPRESSION_SUMMARY_MARKER, summary)
+        self.assertIn("method=fallback", summary)
+
     def test_sandbox_tool_results_are_not_outer_summarized(self):
         result = "Chunk ID: abc123\nOutput:\n" + ("A" * 2000)
 
@@ -267,6 +290,61 @@ class ControlLoopOptimizationTests(unittest.TestCase):
         self.assertIsNone(plan)
         self.assertEqual(metadata["reason"], "insufficient_possible_savings")
         self.assertGreater(metadata["minimum_possible_tokens"], 7000)
+
+    def test_forced_context_compression_accepts_savings_above_threshold(self):
+        old_review = "[MEMORY_AGENT_LONG_TERM_REVIEW]\nold\n[/MEMORY_AGENT_LONG_TERM_REVIEW]"
+        large_tool_output = (
+            "Chunk ID: abc123\n"
+            "Wall time: 10.0000 seconds\n"
+            "Process exited with code 0\n"
+            "Output:\n"
+            + ("X" * 119000)
+        )
+        messages = [
+            SystemMessage(content="system"),
+            HumanMessage(content="volatile"),
+            HumanMessage(content=old_review),
+            HumanMessage(content="older retained finding " + ("A" * 10000)),
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "python_exec", "args": {"code": "probe()"}, "id": "py1"}],
+            ),
+            ToolMessage(content=large_tool_output, tool_call_id="py1"),
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "bash_exec", "args": {"command": "id"}, "id": "sh1"}],
+            ),
+            ToolMessage(content="recent output", tool_call_id="sh1"),
+        ]
+
+        plan, metadata = _plan_round_context_compression(
+            messages=messages,
+            threshold=7000,
+            force=True,
+            keep_recent_tool_batches=1,
+        )
+
+        self.assertIsNotNone(plan, metadata)
+        tail_text = "\n".join(str(message.content) for message in plan["tail"])
+        middle_text = "\n".join(str(message.content) for message in plan["middle"])
+        self.assertIn("recent output", tail_text)
+        self.assertNotIn("recent output", middle_text)
+        self.assertIn("Chunk ID: abc123", middle_text)
+
+        compressed, apply_meta = _build_compressed_round_messages(
+            plan=plan,
+            compressed_summary=f"{_CONTEXT_COMPRESSION_SUMMARY_MARKER}\nsummary",
+            memory_review="[MEMORY_AGENT_LONG_TERM_REVIEW]\nnew\n[/MEMORY_AGENT_LONG_TERM_REVIEW]",
+            threshold=7000,
+            force=True,
+        )
+
+        self.assertIsNotNone(compressed, apply_meta)
+        self.assertTrue(apply_meta["force"])
+        joined = "\n".join(str(msg.content) for msg in compressed)
+        self.assertIn("new", joined)
+        self.assertNotIn("old", joined)
+        self.assertNotIn("Chunk ID: abc123", joined)
 
     def test_mid_round_context_compression_injects_long_term_memory_review(self):
         block, metadata = _memory_agent_long_term_review_block(

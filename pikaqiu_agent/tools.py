@@ -159,7 +159,7 @@ class WebSearchFindInput(BaseModel):
 class WebSearchInput(BaseModel):
     search_query: list[WebSearchQueryInput] | None = Field(
         default=None,
-        description="Search the internet for one or more queries. At most four queries per call.",
+        description="Search the internet with exactly one focused query per call. Do not send multiple queries in one web_search call.",
     )
     image_query: list[WebSearchQueryInput] | None = Field(
         default=None,
@@ -567,7 +567,7 @@ turn = cache["turn"]
 out = {{"opened_pages": [], "findings": [], "errors": []}}
 
 try:
-    queries = (commands.get("search_query") or [])[:4] + (commands.get("image_query") or [])[:4]
+    queries = (commands.get("search_query") or [])[:1] + (commands.get("image_query") or [])[:1]
     if queries:
         try:
             out["answer"] = answer_web(queries)

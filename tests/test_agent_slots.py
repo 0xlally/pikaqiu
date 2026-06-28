@@ -459,7 +459,7 @@ def test_memory_compression_due_uses_repeating_configured_interval():
     assert _next_memory_compress_due_after(10, 5) == 15
 
 
-def test_memory_compression_due_retries_failed_attempt_at_same_boundary():
+def test_memory_compression_due_advances_after_failed_attempt():
     interval = DEFAULT_MEMORY_COMPRESS_INTERVAL
 
     assert _next_memory_compress_due_after_attempt(
@@ -468,7 +468,7 @@ def test_memory_compression_due_retries_failed_attempt_at_same_boundary():
         interval=interval,
         attempted=True,
         succeeded=False,
-    ) == interval * 2
+    ) == interval * 3
     assert _next_memory_compress_due_after_attempt(
         current_due=interval * 2,
         total_llm_call_count=interval * 2 + 1,
