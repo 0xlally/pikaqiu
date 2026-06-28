@@ -103,6 +103,45 @@ def is_non_retryable_llm_error(e: Exception) -> bool:
     )
 
 
+def is_retryable_llm_error(e: Exception) -> bool:
+    """Return True for transient LLM transport/server errors."""
+    if is_non_retryable_llm_error(e):
+        return False
+
+    status = getattr(e, "status_code", None)
+    if isinstance(status, int) and (status in (408, 409, 429) or status >= 500):
+        return True
+
+    err_type = type(e).__name__.lower()
+    if err_type in {
+        "apiconnectionerror",
+        "apitimeouterror",
+        "ratelimiterror",
+        "internalservererror",
+    }:
+        return True
+
+    text = str(e).lower()
+    return any(
+        marker in text
+        for marker in (
+            "connection error",
+            "connection reset",
+            "read timeout",
+            "timed out",
+            "timeout",
+            "temporarily unavailable",
+            "too many requests",
+            "rate limit",
+            "500",
+            "502",
+            "503",
+            "504",
+            "50507",
+        )
+    )
+
+
 @dataclass(frozen=True)
 class LLMResult:
     raw_text: str
@@ -508,10 +547,9 @@ class LLMClient:
                 break
             except Exception as e:
                 last_err = e
-                err_str = str(e)
                 detail = format_llm_error(e, model=model_name, messages=messages)
                 # Retry on transient server errors (5xx)
-                if any(code in err_str for code in ("500", "502", "503", "504", "50507")) and attempt < 2:
+                if is_retryable_llm_error(e) and attempt < 2:
                     logger.warning("[LLM:%s] ✗ 第%d次调用失败，1s后重试: %s", role, attempt + 1, detail)
                     time.sleep(1)
                     continue

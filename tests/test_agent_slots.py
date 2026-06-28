@@ -122,6 +122,29 @@ class _DummySandbox:
     pass
 
 
+class APIConnectionError(Exception):
+    pass
+
+
+class _FlakyChatModel:
+    model_name = "gpt-5.5"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def invoke(self, messages):
+        self.calls += 1
+        if self.calls == 1:
+            raise APIConnectionError("Connection error.")
+
+        class _Message:
+            content = '{"summary":"retry succeeded"}'
+            additional_kwargs = {}
+            usage_metadata = {}
+
+        return _Message()
+
+
 def _settings(tmp_path: Path) -> AgentSettings:
     return AgentSettings(
         workspace_root=tmp_path,
@@ -470,7 +493,18 @@ def test_memory_compression_timeout_respects_compression_timeout(tmp_path):
     assert _memory_compression_timeout_sec(settings) == 180
 
     settings.llm_timeout_sec = 30
-    assert _memory_compression_timeout_sec(settings) == 30
+    assert _memory_compression_timeout_sec(settings) == 180
+
+
+def test_llm_invoke_retries_api_connection_error(monkeypatch):
+    monkeypatch.setattr("pikaqiu_agent.llm_client.time.sleep", lambda _seconds: None)
+    client = LLMClient.__new__(LLMClient)
+    model = _FlakyChatModel()
+
+    result = client._invoke(model, "compress this", role="memory_compression")
+
+    assert model.calls == 2
+    assert result.payload["summary"] == "retry succeeded"
 
 
 def test_compression_defaults_are_fast_enough_for_memory_rewrite():

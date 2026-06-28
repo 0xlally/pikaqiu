@@ -645,9 +645,7 @@ def _next_observer_review_due_after(total_llm_call_count: int, interval: int) ->
 
 
 def _memory_compression_timeout_sec(settings: AgentSettings) -> int:
-    llm_timeout = max(1, int(settings.llm_timeout_sec or 1))
-    compression_timeout = max(1, int(settings.get_compression_timeout_sec() or 1))
-    return min(llm_timeout, compression_timeout)
+    return max(1, int(settings.get_compression_timeout_sec() or 1))
 
 
 def _observer_should_inject(decision: ObserverDecision, *, phase: str) -> bool:
