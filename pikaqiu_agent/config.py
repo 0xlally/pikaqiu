@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from pikaqiu_agent.output_truncation import DEFAULT_MAX_OUTPUT_TOKENS, resolve_max_tokens
+
 # Load .env file if present (backward compatibility)
 _ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 try:
@@ -38,6 +40,7 @@ DEFAULT_COMPRESSION_REASONING_EFFORT = "low"
 DEFAULT_COMPRESSION_TIMEOUT_SEC = 180
 _ALLOWED_COMPRESSION_REASONING_EFFORTS = {"minimal", "low", "medium"}
 DEFAULT_MEMORY_COMPRESS_INTERVAL = 8
+DEFAULT_CONTEXT_COMPRESS_THRESHOLD = 320000
 COMMAND_TIMEOUT_MAX_SEC = 300
 MAX_AGENT_SLOTS = 5
 DEFAULT_SANDBOX_CONTAINERS = tuple(f"pikaqiu-sandbox-{idx}" for idx in range(1, MAX_AGENT_SLOTS + 1))
@@ -49,6 +52,39 @@ def _clamp_command_timeout(value: Any, default: int = COMMAND_TIMEOUT_MAX_SEC) -
     except (ValueError, TypeError):
         timeout = int(default)
     return max(1, min(timeout, COMMAND_TIMEOUT_MAX_SEC))
+
+
+def _normalize_max_output_tokens(
+    value: Any,
+    default: int = DEFAULT_MAX_OUTPUT_TOKENS,
+    *,
+    strict: bool = False,
+) -> int:
+    try:
+        return max(0, int(value))
+    except (ValueError, TypeError):
+        if strict:
+            raise
+        return resolve_max_tokens(default)
+
+
+def _normalize_context_compress_threshold(
+    value: Any,
+    default: int = DEFAULT_CONTEXT_COMPRESS_THRESHOLD,
+    *,
+    strict: bool = False,
+) -> int:
+    try:
+        threshold = int(value)
+    except (ValueError, TypeError):
+        if strict:
+            raise
+        return int(default)
+    if threshold < 0:
+        if strict:
+            raise ValueError("context_compress_threshold must be non-negative")
+        return int(default)
+    return threshold
 
 
 # ── Model Pool Entry ──────────────────────────────────────────────
@@ -117,7 +153,7 @@ _RUNTIME_MUTABLE_FIELDS = {
     "compression_disable_response_storage", "compression_timeout_sec",
     # Agent params
     "initial_rounds", "initial_commands", "max_rounds", "max_commands",
-    "command_timeout_sec", "stdout_limit", "knowledge_top_k", "skills_dir",
+    "command_timeout_sec", "max_output_tokens", "knowledge_top_k", "skills_dir",
     "skills_auto_use", "skill_catalog_limit", "skill_prompt_max_chars", "skill_reference_max_chars",
     "context_compress_threshold", "memory_compress_interval",
     "disable_memory_rebase",
@@ -169,8 +205,8 @@ class AgentSettings:
     initial_rounds: int = 4
     initial_commands: int = 64
     command_timeout_sec: int = 300     # default sandbox command timeout
-    stdout_limit: int = 8000
-    context_compress_threshold: int = 80000  # chars; mid-round context compression trigger
+    max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS
+    context_compress_threshold: int = DEFAULT_CONTEXT_COMPRESS_THRESHOLD  # chars; mid-round context compression trigger
     memory_compress_interval: int = DEFAULT_MEMORY_COMPRESS_INTERVAL  # main LLM calls between structured memory compression runs
     knowledge_top_k: int = 6
     knowledge_dir: str = "./knowledge"  # directory for knowledge zips/folders
@@ -300,6 +336,10 @@ class AgentSettings:
                         value = _normalize_compression_reasoning_effort(value)
                     if key == "command_timeout_sec":
                         value = _clamp_command_timeout(value)
+                    if key == "max_output_tokens":
+                        value = _normalize_max_output_tokens(value, strict=True)
+                    if key == "context_compress_threshold":
+                        value = _normalize_context_compress_threshold(value, strict=True)
                     setattr(self, key, value)
                 except (ValueError, TypeError) as e:
                     errors[key] = f"invalid value for '{key}': {e}"
@@ -479,7 +519,14 @@ def _load_from_env(root: Path) -> AgentSettings:
         initial_rounds=_env("PIKAQIU_MAX_ROUNDS", default=4, cast=int),
         initial_commands=_env("PIKAQIU_MAX_COMMANDS_PER_ROUND", default=64, cast=int),
         command_timeout_sec=_clamp_command_timeout(_env("PIKAQIU_COMMAND_TIMEOUT_SEC", default=300, cast=int)),
-        stdout_limit=_env("PIKAQIU_STDOUT_LIMIT", default=16000, cast=int),
+        max_output_tokens=_normalize_max_output_tokens(
+            _env(
+                "PIKAQIU_MAX_OUTPUT_TOKENS",
+                "PIKAQIU_STDOUT_LIMIT",
+                default=DEFAULT_MAX_OUTPUT_TOKENS,
+                cast=int,
+            )
+        ),
         memory_compress_interval=_env(
             "PIKAQIU_MEMORY_COMPRESS_INTERVAL",
             default=DEFAULT_MEMORY_COMPRESS_INTERVAL,
@@ -674,8 +721,17 @@ def _load_from_yaml(root: Path, yml_path: Path) -> AgentSettings:
         initial_rounds=ag.get("initial_rounds", ag.get("max_rounds", 4)),
         initial_commands=ag.get("initial_commands", ag.get("max_commands_per_round", 64)),
         command_timeout_sec=_clamp_command_timeout(ag.get("command_timeout_sec", 300)),
-        stdout_limit=ag.get("stdout_limit", 8000),
-        context_compress_threshold=ag.get("context_compress_threshold", 80000),
+        max_output_tokens=_normalize_max_output_tokens(
+            _env(
+                "PIKAQIU_MAX_OUTPUT_TOKENS",
+                "PIKAQIU_STDOUT_LIMIT",
+                default=ag.get("max_output_tokens", ag.get("stdout_limit", DEFAULT_MAX_OUTPUT_TOKENS)),
+                cast=int,
+            )
+        ),
+        context_compress_threshold=_normalize_context_compress_threshold(
+            ag.get("context_compress_threshold", DEFAULT_CONTEXT_COMPRESS_THRESHOLD),
+        ),
         memory_compress_interval=_env(
             "PIKAQIU_MEMORY_COMPRESS_INTERVAL",
             default=ag.get("memory_compress_interval", DEFAULT_MEMORY_COMPRESS_INTERVAL),

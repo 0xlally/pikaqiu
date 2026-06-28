@@ -3,10 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from pikaqiu_agent import flag_capture
-
-
-GUIDANCE_RESULT_TOOLS = {"knowledge_search"}
+from pikaqiu_agent.output_truncation import formatted_truncate_text
 
 
 def last_memory_item(memory: dict[str, Any], *keys: str) -> str:
@@ -36,24 +33,12 @@ def stale_observer_steer_block_message(memory: dict[str, Any]) -> str:
         "The pending Observer steer has not been resolved. Execute one command that directly verifies or falsifies it "
         "before changing direction or stopping.\n"
         f"Next targeted lead: {lead}\n"
-        "[EXIT_CODE: 0]"
+        "Process exited with code 0"
     )
 
 
 def summarize_guidance_result(tool_name: str, result_str: str, limit: int) -> str:
-    if tool_name not in GUIDANCE_RESULT_TOOLS:
-        return flag_capture.truncate_middle(result_str, limit)
-    text = str(result_str or "")
-    if len(text) <= limit:
-        return text
-    head = max(800, int(limit * 0.55))
-    tail = max(600, limit - head - 140)
-    return (
-        text[:head]
-        + f"\n\n... [guidance output truncated; omitted {len(text) - head - tail} chars. "
-        "Use this as guidance only, not target evidence.] ...\n\n"
-        + text[-tail:]
-    )
+    return formatted_truncate_text(str(result_str or ""), max_tokens=limit)
 
 
 def route_guard_guidance(memory: dict[str, Any]) -> str:

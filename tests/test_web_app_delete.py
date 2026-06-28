@@ -1,7 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from pikaqiu_agent.config import AgentSettings, load_settings
+from pikaqiu_agent.config import AgentSettings, DEFAULT_CONTEXT_COMPRESS_THRESHOLD, load_settings
 from pikaqiu_agent.storage import MissionStore
 from pikaqiu_agent.web_app import _cleanup_mission_workspace, create_app
 
@@ -29,6 +29,13 @@ def test_agent_settings_default_command_timeout_matches_launch_fallback(tmp_path
     assert settings.command_timeout_sec == 300
 
 
+def test_agent_settings_default_context_compress_threshold_matches_tool_budget(tmp_path):
+    settings = _settings(tmp_path)
+
+    assert settings.context_compress_threshold == DEFAULT_CONTEXT_COMPRESS_THRESHOLD
+    assert settings.context_compress_threshold == 320000
+
+
 def test_agent_settings_clamps_command_timeout_to_outer_limit(tmp_path):
     settings = _settings(tmp_path)
 
@@ -36,6 +43,93 @@ def test_agent_settings_clamps_command_timeout_to_outer_limit(tmp_path):
 
     assert settings.command_timeout_sec == 300
     assert settings.get_mission_params({"command_timeout_sec": 999})["command_timeout_sec"] == 300
+
+
+def test_agent_settings_normalizes_max_output_tokens_runtime_values(tmp_path):
+    settings = _settings(tmp_path)
+
+    assert settings.update({"max_output_tokens": -5}) == {}
+    assert settings.max_output_tokens == 0
+
+    errors = settings.update({"max_output_tokens": "not-an-int"})
+
+    assert "max_output_tokens" in errors
+    assert settings.max_output_tokens == 0
+
+
+def test_agent_settings_rejects_invalid_runtime_context_compress_threshold(tmp_path):
+    settings = _settings(tmp_path)
+
+    assert settings.update({"context_compress_threshold": 123456}) == {}
+    assert settings.context_compress_threshold == 123456
+
+    errors = settings.update({"context_compress_threshold": -1})
+
+    assert "context_compress_threshold" in errors
+    assert settings.context_compress_threshold == 123456
+
+
+def test_load_settings_accepts_legacy_stdout_limit(tmp_path, monkeypatch):
+    monkeypatch.delenv("PIKAQIU_MAX_OUTPUT_TOKENS", raising=False)
+    monkeypatch.delenv("PIKAQIU_STDOUT_LIMIT", raising=False)
+    (tmp_path / "config.yml").write_text(
+        """
+agent_defaults:
+  stdout_limit: 1234
+""",
+        encoding="utf-8",
+    )
+
+    settings = load_settings(tmp_path)
+
+    assert settings.max_output_tokens == 1234
+
+
+def test_load_settings_prefers_new_max_output_tokens_env_over_legacy(tmp_path, monkeypatch):
+    monkeypatch.setenv("PIKAQIU_MAX_OUTPUT_TOKENS", "2222")
+    monkeypatch.setenv("PIKAQIU_STDOUT_LIMIT", "1111")
+    (tmp_path / "config.yml").write_text(
+        """
+agent_defaults:
+  max_output_tokens: 3333
+""",
+        encoding="utf-8",
+    )
+
+    settings = load_settings(tmp_path)
+
+    assert settings.max_output_tokens == 2222
+
+
+def test_load_settings_clamps_negative_max_output_tokens(tmp_path, monkeypatch):
+    monkeypatch.delenv("PIKAQIU_MAX_OUTPUT_TOKENS", raising=False)
+    monkeypatch.delenv("PIKAQIU_STDOUT_LIMIT", raising=False)
+    (tmp_path / "config.yml").write_text(
+        """
+agent_defaults:
+  max_output_tokens: -5
+""",
+        encoding="utf-8",
+    )
+
+    settings = load_settings(tmp_path)
+
+    assert settings.max_output_tokens == 0
+
+
+def test_load_settings_uses_default_for_negative_context_compress_threshold(tmp_path, monkeypatch):
+    monkeypatch.delenv("PIKAQIU_MAX_OUTPUT_TOKENS", raising=False)
+    (tmp_path / "config.yml").write_text(
+        """
+agent_defaults:
+  context_compress_threshold: -5
+""",
+        encoding="utf-8",
+    )
+
+    settings = load_settings(tmp_path)
+
+    assert settings.context_compress_threshold == DEFAULT_CONTEXT_COMPRESS_THRESHOLD
 
 
 def test_memory_compress_interval_is_runtime_configurable(tmp_path):

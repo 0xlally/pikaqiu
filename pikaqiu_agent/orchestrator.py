@@ -33,10 +33,13 @@ from pikaqiu_agent.skill_loader import SkillLoader
 from pikaqiu_agent.storage import MissionStore
 from pikaqiu_agent import success_guards as _success_guards
 from pikaqiu_agent.tools import create_all_tools
+from pikaqiu_agent.output_truncation import resolve_max_tokens
 
 logger = logging.getLogger(__name__)
 
-_EXIT_CODE_RE = re.compile(r"\[EXIT_CODE:\s*(-?\d+)\]")
+_EXIT_CODE_RE = re.compile(r"(?:\[EXIT_CODE:\s*(-?\d+)\]|Process exited with code\s+(-?\d+))")
+_CONTEXT_COMPRESSION_MIN_SAVINGS_RATIO = 0.20
+_CONTEXT_COMPRESSION_SUMMARY_MARKER = "[ROUND_CONTEXT_COMPRESSION_SUMMARY]"
 
 
 class _StopRequested(Exception):
@@ -71,18 +74,6 @@ def _compact_json(obj: Any, max_len: int = 400) -> str:
     except Exception:
         s = str(obj)
     return s if len(s) <= max_len else s[: max_len - 3] + "..."
-
-
-def _truncate_middle(text: str, limit: int) -> str:
-    """Truncate text by removing the middle portion, keeping head + tail.
-    Returns original text if within limit."""
-    if len(text) <= limit:
-        return text
-    # Keep 20% head, 80% tail (tail usually has the latest/most useful results)
-    head_size = int(limit * 0.2)
-    tail_size = limit - head_size - 80  # reserve space for marker
-    marker = f"\n\n... [输出过长，中间省略 {len(text) - head_size - tail_size} 字符] ...\n\n"
-    return text[:head_size] + marker + text[-tail_size:]
 
 
 # Keep older private imports pointed at the dependency-light implementation.
@@ -178,14 +169,15 @@ def _is_benign_sigpipe(display_cmd: str, result_str: str, exit_code: int) -> boo
 def _infer_tool_exit_code(result_str: str, display_cmd: str = "") -> int:
     """Infer event success for both sandbox commands and in-process tools.
 
-    Sandbox-backed tools include an explicit [EXIT_CODE: n] marker. In-process
-    tools such as skill_search return structured JSON without that marker, so
-    absence of [EXIT_CODE: 0] must not be treated as failure.
+    Sandbox-backed tools include Codex-style "Process exited with code n".
+    Older rows may still include [EXIT_CODE: n]. In-process tools such as
+    skill_search return structured JSON without that marker, so absence of an
+    exit marker must not be treated as failure.
     """
     match = _EXIT_CODE_RE.search(result_str)
     if match:
         try:
-            exit_code = int(match.group(1))
+            exit_code = int(next(group for group in match.groups() if group is not None))
         except ValueError:
             return -1
         if _is_benign_sigpipe(display_cmd, result_str, exit_code):
@@ -220,6 +212,12 @@ def _infer_tool_exit_code(result_str: str, display_cmd: str = "") -> int:
     return 0
 
 
+def _tool_result_for_model(tool_name: str, result_str: str, max_output_tokens: int) -> str:
+    if tool_name in {"bash_exec", "python_exec", "web_fetch"}:
+        return str(result_str or "")
+    return _summarize_guidance_result(tool_name, result_str, max_output_tokens)
+
+
 def _estimate_messages_size(messages: list) -> int:
     """Estimate total character count of all messages in the conversation."""
     total = 0
@@ -234,6 +232,187 @@ def _estimate_messages_size(messages: list) -> int:
                 else:
                     total += len(str(part))
     return total
+
+
+def _is_memory_review_message(message: Any) -> bool:
+    text = _message_text_for_compression(message)
+    return "[MEMORY_AGENT_LONG_TERM_REVIEW]" in text
+
+
+def _is_context_compression_summary_message(message: Any) -> bool:
+    text = _message_text_for_compression(message)
+    return _CONTEXT_COMPRESSION_SUMMARY_MARKER in text
+
+
+def _is_internal_context_message(message: Any) -> bool:
+    return _is_memory_review_message(message) or _is_context_compression_summary_message(message)
+
+
+def _is_tool_request_message(message: Any) -> bool:
+    if not isinstance(message, AIMessage):
+        return False
+    tool_calls = getattr(message, "tool_calls", None)
+    if tool_calls:
+        return True
+    additional_kwargs = getattr(message, "additional_kwargs", {}) or {}
+    return bool(additional_kwargs.get("tool_calls"))
+
+
+def _recent_tool_window_start(
+    messages: list[Any],
+    *,
+    tool_batches: int,
+    fallback_messages: int,
+) -> int:
+    tool_batches = max(0, int(tool_batches))
+    if tool_batches:
+        seen = 0
+        earliest_kept = len(messages)
+        for index in range(len(messages) - 1, -1, -1):
+            if not _is_tool_request_message(messages[index]):
+                continue
+            seen += 1
+            earliest_kept = index
+            if seen >= tool_batches:
+                return earliest_kept
+        if seen:
+            return earliest_kept
+    return max(0, len(messages) - max(0, int(fallback_messages)))
+
+
+def _split_round_context_for_compression(
+    messages: list[Any],
+    *,
+    keep_head_messages: int = 2,
+    keep_recent_tool_batches: int = 4,
+    fallback_tail_messages: int = 4,
+) -> tuple[list[Any], list[Any], list[Any]]:
+    keep_head_messages = max(0, int(keep_head_messages))
+    head = list(messages[:keep_head_messages])
+    body = [
+        message
+        for message in messages[keep_head_messages:]
+        if not _is_internal_context_message(message)
+    ]
+    tail_start = _recent_tool_window_start(
+        body,
+        tool_batches=keep_recent_tool_batches,
+        fallback_messages=fallback_tail_messages,
+    )
+    middle = [
+        message
+        for message in body[:tail_start]
+        if not _is_internal_context_message(message)
+    ]
+    tail = [
+        message
+        for message in body[tail_start:]
+        if not _is_memory_review_message(message)
+    ]
+    return head, middle, tail
+
+
+def _context_compression_worthwhile(
+    *,
+    original_chars: int,
+    compressed_chars: int,
+    threshold: int,
+) -> bool:
+    if compressed_chars <= threshold:
+        return True
+    if original_chars <= 0:
+        return False
+    if compressed_chars >= original_chars:
+        return False
+    saved_ratio = (original_chars - compressed_chars) / original_chars
+    return saved_ratio >= _CONTEXT_COMPRESSION_MIN_SAVINGS_RATIO
+
+
+def _plan_round_context_compression(
+    *,
+    messages: list[Any],
+    threshold: int,
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    head, middle, tail = _split_round_context_for_compression(messages)
+    original_chars = _estimate_messages_size(messages)
+    middle_chars = _estimate_messages_size(middle)
+    tail_chars = _estimate_messages_size(tail)
+    if not middle:
+        return None, {
+            "skipped": True,
+            "reason": "no_compressible_middle",
+            "original_chars": original_chars,
+            "middle_chars": middle_chars,
+            "tail_chars": tail_chars,
+        }
+
+    compression_floor = _estimate_messages_size(head + tail)
+    if not _context_compression_worthwhile(
+        original_chars=original_chars,
+        compressed_chars=compression_floor,
+        threshold=threshold,
+    ):
+        return None, {
+            "skipped": True,
+            "reason": "insufficient_possible_savings",
+            "original_chars": original_chars,
+            "minimum_possible_chars": compression_floor,
+            "middle_chars": middle_chars,
+            "tail_chars": tail_chars,
+            "messages_compressible": len(middle),
+        }
+
+    return {
+        "head": head,
+        "middle": middle,
+        "tail": tail,
+        "original_chars": original_chars,
+        "middle_chars": middle_chars,
+        "tail_chars": tail_chars,
+    }, {"skipped": False}
+
+
+def _build_compressed_round_messages(
+    *,
+    plan: dict[str, Any],
+    compressed_summary: str,
+    memory_review: str,
+    threshold: int,
+) -> tuple[list[Any] | None, dict[str, Any]]:
+    head = list(plan["head"])
+    middle = list(plan["middle"])
+    tail = list(plan["tail"])
+    original_chars = int(plan["original_chars"])
+
+    candidate = (
+        head
+        + [HumanMessage(content=compressed_summary)]
+        + tail
+        + [HumanMessage(content=memory_review)]
+    )
+    compressed_chars = _estimate_messages_size(candidate)
+    if not _context_compression_worthwhile(
+        original_chars=original_chars,
+        compressed_chars=compressed_chars,
+        threshold=threshold,
+    ):
+        return None, {
+            "skipped": True,
+            "reason": "insufficient_savings",
+            "original_chars": original_chars,
+            "compressed_chars": compressed_chars,
+            "middle_chars": plan["middle_chars"],
+            "tail_chars": plan["tail_chars"],
+        }
+
+    return candidate, {
+        "skipped": False,
+        "original_chars": original_chars,
+        "compressed_chars": compressed_chars,
+        "messages_compressed": len(middle),
+        "middle_chars": plan["middle_chars"],
+        "tail_chars": plan["tail_chars"],
+    }
 
 
 def _message_text_for_compression(message: Any) -> str:
@@ -263,9 +442,10 @@ def _fallback_context_summary(middle: list[Any], msg_size: int) -> str:
         else:
             compressed_parts.append(text[:200] + ("..." if len(text) > 200 else ""))
     return (
-        "[上下文过大，中间对话已按重要性压缩]\n"
-        f"压缩了 {len(middle)} 条消息（原始约 {msg_size} 字符）。\n"
-        "摘要：\n" + "\n".join(f"- {part}" for part in compressed_parts[-15:])
+        f"{_CONTEXT_COMPRESSION_SUMMARY_MARKER}\n"
+        "method=fallback\n"
+        f"compressed_messages={len(middle)} original_chars={msg_size}\n"
+        "summary:\n" + "\n".join(f"- {part}" for part in compressed_parts[-15:])
     )
 
 
@@ -329,9 +509,10 @@ def _compress_context_middle(
             metadata["duration_ms"] = int((time.monotonic() - started) * 1000)
             if llm_summary and len(llm_summary) > 50:
                 compressed_summary = (
-                    "[上下文已由压缩模型智能压缩]\n"
-                    f"压缩了 {len(middle)} 条消息（原始约 {msg_size} 字符）。\n"
-                    f"摘要：\n{llm_summary}"
+                    f"{_CONTEXT_COMPRESSION_SUMMARY_MARKER}\n"
+                    "method=model\n"
+                    f"compressed_messages={len(middle)} original_chars={msg_size}\n"
+                    f"summary:\n{llm_summary}"
                 )
                 metadata.update(
                     {
@@ -1598,7 +1779,7 @@ class OrchestratorManager:
         sbx = sandbox or self.sandbox
         max_rounds = mission["max_rounds"]
         max_tool_calls_per_round = mission["max_commands"]
-        stdout_limit = self.settings.stdout_limit
+        default_max_output_tokens = self.settings.max_output_tokens
         mission_workdir = f"{self.settings.sandbox_workdir}/{mission_id[:8]}"
         sbx.run(f"mkdir -p {mission_workdir}", workdir=self.settings.sandbox_workdir)
 
@@ -1893,6 +2074,7 @@ class OrchestratorManager:
                 on_chunk=_on_chunk,
                 knowledge_top_k=self.settings.knowledge_top_k,
                 command_timeout_sec=self.settings.command_timeout_sec,
+                max_output_tokens_cap=default_max_output_tokens,
                 skill_prompt_max_chars=self.settings.skill_prompt_max_chars,
                 skill_reference_max_chars=self.settings.skill_reference_max_chars,
             )
@@ -2022,6 +2204,17 @@ class OrchestratorManager:
                         or tool_args.get("flag")
                         or _compact_json(tool_args)
                     )
+                    sandbox_backed_tool = tool_name in {"bash_exec", "python_exec", "web_fetch"}
+                    if sandbox_backed_tool:
+                        requested_max_output_tokens = resolve_max_tokens(tool_args.get("max_output_tokens"))
+                        capped_max_output_tokens = min(
+                            requested_max_output_tokens,
+                            resolve_max_tokens(default_max_output_tokens),
+                        )
+                        tool_args["max_output_tokens"] = capped_max_output_tokens
+                        max_output_tokens = capped_max_output_tokens
+                    else:
+                        max_output_tokens = resolve_max_tokens(tool_args.get("max_output_tokens"))
                     if tool_name in tool_map:
                         try:
                             # Show "running" indicator immediately so user sees the command
@@ -2058,7 +2251,7 @@ class OrchestratorManager:
                         is_complete=flag_captured.is_set,
                     )
                     auto_flag_results = [message for _, message in auto_flag_events]
-                    truncated_result = _summarize_guidance_result(tool_name, result_str, stdout_limit)
+                    truncated_result = _tool_result_for_model(tool_name, result_str, max_output_tokens)
                     truncated_result = _flag_capture.append_flag_candidate_summary(truncated_result, flag_candidates)
                     if auto_flag_results:
                         truncated_result += "\n\n[AUTO_FLAG_CAPTURE]\n" + "\n".join(auto_flag_results)
@@ -2180,64 +2373,67 @@ class OrchestratorManager:
                     self.store.update_mission_status(mission_id, "stopped")
                     return
 
-                # Mid-round context monitoring: if messages are getting too large,
-                # use LLM compression (if available) or fallback to importance-based scoring
-                _CONTEXT_COMPRESS_THRESHOLD = self.settings.context_compress_threshold
+                context_compress_threshold = self.settings.context_compress_threshold
                 msg_size = _estimate_messages_size(messages)
-                if msg_size > _CONTEXT_COMPRESS_THRESHOLD and len(messages) > 6:
-                    # Selective compression: keep SystemMessage + recent tail intact.
-                    # IMPORTANT: tail must start at a valid message boundary (not ToolMessage
-                    # without its parent AIMessage), or LLM APIs will reject the conversation.
-                    kept_head = 2  # SystemMessage + volatile context HumanMessage
-                    kept_tail = 4  # recent context
-                    # Adjust tail boundary: walk backwards to find a non-ToolMessage start
-                    tail_start = len(messages) - kept_tail
-                    while tail_start > kept_head + 1 and isinstance(messages[tail_start], ToolMessage):
-                        tail_start -= 1  # include the parent AIMessage
-                    middle = messages[kept_head:tail_start]
-                    if not middle:
-                        continue  # nothing to compress
+                if msg_size > context_compress_threshold and len(messages) > 6:
+                    compression_plan, skip_meta = _plan_round_context_compression(
+                        messages=messages,
+                        threshold=context_compress_threshold,
+                    )
+                    if compression_plan is None:
+                        logger.info(
+                            "[orchestrator] skipped mid-round context compression: %s",
+                            skip_meta.get("reason"),
+                        )
+                    else:
+                        compressed_summary, compression_meta = _compress_context_middle(
+                            middle=compression_plan["middle"],
+                            msg_size=msg_size,
+                            mission=mission,
+                            llm=self.llm,
+                            compression_timeout_sec=self.settings.get_compression_timeout_sec(),
+                            compression_model=self.settings.get_compression_model(),
+                            stop_fn=lambda: self.store.should_stop(mission_id),
+                        )
+                        if self.store.should_stop(mission_id):
+                            self.store.update_mission_status(mission_id, "stopped")
+                            return
 
-                    compressed_summary, compression_meta = _compress_context_middle(
-                        middle=middle,
-                        msg_size=msg_size,
-                        mission=mission,
-                        llm=self.llm,
-                        compression_timeout_sec=self.settings.get_compression_timeout_sec(),
-                        compression_model=self.settings.get_compression_model(),
-                        stop_fn=lambda: self.store.should_stop(mission_id),
-                    )
-                    if self.store.should_stop(mission_id):
-                        self.store.update_mission_status(mission_id, "stopped")
-                        return
-
-                    memory_review, memory_review_meta = _memory_agent_long_term_review_block(memory)
-                    messages = (
-                        messages[:kept_head]
-                        + [HumanMessage(content=compressed_summary)]
-                        + messages[tail_start:]
-                        + [HumanMessage(content=memory_review)]
-                    )
-                    compressed_chars = _estimate_messages_size(messages)
-                    compression_meta["compressed_chars"] = compressed_chars
-                    compression_meta["memory_review"] = memory_review_meta
-                    logger.info(
-                        "[orchestrator] mid-round context compression: method=%s %d chars -> %d chars",
-                        compression_meta["method"],
-                        msg_size,
-                        compressed_chars,
-                    )
-                    self.store.add_event(
-                        mission_id=mission_id,
-                        round_no=round_no,
-                        event_type="system",
-                        title="轮内上下文压缩",
-                        content=(
-                            f"消息总长 {msg_size} 字符超过阈值 {_CONTEXT_COMPRESS_THRESHOLD}，"
-                            f"已压缩 {len(middle)} 条中间消息；方式 {compression_meta['method']}"
-                        ),
-                        metadata={"context_compression": compression_meta},
-                    )
+                        memory_review, memory_review_meta = _memory_agent_long_term_review_block(memory)
+                        compressed_messages, apply_meta = _build_compressed_round_messages(
+                            plan=compression_plan,
+                            compressed_summary=compressed_summary,
+                            memory_review=memory_review,
+                            threshold=context_compress_threshold,
+                        )
+                        if compressed_messages is None:
+                            compression_meta.update(apply_meta)
+                            logger.info(
+                                "[orchestrator] discarded mid-round context compression: %s",
+                                apply_meta.get("reason"),
+                            )
+                        else:
+                            messages = compressed_messages
+                            compression_meta.update(apply_meta)
+                            compression_meta["memory_review"] = memory_review_meta
+                            logger.info(
+                                "[orchestrator] mid-round context compression: method=%s %d chars -> %d chars",
+                                compression_meta["method"],
+                                msg_size,
+                                compression_meta["compressed_chars"],
+                            )
+                            self.store.add_event(
+                                mission_id=mission_id,
+                                round_no=round_no,
+                                event_type="system",
+                                title="Mid-round context compression",
+                                content=(
+                                    f"message_chars={msg_size} threshold={context_compress_threshold}; "
+                                    f"compressed_messages={compression_meta['messages_compressed']}; "
+                                    f"method={compression_meta['method']}"
+                                ),
+                                metadata={"context_compression": compression_meta},
+                            )
 
             # === End of tool-calling loop ===
 

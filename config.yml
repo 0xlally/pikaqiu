@@ -57,8 +57,8 @@ agent_defaults:
   command_timeout_sec: 300        # per-command sandbox timeout (seconds)
   llm_timeout_sec: 240            # LLM single response timeout (seconds)
   llm_max_retries: 10             # LLM timeout/error auto-retry count
-  stdout_limit: 8000              # output truncation (chars); keeps head+tail, drops middle
-  context_compress_threshold: 80000  # mid-round compression trigger (chars)
+  max_output_tokens: 10000        # approximate output token budget returned to the model
+  context_compress_threshold: 320000  # mid-round compression trigger (chars)
   memory_compress_interval: 8     # structured memory compression interval (main LLM calls)
   knowledge_top_k: 5              # number of knowledge docs to retrieve
   knowledge_dir: "./knowledge"    # directory for knowledge zips/folders (drop .zip or dirs here)

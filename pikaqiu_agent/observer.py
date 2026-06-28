@@ -60,7 +60,7 @@ EVIDENCE_AUDIT_EXEMPT_TOOLS = {
     "submit_flag",
 }
 EVIDENCE_MARKER_RE = re.compile(
-    r"(\[EXIT_CODE:\s*\d+\]|\[STDERR\]|\bHTTP/\d|\bstatus(?:_code)?\s*[:=]\s*\d{3}|"
+    r"(\[EXIT_CODE:\s*\d+\]|Process exited with code\s+-?\d+|\[STDERR\]|\bHTTP/\d|\bstatus(?:_code)?\s*[:=]\s*\d{3}|"
     r"\b(?:200|201|204|301|302|400|401|403|404|500)\b|<html|set-cookie|content-type|"
     r"response body|request body|headers?|stdout|stderr|traceback|"
     r"/api/|CVE-\d{4}-\d+|\bopen\b|\bclosed\b|\bfiltered\b|uid=|gid=|root:|"

@@ -3,12 +3,20 @@ from __future__ import annotations
 
 import json
 import logging
+import random
+import time
 from typing import Any, Callable
 
 from langchain_core.tools import tool, BaseTool
 from pydantic import BaseModel, Field
 
 from pikaqiu_agent.flag_capture import is_valid_flag
+from pikaqiu_agent.output_truncation import (
+    DEFAULT_MAX_OUTPUT_TOKENS,
+    approx_token_count,
+    formatted_truncate_text,
+    resolve_max_tokens,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -23,24 +31,55 @@ def _resolve_timeout(timeout: int | None, max_timeout: int, min_timeout: int = 1
     return _clamp_timeout(timeout, max_timeout, min_timeout)
 
 
-def _format_sandbox_result(prefix: str, result) -> str:
-    parts = [prefix]
-    if result.stdout:
-        parts.append(result.stdout)
-    if result.stderr:
+def _sandbox_output_text(result) -> str:
+    output = getattr(result, "output", None)
+    if output is not None:
+        return str(output)
+    parts = []
+    if getattr(result, "stdout", ""):
+        parts.append(str(result.stdout))
+    if getattr(result, "stderr", ""):
         parts.append(f"[STDERR] {result.stderr}")
-    if result.exit_code != 0 and "2>/dev/null" in str(result.command):
-        parts.append(
-            "[提示] 命令非零退出且 stderr 被 2>/dev/null 隐藏；请去掉重定向重跑一次，以保留真实工具错误。"
-        )
-    parts.append(f"[EXIT_CODE: {result.exit_code}]")
     return "\n".join(parts)
 
 
-def _has_serialization_keywords(code: str) -> bool:
-    keywords = ("pickle", "serialize", "marshal", "yaml.load", "ObjectInputStream", "unserialize")
-    lowered = code.lower()
-    return any(keyword.lower() in lowered for keyword in keywords)
+def _generate_chunk_id() -> str:
+    return "".join(f"{random.randrange(16):x}" for _ in range(6))
+
+
+def _effective_max_output_tokens(
+    requested: int | None,
+    *,
+    cap: int | None = DEFAULT_MAX_OUTPUT_TOKENS,
+) -> int:
+    max_tokens = resolve_max_tokens(requested)
+    if cap is None:
+        return max_tokens
+    return min(max_tokens, resolve_max_tokens(cap))
+
+
+def _format_sandbox_result(
+    result,
+    *,
+    wall_time: float,
+    max_output_tokens: int | None = None,
+    max_output_tokens_cap: int | None = DEFAULT_MAX_OUTPUT_TOKENS,
+) -> str:
+    output_text = _sandbox_output_text(result)
+    max_tokens = _effective_max_output_tokens(
+        max_output_tokens,
+        cap=max_output_tokens_cap,
+    )
+    return "\n".join(
+        [
+            f"Chunk ID: {_generate_chunk_id()}",
+            f"Wall time: {wall_time:.4f} seconds",
+            f"Process exited with code {int(getattr(result, 'exit_code', -1))}",
+            f"Original token count: {approx_token_count(output_text)}",
+            "Output:",
+            formatted_truncate_text(output_text, max_tokens=max_tokens),
+        ]
+    )
 
 
 def _truncate_end(text: str, limit: int) -> str:
@@ -60,6 +99,10 @@ class BashInput(BaseModel):
             "Values above the mission command timeout are capped."
         ),
     )
+    max_output_tokens: int | None = Field(
+        default=None,
+        description="Optional maximum approximate output tokens returned to the model.",
+    )
 
 
 class PythonInput(BaseModel):
@@ -70,6 +113,10 @@ class PythonInput(BaseModel):
             "Optional timeout in seconds. Omit to use the mission command timeout. "
             "Values above the mission command timeout are capped."
         ),
+    )
+    max_output_tokens: int | None = Field(
+        default=None,
+        description="Optional maximum approximate output tokens returned to the model.",
     )
 
 
@@ -87,6 +134,10 @@ class WebFetchInput(BaseModel):
             "Optional timeout in seconds. Omit to use the mission command timeout. "
             "Values above the mission command timeout are capped."
         ),
+    )
+    max_output_tokens: int | None = Field(
+        default=None,
+        description="Optional maximum approximate output tokens returned to the model.",
     )
 
 
@@ -120,23 +171,43 @@ class SkillReferenceInput(BaseModel):
 
 # ── Tool factories ─────────────────────────────────────────────────────
 
-def create_bash_tool(sandbox, workdir: str, stop_fn: Callable[[], bool] | None = None, on_chunk: Callable[[str], None] | None = None, max_timeout: int = 300) -> BaseTool:
+def create_bash_tool(
+    sandbox,
+    workdir: str,
+    stop_fn: Callable[[], bool] | None = None,
+    on_chunk: Callable[[str], None] | None = None,
+    max_timeout: int = 300,
+    max_output_tokens_cap: int | None = DEFAULT_MAX_OUTPUT_TOKENS,
+) -> BaseTool:
     @tool("bash_exec", args_schema=BashInput)
-    def bash_exec(command: str, timeout: int | None = None) -> str:
+    def bash_exec(command: str, timeout: int | None = None, max_output_tokens: int | None = None) -> str:
         """Execute a bash command in the Kali Linux sandbox.
         Use for recon and exploitation.
         Do not hide stderr with 2>/dev/null while validating a command; tool errors
         and missing wordlists must stay visible.
         """
         timeout = _resolve_timeout(timeout, max_timeout)
+        started = time.monotonic()
         result = sandbox.run(command, timeout_sec=timeout, workdir=workdir, stop_fn=stop_fn, on_chunk=on_chunk)
-        return _format_sandbox_result("[输出为Kali沙箱中的本地执行结果，并非远程目标输出]", result)
+        return _format_sandbox_result(
+            result,
+            wall_time=time.monotonic() - started,
+            max_output_tokens=max_output_tokens,
+            max_output_tokens_cap=max_output_tokens_cap,
+        )
     return bash_exec
 
 
-def create_python_tool(sandbox, workdir: str, stop_fn: Callable[[], bool] | None = None, on_chunk: Callable[[str], None] | None = None, max_timeout: int = 300) -> BaseTool:
+def create_python_tool(
+    sandbox,
+    workdir: str,
+    stop_fn: Callable[[], bool] | None = None,
+    on_chunk: Callable[[str], None] | None = None,
+    max_timeout: int = 300,
+    max_output_tokens_cap: int | None = DEFAULT_MAX_OUTPUT_TOKENS,
+) -> BaseTool:
     @tool("python_exec", args_schema=PythonInput)
-    def python_exec(code: str, timeout: int | None = None) -> str:
+    def python_exec(code: str, timeout: int | None = None, max_output_tokens: int | None = None) -> str:
         """Execute Python code in the Kali sandbox.
         Preferred for HTTP sessions, cookies, JSON parsing, complex logic.
 
@@ -146,13 +217,14 @@ def create_python_tool(sandbox, workdir: str, stop_fn: Callable[[], bool] | None
         Code is sent via base64 — no escaping needed.
         """
         timeout = _resolve_timeout(timeout, max_timeout)
+        started = time.monotonic()
         result = sandbox.run_python(code, timeout_sec=timeout, workdir=workdir, stop_fn=stop_fn, on_chunk=on_chunk)
-        parts = [_format_sandbox_result("[以下是Kali沙箱中的Python执行结果]", result)]
-        # Context reminder for serialization payloads
-        if _has_serialization_keywords(code):
-            parts.append("[提醒] 脚本中包含序列化/反序列化操作。构造payload的过程中，命令可能在本地沙箱执行，如果看到命令执行结果请注意区分"
-                         "只有通过网络请求(requests/curl)发送到目标的结果才是远程响应，但确保你将他们区分开了。如果只有一个命令执行结果，大概率是构造payload时的本地执行结果。本提示为系统提示")
-        return "\n".join(parts)
+        return _format_sandbox_result(
+            result,
+            wall_time=time.monotonic() - started,
+            max_output_tokens=max_output_tokens,
+            max_output_tokens_cap=max_output_tokens_cap,
+        )
     return python_exec
 
 
@@ -162,9 +234,15 @@ def create_web_fetch_tool(
     stop_fn: Callable[[], bool] | None = None,
     on_chunk: Callable[[str], None] | None = None,
     max_timeout: int = 300,
+    max_output_tokens_cap: int | None = DEFAULT_MAX_OUTPUT_TOKENS,
 ) -> BaseTool:
     @tool("web_fetch", args_schema=WebFetchInput)
-    def web_fetch(url: str, max_chars: int = 12000, timeout: int | None = None) -> str:
+    def web_fetch(
+        url: str,
+        max_chars: int = 12000,
+        timeout: int | None = None,
+        max_output_tokens: int | None = None,
+    ) -> str:
         """Fetch an HTTP/HTTPS page from the public internet and extract readable text.
 
         Use only when you already have a specific URL. Prefer official docs,
@@ -222,8 +300,14 @@ except Exception as exc:
     print(json.dumps({{"url": url, "error": str(exc)}}, ensure_ascii=False, indent=2))
     sys.exit(1)
 """
+        started = time.monotonic()
         result = sandbox.run_python(code, timeout_sec=timeout, workdir=workdir, stop_fn=stop_fn, on_chunk=on_chunk)
-        return _format_sandbox_result(f"[web_fetch url] {url}", result)
+        return _format_sandbox_result(
+            result,
+            wall_time=time.monotonic() - started,
+            max_output_tokens=max_output_tokens,
+            max_output_tokens_cap=max_output_tokens_cap,
+        )
     return web_fetch
 
 
@@ -424,14 +508,36 @@ def create_all_tools(
     on_chunk: Callable[[str], None] | None = None,
     knowledge_top_k: int = 3,
     command_timeout_sec: int = 300,
+    max_output_tokens_cap: int | None = DEFAULT_MAX_OUTPUT_TOKENS,
     skill_prompt_max_chars: int = 12000,
     skill_reference_max_chars: int = 20000,
 ) -> list[BaseTool]:
     """Create all tools for a mission round."""
     tools: list[BaseTool] = [
-        create_bash_tool(sandbox, workdir, stop_fn=stop_fn, on_chunk=on_chunk, max_timeout=command_timeout_sec),
-        create_python_tool(sandbox, workdir, stop_fn=stop_fn, on_chunk=on_chunk, max_timeout=command_timeout_sec),
-        create_web_fetch_tool(sandbox, workdir, stop_fn=stop_fn, on_chunk=on_chunk, max_timeout=command_timeout_sec),
+        create_bash_tool(
+            sandbox,
+            workdir,
+            stop_fn=stop_fn,
+            on_chunk=on_chunk,
+            max_timeout=command_timeout_sec,
+            max_output_tokens_cap=max_output_tokens_cap,
+        ),
+        create_python_tool(
+            sandbox,
+            workdir,
+            stop_fn=stop_fn,
+            on_chunk=on_chunk,
+            max_timeout=command_timeout_sec,
+            max_output_tokens_cap=max_output_tokens_cap,
+        ),
+        create_web_fetch_tool(
+            sandbox,
+            workdir,
+            stop_fn=stop_fn,
+            on_chunk=on_chunk,
+            max_timeout=command_timeout_sec,
+            max_output_tokens_cap=max_output_tokens_cap,
+        ),
     ]
     if knowledge:
         tools.append(create_knowledge_tool(knowledge, top_k=knowledge_top_k))

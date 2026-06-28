@@ -275,7 +275,7 @@ const configFields = [
   { key: "initial_rounds", label: "默认轮数", type: "number", section: "Agent 参数" },
   { key: "initial_commands", label: "每轮命令数", type: "number", section: "Agent 参数" },
   { key: "command_timeout_sec", label: "命令超时秒数", type: "number", section: "Agent 参数" },
-  { key: "stdout_limit", label: "输出截断长度", type: "number", section: "Agent 参数" },
+  { key: "max_output_tokens", label: "输出 token 上限", type: "number", section: "Agent 参数" },
   { key: "memory_compress_interval", label: "记忆压缩轮次（主模型调用）", type: "number", section: "Agent 参数" },
   { key: "disable_memory_rebase", label: "禁用停滞记忆重整", type: "checkbox", section: "Agent 参数" },
   { key: "knowledge_top_k", label: "知识库检索数", type: "number", section: "Agent 参数" },

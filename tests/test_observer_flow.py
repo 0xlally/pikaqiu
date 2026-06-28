@@ -64,6 +64,18 @@ def test_long_tail_exit_code_is_concrete_evidence() -> None:
     assert observer._is_low_evidence_call(row) is False
 
 
+def test_codex_exit_code_marker_is_concrete_evidence() -> None:
+    observer = ObserverAgent()
+    row = {
+        "tool": "bash_exec",
+        "args_summary": "printf long",
+        "result_summary": "plain prefix without markers",
+        "result_full": "Chunk ID: abc123\nWall time: 0.1000 seconds\nProcess exited with code 0\nOutput:\nok",
+    }
+
+    assert observer._is_low_evidence_call(row) is False
+
+
 def test_short_success_still_low_evidence() -> None:
     observer = ObserverAgent()
     row = {

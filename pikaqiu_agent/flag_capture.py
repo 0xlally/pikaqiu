@@ -4,6 +4,8 @@ import html
 import re
 from typing import Callable
 
+from pikaqiu_agent.output_truncation import formatted_truncate_text
+
 
 VALID_FLAG_PREFIXES = ("flag", "FLAG", "ctf", "CTF")
 FLAG_RE = re.compile(r"\b(?:flag|FLAG|ctf|CTF)\{[^}\s]{4,200}\}")
@@ -21,13 +23,7 @@ PLACEHOLDER_FLAG_BODIES = {
 
 
 def truncate_middle(text: str, limit: int) -> str:
-    """Truncate text by removing the middle portion, keeping head + tail."""
-    if len(text) <= limit:
-        return text
-    head_size = int(limit * 0.2)
-    tail_size = limit - head_size - 80
-    marker = f"\n\n... [output too long, omitted {len(text) - head_size - tail_size} chars from the middle] ...\n\n"
-    return text[:head_size] + marker + text[-tail_size:]
+    return formatted_truncate_text(text, max_tokens=limit)
 
 
 def is_placeholder_flag(flag: str) -> bool:

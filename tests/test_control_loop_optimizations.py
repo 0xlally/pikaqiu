@@ -4,13 +4,17 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from pikaqiu_agent.orchestrator import (
     OrchestratorManager,
+    _CONTEXT_COMPRESSION_SUMMARY_MARKER,
+    _build_compressed_round_messages,
     _compress_context_middle,
     _estimate_messages_size,
     _memory_agent_long_term_review_block,
+    _plan_round_context_compression,
+    _tool_result_for_model,
 )
 from pikaqiu_agent.mission_log_export import normalize_mission_log_export_dir
 from pikaqiu_agent.observer import ObserverDecision, should_inject_decision
@@ -81,7 +85,8 @@ class ControlLoopOptimizationTests(unittest.TestCase):
         self.assertEqual(metadata["error"], "")
         self.assertGreater(metadata["summary_chars"], 50)
         self.assertEqual(len(fake_llm.calls), 1)
-        self.assertIn("[上下文已由压缩模型智能压缩]", summary)
+        self.assertIn(_CONTEXT_COMPRESSION_SUMMARY_MARKER, summary)
+        self.assertIn("method=model", summary)
         self.assertIn("/wp-json/wp/v2/users", summary)
 
     def test_mid_round_context_compression_records_fallback_when_model_unavailable(self):
@@ -104,7 +109,127 @@ class ControlLoopOptimizationTests(unittest.TestCase):
         self.assertEqual(metadata["model"], "")
         self.assertEqual(metadata["error"], "compression model unavailable")
         self.assertEqual(len(fake_llm.calls), 0)
-        self.assertIn("[上下文过大，中间对话已按重要性压缩]", summary)
+        self.assertIn(_CONTEXT_COMPRESSION_SUMMARY_MARKER, summary)
+        self.assertIn("method=fallback", summary)
+
+    def test_sandbox_tool_results_are_not_outer_summarized(self):
+        result = "Chunk ID: abc123\nOutput:\n" + ("A" * 2000)
+
+        summarized = _tool_result_for_model("bash_exec", result, 10)
+
+        self.assertEqual(summarized, result)
+
+    def test_non_sandbox_tool_results_still_use_guidance_summary(self):
+        result = "prefix-" + ("A" * 2000) + "-suffix"
+
+        summarized = _tool_result_for_model("knowledge_search", result, 10)
+
+        self.assertIn("Warning: truncated output", summarized)
+        self.assertIn("prefix-", summarized)
+        self.assertIn("-suffix", summarized)
+
+    def test_context_compression_skips_when_recent_tail_dominates_context(self):
+        messages = [
+            SystemMessage(content="system"),
+            HumanMessage(content="volatile"),
+            HumanMessage(content="small old detail"),
+            AIMessage(content="", tool_calls=[]),
+            ToolMessage(content="recent-large-1" + ("A" * 60000), tool_call_id="a"),
+            AIMessage(content="", tool_calls=[]),
+            ToolMessage(content="recent-large-2" + ("B" * 60000), tool_call_id="b"),
+        ]
+
+        plan, metadata = _plan_round_context_compression(messages=messages, threshold=80000)
+
+        self.assertIsNone(plan)
+        self.assertEqual(metadata["reason"], "insufficient_possible_savings")
+
+    def test_context_compression_replaces_old_memory_review_without_stacking(self):
+        old_review = "[MEMORY_AGENT_LONG_TERM_REVIEW]\nold\n[/MEMORY_AGENT_LONG_TERM_REVIEW]"
+        messages = [
+            SystemMessage(content="system"),
+            HumanMessage(content="volatile"),
+            HumanMessage(content="old detail " + ("A" * 20000)),
+            HumanMessage(content=old_review),
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "bash_exec", "args": {"command": "id"}, "id": "a"}],
+            ),
+            ToolMessage(content="recent output", tool_call_id="a"),
+            HumanMessage(content=old_review),
+        ]
+        plan, metadata = _plan_round_context_compression(messages=messages, threshold=1000)
+        self.assertIsNotNone(plan, metadata)
+
+        new_review = "[MEMORY_AGENT_LONG_TERM_REVIEW]\nnew\n[/MEMORY_AGENT_LONG_TERM_REVIEW]"
+        compressed, apply_meta = _build_compressed_round_messages(
+            plan=plan,
+            compressed_summary=f"{_CONTEXT_COMPRESSION_SUMMARY_MARKER}\nsummary",
+            memory_review=new_review,
+            threshold=1000,
+        )
+
+        self.assertIsNotNone(compressed, apply_meta)
+        joined = "\n".join(str(msg.content) for msg in compressed)
+        self.assertEqual(joined.count("[MEMORY_AGENT_LONG_TERM_REVIEW]"), 1)
+        self.assertIn("new", joined)
+        self.assertNotIn("old", joined)
+
+    def test_context_compression_keeps_recent_tool_batches_intact(self):
+        messages = [
+            SystemMessage(content="system"),
+            HumanMessage(content="volatile"),
+            HumanMessage(content="old reconnaissance " + ("A" * 20000)),
+        ]
+        for idx in range(5):
+            messages.append(
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {"name": "bash_exec", "args": {"command": f"cmd-{idx}-a"}, "id": f"{idx}a"},
+                        {"name": "bash_exec", "args": {"command": f"cmd-{idx}-b"}, "id": f"{idx}b"},
+                    ],
+                )
+            )
+            messages.append(ToolMessage(content=f"result-{idx}-a", tool_call_id=f"{idx}a"))
+            messages.append(ToolMessage(content=f"result-{idx}-b", tool_call_id=f"{idx}b"))
+
+        plan, metadata = _plan_round_context_compression(messages=messages, threshold=1000)
+
+        self.assertIsNotNone(plan, metadata)
+        tail_text = "\n".join(str(message.content) for message in plan["tail"])
+        middle_text = "\n".join(str(message.content) for message in plan["middle"])
+        self.assertIn("result-1-a", tail_text)
+        self.assertIn("result-4-b", tail_text)
+        self.assertNotIn("result-1-a", middle_text)
+        self.assertIn("result-0-a", middle_text)
+
+    def test_context_compression_skips_xbow66_style_large_recent_output(self):
+        large_tool_output = (
+            "Chunk ID: abc123\n"
+            "Wall time: 10.0000 seconds\n"
+            "Process exited with code 0\n"
+            "Original token count: 28498\n"
+            "Output:\n"
+            + ("X" * 119000)
+        )
+        messages = [
+            SystemMessage(content="system"),
+            HumanMessage(content="volatile"),
+            HumanMessage(content=_CONTEXT_COMPRESSION_SUMMARY_MARKER + "\nprevious summary"),
+            HumanMessage(content="older retained finding " + ("A" * 10000)),
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "python_exec", "args": {"code": "probe()"}, "id": "py1"}],
+            ),
+            ToolMessage(content=large_tool_output, tool_call_id="py1"),
+        ]
+
+        plan, metadata = _plan_round_context_compression(messages=messages, threshold=80000)
+
+        self.assertIsNone(plan)
+        self.assertEqual(metadata["reason"], "insufficient_possible_savings")
+        self.assertGreater(metadata["minimum_possible_chars"], 80000)
 
     def test_mid_round_context_compression_injects_long_term_memory_review(self):
         block, metadata = _memory_agent_long_term_review_block(

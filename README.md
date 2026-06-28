@@ -342,7 +342,7 @@ curl -X POST http://127.0.0.1:8001/api/missions `
 | `initial_rounds` | 新任务默认最大轮数 |
 | `initial_commands` | 新任务默认每轮命令数 |
 | `command_timeout_sec` | 单条沙箱命令超时 |
-| `stdout_limit` | 命令输出截断长度 |
+| `max_output_tokens` | 返回给模型的近似输出 token 上限 |
 | `memory_compress_interval` | 结构化记忆压缩间隔，按主模型调用次数计，默认 8 |
 | `disable_memory_rebase` | 是否禁用连续停滞时的 Memory Agent 记忆重整 |
 | `knowledge_top_k` | 注入上下文的知识库结果数 |
