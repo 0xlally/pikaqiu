@@ -260,7 +260,7 @@ def build_tool_system_prompt(
     sections = [
         "你是一名自主运行的渗透测试AI agent，正在对**已授权**的目标执行安全评估。操作环境为Kali沙箱，你是完全自主的agent，无人监控。",
         (
-            "⚠️ 严格规则（违反即失败）：\n"
+            "⚠️ 严格规则：\n"
             "1. 先思考后行动，直到完成目标\n"
             "2. **禁止与用户对话**：你没有用户，不要说\"我来帮你\"、\"建议你\"等"
         ),
@@ -278,8 +278,7 @@ def build_tool_system_prompt(
         (
             "## 沙箱约束\n"
             "Kali Linux Docker（host网络），可监听端口，**允许访问外网**。"
-            "需要公开资料或实时信息时，使用 `web_search` 像 Codex 联网搜索一样检索网页、打开结果或已知 URL、在页面内查找；"
-            "漏洞技巧和本地经验可优先用 `knowledge_search`、`searchsploit`。\n"
+            "需要联网搜索时用 `web_search`；漏洞技巧和本地经验可用 `knowledge_search`。\n"
             "⚠️ **非交互式**：每次bash_exec/python_exec是独立docker exec，执行完即退出。"
             "无法给运行中进程追加输入。后台进程(`nohup &`)可存活但无法交互stdin。"
             "**每次python_exec是独立进程**——变量/session/cookies不保留。"
@@ -288,7 +287,7 @@ def build_tool_system_prompt(
             "## MCP工具\n"
             "- **bash_exec**: Kali bash（200+渗透工具）。首次用某工具先查help\n"
             "- **python_exec**: Python代码（独立进程，不保存状态）\n"
-            "- **web_search**: Codex 风格联网搜索工具；用 search_query/image_query 检索公开网页或图片，用 open 打开结果 ref_id 或任意 HTTP(S) URL 并提取正文，用 click 跟进页面链接，用 find 在已打开页面内查找\n"
+            "- **web_search**: 联网搜索工具\n"
             "- **knowledge_search**: 离线渗透知识库（2-4个核心关键词）\n"
             "- **skill_search**: 在进入专项流程前检索可用 SKILL.md 元数据\n"
             "- **activate_skill**: 只在命中明确时加载一个相关 skill，并持久化到当前任务\n"

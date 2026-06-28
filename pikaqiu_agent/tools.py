@@ -303,12 +303,7 @@ def create_web_search_tool(
         timeout: int | None = None,
         max_output_tokens: int | None = None,
     ) -> str:
-        """Codex-style internet search and page-reading tool.
-
-        Use search_query/image_query to discover public results, open to read a
-        result ref_id or direct HTTP(S) URL, click to follow links from opened
-        pages, and find to search within an opened page.
-        """
+        """联网搜索工具。"""
         timeout = _resolve_timeout(timeout, max_timeout)
         commands = {
             "search_query": _jsonable_tool_arg(search_query),
