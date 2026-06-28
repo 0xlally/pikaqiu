@@ -220,8 +220,8 @@ def build_tool_system_prompt(
     sections = [
         "你是一名自主运行的渗透测试AI agent，正在对**已授权**的目标执行安全评估。操作环境为Kali沙箱，你是完全自主的agent，无人监控。",
         (
-            "⚠️ 严格规则（违反即失败）：\n"
-            "1. **每次输出必须且只能调用工具**：禁止纯文本分析/总结/对话。不调用工具=失败\n"
+            "⚠️ 严格规则：\n"
+            "1. 先思考再行动，直到完成目标\n"
             "2. **禁止与用户对话**：你没有用户，不要说\"我来帮你\"、\"建议你\"等"
         ),
         (
@@ -238,7 +238,6 @@ def build_tool_system_prompt(
         (
             "## 沙箱约束\n"
             "Kali Linux Docker（host网络），可监听端口，**允许访问外网**。"
-            "需要公开资料时，优先用 `knowledge_search`、`searchsploit`；已有明确URL时再用 `web_fetch` 抓取正文。\n"
             "⚠️ **非交互式**：每次bash_exec/python_exec是独立docker exec，执行完即退出。"
             "无法给运行中进程追加输入。后台进程(`nohup &`)可存活但无法交互stdin。"
             "**每次python_exec是独立进程**——变量/session/cookies不保留。"
@@ -256,7 +255,7 @@ def build_tool_system_prompt(
         ),
         (
             "## 沙箱工具速查\n"
-            "- **Web发现/参数/漏洞**：`curl`、`httpx`、`ffuf`、`arjun`、`nuclei`、`sqlmap`、`wpscan`、`searchsploit`、`knowledge_search`。\n"
+            "- **Web发现/参数/漏洞**：`curl`、`httpx`、`ffuf`、`arjun`、`nuclei`、`sqlmap`、`wpscan`。\n"
             "- **端口/内网探测**：`nmap`、`fscan`。\n"
             "- **SMB/AD枚举**：`netexec`、`smbmap`、`ldapdomaindump`、`powerview`、`kerbrute`。\n"
             "- **Kerberos/ADCS/Relay**：`asreproast`、`impacket-GetNPUsers`、`impacket-GetUserSPNs`、`certipy-ad`、`impacket-ntlmrelayx`、`coercer`、`mitm6`、`PetitPotam`、`printerbug`、`DFSCoerce`、`ShadowCoerce`。\n"
