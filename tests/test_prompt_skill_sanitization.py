@@ -12,7 +12,7 @@ def _mission() -> dict[str, object]:
     }
 
 
-def test_xss_skill_catalog_does_not_inject_playwright_special_case() -> None:
+def test_skill_catalog_is_not_injected_into_main_system_prompt() -> None:
     prompt = build_tool_system_prompt(
         mission=_mission(),
         skill_catalog=[
@@ -27,13 +27,15 @@ def test_xss_skill_catalog_does_not_inject_playwright_special_case() -> None:
         ],
     )
 
-    assert "xss-bypass-skill" in prompt
-    assert "browser/runtime verification" in prompt
+    assert "skill_search" in prompt
+    assert "activate_skill" in prompt
+    assert "xss-bypass-skill" not in prompt
+    assert "browser/runtime verification" not in prompt
     assert "Playwright verification" not in prompt
-    assert "XSS bypass planning" in prompt
+    assert "XSS bypass planning" not in prompt
 
 
-def test_enabled_xss_skill_prompt_does_not_force_playwright_in_system_prompt() -> None:
+def test_enabled_skill_prompt_is_not_injected_into_main_system_prompt() -> None:
     prompt = build_tool_system_prompt(
         mission=_mission(),
         skills=[
@@ -52,10 +54,11 @@ def test_enabled_xss_skill_prompt_does_not_force_playwright_in_system_prompt() -
         ],
     )
 
-    assert "xss-bypass-skill" in prompt
-    assert "需要浏览器、挑战 harness 或运行时证据" in prompt
-    assert "Browser / Runtime Verification" in prompt
-    assert "references/browser-runtime-verification.md" in prompt
+    assert "skill_read_reference" in prompt
+    assert "xss-bypass-skill" not in prompt
+    assert "需要浏览器、挑战 harness 或运行时证据" not in prompt
+    assert "Browser / Runtime Verification" not in prompt
+    assert "references/browser-runtime-verification.md" not in prompt
     assert "必须用 Playwright 收集浏览器证据" not in prompt
     assert "Playwright Verification" not in prompt
     assert "Playwright" not in prompt

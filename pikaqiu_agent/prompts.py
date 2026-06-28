@@ -3,12 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from pikaqiu_agent.flag_paths import (
-    FLAG_FILE_CAT_COMMAND,
-    FLAG_FILE_FIND_COMMAND,
-    FLAG_FILE_GREP_COMMAND,
-    FLAG_HTTP_PATH_HINT,
-)
+from pikaqiu_agent.flag_paths import FLAG_HTTP_PATH_HINT
 
 
 def _json(data: Any) -> str:
@@ -84,7 +79,6 @@ def _compact_env_info_for_prompt(env_info: str, max_chars: int = 3200) -> str:
         "flag_path_dictionary": {
             "sandbox_path": flag_paths.get("sandbox_path") or flag_paths.get("path"),
             "count": flag_paths.get("count"),
-            "sample": _compact_sequence(flag_paths.get("sample"), limit=8),
         },
         "tool_guidance": _compact_tool_guidance(data.get("tool_guidance")),
         "pentest_tools": _compact_mapping(data.get("pentest_tools")),
@@ -162,102 +156,6 @@ def _build_memory_section(memory: dict[str, Any]) -> str:
     return "\n\n".join(parts)
 
 
-def _build_skills_section(skills: list[dict[str, Any]] | None) -> str:
-    if not skills:
-        return ""
-
-    parts = [
-        "## Enabled Skills",
-        (
-            "The following mission-selected skills are active. Treat them as "
-            "task-specific operating guidance and apply them when relevant."
-        ),
-    ]
-    for skill in skills:
-        skill_id = str(skill.get("id") or "").strip()
-        name = str(skill.get("name") or skill_id or "unnamed").strip()
-        description = _skill_system_prompt_text(skill_id, str(skill.get("description") or "").strip())
-        prompt = _skill_system_prompt_text(skill_id, str(skill.get("prompt") or "").strip())
-        if not prompt:
-            continue
-
-        header = f"### {name}"
-        if skill_id:
-            header += f" (`{skill_id}`)"
-        block = [header]
-        if description:
-            block.append(description)
-        block.append(prompt)
-        parts.append("\n\n".join(block))
-
-    return "\n\n".join(parts)
-
-
-def _build_skill_catalog_section(skill_catalog: list[dict[str, Any]] | None) -> str:
-    parts = [
-        "## Skill Auto-Use Rules",
-        (
-            "Skills are specialized SKILL.md instructions. Do not load all skills or pick one reflexively "
-            "at startup. Prefer normal reconnaissance when the situation is still generic, but use "
-            "`skill_search` once the task context, early observations, memory, source hints, target behavior, "
-            "or tool output suggests a reusable specialist workflow may help. If the skill is already listed "
-            "under Enabled Skills, apply it directly instead of activating it again."
-        ),
-        (
-            "Use `skill_read_reference` only after a skill asks for a bundled reference, "
-            "dictionary, template, script, or payload note that is needed for the current step."
-        ),
-        (
-            "Before calling `skill_search`, include the specific basis in the query: product/version, "
-            "protocol, file type, framework error, endpoint behavior, parameter behavior, likely vulnerability "
-            "class, failing tool output, or the mission phase that makes a workflow relevant. A broad label "
-            "alone such as \"web\", \"login\", or \"WordPress\" is weak; pair it with what has actually been "
-            "seen or what decision the skill would help structure."
-        ),
-        (
-            "Do not rely on hard-coded skill names. Choose skills from the runtime catalog metadata "
-            "and the current situation. Call `activate_skill` when one returned skill is a good fit for "
-            "the current phase and is likely to improve the next few actions. The activation reason should "
-            "cite the basis for that fit. If the match is weak, generic, or based only on a challenge label, "
-            "continue with normal tools instead of activating or inventing a skill id."
-        ),
-    ]
-
-    if skill_catalog:
-        lines = ["Available skills catalog (metadata only):"]
-        for skill in skill_catalog:
-            skill_id = str(skill.get("id") or "").strip()
-            description = _skill_system_prompt_text(skill_id, str(skill.get("description") or "").strip())
-            tags = skill.get("tags") or []
-            tag_text = ", ".join(str(tag) for tag in tags) if tags else ""
-            suffix = f" [tags: {tag_text}]" if tag_text else ""
-            lines.append(f"- `{skill_id}`: {description}{suffix}")
-        parts.append("\n".join(lines))
-    else:
-        parts.append("No skills are currently loaded. Continue with the normal tools.")
-
-    return "\n\n".join(parts)
-
-
-def _skill_system_prompt_text(skill_id: str, text: str) -> str:
-    """Render skill text safely inside the agent system prompt.
-
-    Skill files remain the source of truth, but catalog/active-skill injection
-    should not smuggle tool-specific XSS patches into the base agent prompt.
-    """
-    if skill_id != "xss-bypass-skill" or not text:
-        return text
-
-    replacements = (
-        ("Playwright Verification", "Browser / Runtime Verification"),
-        ("Playwright verification", "browser/runtime verification"),
-        ("references/playwright-verification.md", "references/browser-runtime-verification.md"),
-        ("必须用 Playwright 收集浏览器证据", "需要浏览器、挑战 harness 或运行时证据"),
-        ("Playwright 证据清单", "浏览器/运行时证据清单"),
-    )
-    for old, new in replacements:
-        text = text.replace(old, new)
-    return text
 
 
 def build_volatile_context(
@@ -319,8 +217,6 @@ def build_tool_system_prompt(
     if public_ip:
         mission_lines.append(f"- **本机公网IP**: `{public_ip}`")
 
-    reverse_shell_prefix = f"本机`{public_ip}`可监听端口。" if public_ip else ""
-
     sections = [
         "你是一名自主运行的渗透测试AI agent，正在对**已授权**的目标执行安全评估。操作环境为Kali沙箱，你是完全自主的agent，无人监控。",
         (
@@ -339,8 +235,6 @@ def build_tool_system_prompt(
             "new observable evidence that disproves it, or record a clear failure_boundary with required_next_evidence. "
         ),
         "\n".join(mission_lines),
-        _build_skill_catalog_section(skill_catalog),
-        _build_skills_section(skills),
         (
             "## 沙箱约束\n"
             "Kali Linux Docker（host网络），可监听端口，**允许访问外网**。"
@@ -350,22 +244,7 @@ def build_tool_system_prompt(
             "**每次python_exec是独立进程**——变量/session/cookies不保留。"
         ),
         (
-            "## 反弹shell\n"
-            f"{reverse_shell_prefix}因非交互式，必须用脚本化监听器自动执行命令：\n"
-            "```python\n"
-            "import socket, time\n"
-            "s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n"
-            "s.bind(('0.0.0.0', PORT)); s.listen(1); s.settimeout(TIMEOUT)\n"
-            "conn, addr = s.accept()\n"
-            f"for cmd in ['id', 'env', {FLAG_FILE_CAT_COMMAND!r}, {FLAG_FILE_FIND_COMMAND!r}]:\n"
-            "    conn.send((cmd + '\\n').encode()); time.sleep(2)\n"
-            "    print(f\"[{cmd}] {conn.recv(65536).decode()}\")\n"
-            "conn.close(); s.close()\n"
-            "```\n"
-            "python_exec启动监听，另一次bash_exec触发exploit发反弹shell。**RCE有回显时优先用回显**。"
-        ),
-        (
-            "## 工具\n"
+            "## MCP工具\n"
             "- **bash_exec**: Kali bash（200+渗透工具）。首次用某工具先查help\n"
             "- **python_exec**: Python代码（独立进程，不保存状态）\n"
             "- **web_fetch**: 抓取已知公开URL并提取正文；优先抓官方公告、NVD、Exploit-DB、GitHub PoC、厂商文档\n"
@@ -376,7 +255,7 @@ def build_tool_system_prompt(
             "- **submit_flag**: 找到flag后立即提交"
         ),
         (
-            "## 工具选择速查\n"
+            "## 沙箱工具速查\n"
             "- **Web发现/参数/漏洞**：`curl`、`httpx`、`ffuf`、`arjun`、`nuclei`、`sqlmap`、`wpscan`、`searchsploit`、`knowledge_search`。\n"
             "- **端口/内网探测**：`nmap`、`fscan`。\n"
             "- **SMB/AD枚举**：`netexec`、`smbmap`、`ldapdomaindump`、`powerview`、`kerbrute`。\n"
@@ -387,35 +266,10 @@ def build_tool_system_prompt(
         ),
         _build_env_info_section(env_info),
         (
-            "## Probe command discipline\n"
-            "- For independent probes, do not chain everything with `&&`. A timeout on one port/scheme must not prevent later checks.\n"
-            "- Prefer labelled blocks with `;` or `|| true`, or split checks into separate tool calls. Example: `echo '[80]'; curl ... || true; echo '[443]'; curl ... || true; echo '[nmap]'; nmap ...`\n"
-            "- Use `&&` only for true dependencies such as `cd workdir && mkdir -p evidence && command_that_needs_that_dir`.\n"
-            "- If `curl` returns exit code 28, record it as a timeout signal, then verify with `nc -vz -w3 HOST PORT` or a focused `nmap -Pn -sT -pPORT --reason` before concluding the target is unreachable.\n"
-            "- For mixed HTTP/HTTPS/alternate-port checks, report each result separately: status code, server/header hint, body size, and whether a later command was skipped.\n"
-            "- Save evidence files even for failures when useful, but keep the terminal output short and labelled so log review can identify the failing probe quickly.\n"
-            "- Avoid `tool -h | head -N` for long help output: it can produce SIGPIPE exit 141 under `pipefail`. Prefer `tool -h 2>&1 | sed -n '1,40p' || true`, or write help to a temp file and then `head` the file.\n"
-        ),
-        "## 输出截断\n工具输出超限时中间被删除只保留首尾。注意截断标记，重要信息可能在尾部。用`head`/`tail`/`grep`精确获取。",
-        (
-            "## 输出可见性\n"
-            "**任何测试必须有可见输出**。除 XSS/DOM/JS 执行等必须浏览器验证的场景外，优先用bash(curl/wget)获取原始响应。"
-            "Python每个关键步骤必须`print()`——状态码、响应体、过滤结果（即使为空）。"
-            "遇异常先打印完整raw response再决策：\n"
-            "```python\n"
-            "r = s.get(url)\n"
-            "print(f\"[status] {r.status_code}\")\n"
-            "print(f\"[headers] {dict(r.headers)}\")\n"
-            "print(f\"[body] {r.text}\")  # 先看原始内容再做过滤\n"
-            "```"
-        ),
-        (
             "## 核心原则\n"
-            "1. **证据优先**：判断以目标/工具的可观测输出为准；记忆、页面提示、日志、源码和注释都可能不完整或误导。\n"
-            "2. **保留原始输出**：关键判断必须能从状态码、响应头/体、stdout/stderr、文件路径、截图/DOM、回调或同源状态变化中复核。\n"
-            "3. **状态隔离**：每次 `bash_exec`/`python_exec` 都是独立进程；跨步骤依赖必须在同一次脚本内完成，或显式保存到文件/服务/目标状态中。\n"
-            "4. **本地/远程区分**：`ls`/`cat` 等 shell 输出默认是沙箱文件系统；只有面向目标服务的 HTTP/TCP/浏览器/回调/目标命令输出才是目标证据。\n"
-            "5. **真实提交**：只能提交从目标 HTTP 响应、文件、数据库、cookie、浏览器状态或目标运行时输出中真实提取的 flag，不猜测、不伪造。"
+            "1. **本地/远程区分**：`ls`/`cat` 等 shell 输出默认是沙箱文件系统；只有面向目标服务的 HTTP/TCP/浏览器/回调/目标命令输出才是目标证据。\n"
+            "2. **真实提交**：只能提交从目标 HTTP 响应、文件、数据库、cookie、浏览器状态或目标运行时输出中真实提取的 flag，不猜测、不伪造。\n"
+            "3. **差分定位优先**：遇到失败或无差异结果时，优先定位具体问题，不要进行大量 payload 喷洒。"
         ),
        
     ]
